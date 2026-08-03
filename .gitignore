@@ -1,0 +1,23 @@
+# Rust
+target/
+
+# Node
+node_modules/
+dist/
+
+# Tauri
+src-tauri/gen/
+src-tauri/binaries/*.exe
+
+# Local data / test artifacts
+*.db
+*.db-shm
+*.db-wal
+.testdata/
+bench-out/
+
+# Env / editor
+.env*
+.vscode/*
+!.vscode/extensions.json
+*.log

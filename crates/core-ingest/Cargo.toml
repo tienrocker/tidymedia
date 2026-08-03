@@ -1,0 +1,6 @@
+[package]
+name = "core-ingest"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

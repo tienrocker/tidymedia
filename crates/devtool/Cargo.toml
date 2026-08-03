@@ -1,0 +1,12 @@
+[package]
+name = "devtool"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "devtool"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+filetime = "0.2"

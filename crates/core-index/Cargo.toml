@@ -1,0 +1,13 @@
+[package]
+name = "core-index"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+core-db.workspace = true
+jwalk.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

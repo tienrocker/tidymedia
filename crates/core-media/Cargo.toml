@@ -1,0 +1,6 @@
+[package]
+name = "core-media"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

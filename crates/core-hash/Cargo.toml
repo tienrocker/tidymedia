@@ -1,0 +1,9 @@
+[package]
+name = "core-hash"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+xxhash-rust.workspace = true
+blake3.workspace = true
+anyhow.workspace = true

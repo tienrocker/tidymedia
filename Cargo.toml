@@ -1,0 +1,48 @@
+[workspace]
+resolver = "2"
+members = [
+  "src-tauri",
+  "crates/core-db",
+  "crates/core-index",
+  "crates/core-hash",
+  "crates/core-media",
+  "crates/core-ingest",
+  "crates/core-jobs",
+  "crates/devtool",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+core-db = { path = "crates/core-db" }
+core-index = { path = "crates/core-index" }
+core-hash = { path = "crates/core-hash" }
+core-media = { path = "crates/core-media" }
+core-ingest = { path = "crates/core-ingest" }
+core-jobs = { path = "crates/core-jobs" }
+
+rusqlite = { version = "0.37", features = ["bundled", "array", "backup"] }
+jwalk = "0.8"
+rayon = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+crossbeam-channel = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+blake3 = { version = "1", features = ["rayon", "mmap"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# Dev builds of deps optimized a bit so scan/query perf in `tauri dev` is realistic
+[profile.dev.package."*"]
+opt-level = 2
