@@ -6,14 +6,16 @@
 //! camera ghi — không bao giờ convert 2 lần.
 
 mod ffmpeg;
+mod ffprobe;
 mod meta;
 mod store;
 mod thumb;
 
-pub use ffmpeg::find_ffmpeg;
+pub use ffmpeg::{find_ffmpeg, find_ffprobe};
+pub use ffprobe::{probe_video, VideoMeta};
 pub use meta::{extract_image_meta, ImageMeta};
 pub use store::ThumbStore;
-pub use thumb::make_thumb;
+pub use thumb::{make_thumb, make_video_thumb};
 
 /// Bucket size hợp lệ cho thumb — mọi request bị ép về 1 trong 2 (cache không nổ
 /// theo từng pixel size UI yêu cầu). 256 = grid, 1600 = lightbox preview.

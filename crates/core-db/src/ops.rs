@@ -6,32 +6,42 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::models::{FileDetail, JobRow, MediaSrc, MetaUpsert, PendingMeta, RootInfo, ScanEntry};
 
-/// Bump khi đổi schema. Có migration tăng dần cho các bước gần (giữ index của
+/// Bump khi đổi schema. Có migration tăng dần từ v2 trở đi (giữ index của
 /// user); version lạ/quá cũ → wipe & recreate (rebuild bằng rescan, ok pre-1.0).
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
-/// v2 → v3: chỉ thêm trigger invalidate meta/hash khi file đổi nội dung.
-/// PHẢI giống hệt trigger cùng tên trong schema.sql.
-const MIGRATE_V2_V3: &str = "
-CREATE TRIGGER files_meta_invalidate AFTER UPDATE OF size, mtime ON files
-WHEN old.size != new.size OR old.mtime != new.mtime
-BEGIN
-  DELETE FROM media_meta WHERE file_id = old.id;
-  DELETE FROM hashes WHERE file_id = old.id;
-  DELETE FROM phashes WHERE file_id = old.id;
-END;";
+/// Migration tăng dần: MIGRATIONS[i] đưa schema từ version (i+2) lên (i+3).
+/// DDL PHẢI giống hệt schema.sql (fresh install đi thẳng schema.sql).
+const MIGRATIONS: &[&str] = &[
+    // v2 -> v3: trigger invalidate meta/hash khi file đổi nội dung
+    "CREATE TRIGGER files_meta_invalidate AFTER UPDATE OF size, mtime ON files
+     WHEN old.size != new.size OR old.mtime != new.mtime
+     BEGIN
+       DELETE FROM media_meta WHERE file_id = old.id;
+       DELETE FROM hashes WHERE file_id = old.id;
+       DELETE FROM phashes WHERE file_id = old.id;
+     END;",
+    // v3 -> v4: index reverse lookup Live Photo
+    "CREATE INDEX files_live_pair ON files(live_pair_id) WHERE live_pair_id IS NOT NULL;",
+];
+const OLDEST_MIGRATABLE: i64 = 2;
 
 pub fn ensure_schema(conn: &mut Connection) -> Result<()> {
     let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if version == SCHEMA_VERSION {
         return Ok(());
     }
-    if version == 2 {
+    if (OLDEST_MIGRATABLE..SCHEMA_VERSION).contains(&version) {
         let tx = conn.transaction()?;
-        tx.execute_batch(MIGRATE_V2_V3)?;
+        for migration in MIGRATIONS
+            .iter()
+            .skip((version - OLDEST_MIGRATABLE) as usize)
+        {
+            tx.execute_batch(migration)?;
+        }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         tx.commit()?;
-        tracing::info!("schema migrated v2 -> v{SCHEMA_VERSION} (index giữ nguyên)");
+        tracing::info!("schema migrated v{version} -> v{SCHEMA_VERSION} (index giữ nguyên)");
         return Ok(());
     }
     let tx = conn.transaction()?;
@@ -439,39 +449,46 @@ pub fn join_path(dir: &str, name: &str) -> String {
     }
 }
 
-/// Số ảnh present chưa có meta — dùng để quyết định có mở meta job không.
-pub fn count_pending_meta(conn: &Connection) -> Result<i64> {
+/// Số file present chưa có meta — quyết định có mở meta job không.
+/// `include_video=false` khi không có ffprobe: video để lại, có tool sẽ làm.
+pub fn count_pending_meta(conn: &Connection, include_video: bool) -> Result<i64> {
+    let kind_max = if include_video { 1 } else { 0 };
     Ok(conn.query_row(
         "SELECT COUNT(*) FROM files f LEFT JOIN media_meta m ON m.file_id = f.id
-         WHERE m.file_id IS NULL AND f.kind = 0 AND f.status = 0",
-        [],
+         WHERE m.file_id IS NULL AND f.kind <= ?1 AND f.status = 0",
+        params![kind_max],
         |r| r.get(0),
     )?)
 }
 
-/// 1 batch ảnh chờ trích meta, keyset pagination theo f.id (`after_id`) —
+/// 1 batch file chờ trích meta, keyset pagination theo f.id (`after_id`) —
 /// file KHÔNG ĐỌC ĐƯỢC (ổ rút giữa chừng) được job bỏ qua không ghi row,
 /// cursor vẫn tiến nên loop không bao giờ kẹt; job sau tự thử lại.
 pub fn select_pending_meta(
     conn: &Connection,
     after_id: i64,
     limit: i64,
+    include_video: bool,
 ) -> Result<Vec<PendingMeta>> {
+    let kind_max = if include_video { 1 } else { 0 };
     let mut stmt = conn.prepare_cached(
-        "SELECT f.id, d.path, f.name
+        "SELECT f.id, d.path, f.name, f.kind, f.mtime, f.size
          FROM files f
          JOIN dirs d ON d.id = f.dir_id
          LEFT JOIN media_meta m ON m.file_id = f.id
-         WHERE m.file_id IS NULL AND f.kind = 0 AND f.status = 0 AND f.id > ?1
+         WHERE m.file_id IS NULL AND f.kind <= ?3 AND f.status = 0 AND f.id > ?1
          ORDER BY f.id LIMIT ?2",
     )?;
     let rows = stmt
-        .query_map(params![after_id, limit], |r| {
+        .query_map(params![after_id, limit, kind_max], |r| {
             let dir: String = r.get(1)?;
             let name: String = r.get(2)?;
             Ok(PendingMeta {
                 file_id: r.get(0)?,
                 path: join_path(&dir, &name),
+                kind: r.get(3)?,
+                mtime: r.get(4)?,
+                size: r.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -481,19 +498,26 @@ pub fn select_pending_meta(
 pub fn upsert_meta_batch(conn: &mut Connection, rows: &[MetaUpsert]) -> Result<()> {
     let tx = conn.transaction()?;
     {
-        // INSERT..SELECT..WHERE EXISTS: file có thể đã bị remove_root xóa giữa
-        // lúc job select batch và lúc ghi — id chết thì bỏ qua im lặng thay vì
-        // FK violation làm rollback cả batch + job Failed.
+        // INSERT..SELECT..WHERE EXISTS với guard mtime/size: (a) file bị
+        // remove_root xóa giữa chừng → bỏ qua thay vì FK violation rollback cả
+        // batch; (b) file ĐỔI NỘI DUNG trong lúc extract (ffprobe 1 batch mất
+        // hàng chục giây) → meta vừa trích là của bản cũ, ghi vào là stale
+        // vĩnh viễn vì trigger invalidate đã chạy TRƯỚC upsert này — bỏ, job
+        // sau trích lại bản mới.
         let mut ins = tx.prepare_cached(
             "INSERT INTO media_meta(file_id, width, height, taken_at, date_source, camera,
-                                    orientation, meta_state)
-             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
-             WHERE EXISTS(SELECT 1 FROM files WHERE id = ?1)
+                                    orientation, duration_ms, vcodec, acodec, bitrate, fps,
+                                    meta_state)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
+             WHERE EXISTS(SELECT 1 FROM files
+                          WHERE id = ?1 AND mtime = ?14 AND size = ?15)
              ON CONFLICT(file_id) DO UPDATE SET
                width = excluded.width, height = excluded.height,
                taken_at = excluded.taken_at, date_source = excluded.date_source,
                camera = excluded.camera, orientation = excluded.orientation,
-               meta_state = excluded.meta_state",
+               duration_ms = excluded.duration_ms, vcodec = excluded.vcodec,
+               acodec = excluded.acodec, bitrate = excluded.bitrate,
+               fps = excluded.fps, meta_state = excluded.meta_state",
         )?;
         for m in rows {
             ins.execute(params![
@@ -504,7 +528,14 @@ pub fn upsert_meta_batch(conn: &mut Connection, rows: &[MetaUpsert]) -> Result<(
                 m.date_source,
                 m.camera,
                 m.orientation,
-                m.meta_state
+                m.duration_ms,
+                m.vcodec,
+                m.acodec,
+                m.bitrate,
+                m.fps,
+                m.meta_state,
+                m.src_mtime,
+                m.src_size
             ])?;
         }
     }
@@ -516,8 +547,11 @@ pub fn upsert_meta_batch(conn: &mut Connection, rows: &[MetaUpsert]) -> Result<(
 pub fn get_media_src(conn: &Connection, file_id: i64) -> Result<Option<MediaSrc>> {
     Ok(conn
         .query_row(
-            "SELECT d.path, f.name, f.ext, f.kind, f.size, f.mtime, f.status
-             FROM files f JOIN dirs d ON d.id = f.dir_id WHERE f.id = ?1",
+            "SELECT d.path, f.name, f.ext, f.kind, f.size, f.mtime, f.status, m.duration_ms
+             FROM files f
+             JOIN dirs d ON d.id = f.dir_id
+             LEFT JOIN media_meta m ON m.file_id = f.id
+             WHERE f.id = ?1",
             params![file_id],
             |r| {
                 let dir: String = r.get(0)?;
@@ -529,10 +563,65 @@ pub fn get_media_src(conn: &Connection, file_id: i64) -> Result<Option<MediaSrc>
                     size: r.get(4)?,
                     mtime: r.get(5)?,
                     status: r.get(6)?,
+                    duration_ms: r.get(7)?,
                 })
             },
         )
         .optional()?)
+}
+
+/// Ghép cặp Live Photo trong scope 1 root: ảnh (heic/heif/jpg/jpeg) + video
+/// .mov cùng thư mục cùng stem (không phân biệt hoa thường) → live_pair_id
+/// 2 CHIỀU (ảnh trỏ MOV, MOV trỏ ảnh). MOV đã ghép bị ẩn khỏi browse
+/// (predicate trong query_ids) — cặp đi với nhau như 1 đơn vị.
+/// Chạy trong writer sau mỗi scan; xóa pair cũ trong scope trước khi tính lại.
+pub fn pair_live_photos(conn: &mut Connection, root_path: &str) -> Result<usize> {
+    let (eq, start, end) = path_range(root_path);
+    let tx = conn.transaction()?;
+    tx.execute(
+        &format!(
+            "UPDATE files SET live_pair_id = NULL
+             WHERE live_pair_id IS NOT NULL AND dir_id IN
+               (SELECT d.id FROM dirs d WHERE {ROOT_SCOPE})"
+        ),
+        params![eq, start, end],
+    )?;
+    // EXISTS guard: chỉ REWRITE row ảnh thật sự có cặp — không thì mỗi scan
+    // 200k ảnh bị ghi lại (WAL churn) chỉ để set NULL = NULL.
+    let paired = tx.execute(
+        &format!(
+            "UPDATE files SET live_pair_id = (
+               SELECT v.id FROM files v
+               WHERE v.dir_id = files.dir_id AND v.kind = 1 AND v.ext = 'mov'
+                 AND v.status IN (0, 2)
+                 AND lower(substr(v.name, 1, length(v.name) - 4)) =
+                     lower(substr(files.name, 1, length(files.name) - length(files.ext) - 1))
+               LIMIT 1)
+             WHERE files.kind = 0 AND files.ext IN ('heic', 'heif', 'jpg', 'jpeg')
+               AND files.status IN (0, 2)
+               AND files.dir_id IN (SELECT d.id FROM dirs d WHERE {ROOT_SCOPE})
+               AND EXISTS (
+                 SELECT 1 FROM files v
+                 WHERE v.dir_id = files.dir_id AND v.kind = 1 AND v.ext = 'mov'
+                   AND v.status IN (0, 2)
+                   AND lower(substr(v.name, 1, length(v.name) - 4)) =
+                       lower(substr(files.name, 1, length(files.name) - length(files.ext) - 1)))"
+        ),
+        params![eq, start, end],
+    )?;
+    // Chiều ngược: MOV trỏ về ảnh (dùng index files_live_pair)
+    tx.execute(
+        &format!(
+            "UPDATE files SET live_pair_id = (
+               SELECT i.id FROM files i WHERE i.live_pair_id = files.id LIMIT 1)
+             WHERE files.kind = 1 AND files.ext = 'mov'
+               AND files.dir_id IN (SELECT d.id FROM dirs d WHERE {ROOT_SCOPE})
+               AND EXISTS (SELECT 1 FROM files i WHERE i.live_pair_id = files.id)"
+        ),
+        params![eq, start, end],
+    )?;
+    tx.commit()?;
+    Ok(paired)
 }
 
 /// Chi tiết file + meta cho panel info lightbox.
@@ -540,7 +629,8 @@ pub fn get_file_detail(conn: &Connection, file_id: i64) -> Result<Option<FileDet
     Ok(conn
         .query_row(
             "SELECT f.id, f.name, d.path, f.kind, f.status, f.size, f.mtime,
-                    m.width, m.height, m.taken_at, m.camera, m.orientation, m.meta_state
+                    m.width, m.height, m.taken_at, m.camera, m.orientation,
+                    m.duration_ms, m.vcodec, m.acodec, m.fps, m.meta_state
              FROM files f
              JOIN dirs d ON d.id = f.dir_id
              LEFT JOIN media_meta m ON m.file_id = f.id
@@ -560,7 +650,11 @@ pub fn get_file_detail(conn: &Connection, file_id: i64) -> Result<Option<FileDet
                     taken_at: r.get(9)?,
                     camera: r.get(10)?,
                     orientation: r.get(11)?,
-                    meta_state: r.get(12)?,
+                    duration_ms: r.get(12)?,
+                    vcodec: r.get(13)?,
+                    acodec: r.get(14)?,
+                    fps: r.get(15)?,
+                    meta_state: r.get(16)?,
                 })
             },
         )

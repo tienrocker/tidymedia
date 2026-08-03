@@ -12,6 +12,8 @@ export interface FileRow {
   width: number | null; // null = meta job chưa chạy tới
   height: number | null;
   takenAt: number | null;
+  durationMs: number | null;
+  isLive: boolean; // ảnh có MOV Live Photo đi kèm (MOV ẩn khỏi list)
 }
 
 export interface FileDetail {
@@ -27,6 +29,10 @@ export interface FileDetail {
   takenAt: number | null;
   camera: string | null;
   orientation: number | null;
+  durationMs: number | null;
+  vcodec: string | null;
+  acodec: string | null;
+  fps: number | null;
   metaState: number | null;
 }
 
@@ -70,6 +76,8 @@ export interface FileFilter {
   sort?: string;
   includeMissing?: boolean;
   minPx?: number; // width*height >= minPx (chỉ khớp file đã có meta)
+  durMinMs?: number; // thời lượng video (chỉ khớp file đã có meta duration)
+  durMaxMs?: number;
 }
 
 export interface QueryResult {
@@ -99,4 +107,6 @@ export const api = {
   setExcludedPaths: (paths: string[]) => invoke<void>("set_excluded_paths", { paths }),
   startMetaScan: () => invoke<number | null>("start_meta_scan"),
   getFileMeta: (fileId: number) => invoke<FileDetail | null>("get_file_meta", { fileId }),
+  openFile: (fileId: number) => invoke<void>("open_file", { fileId }),
+  revealFile: (fileId: number) => invoke<void>("reveal_file", { fileId }),
 };

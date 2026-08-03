@@ -8,7 +8,12 @@
     "minMb": "≥ MB",
     "maxMb": "≤ MB",
     "minRes": "Minimum resolution",
-    "anyRes": "Any resolution"
+    "anyRes": "Any resolution",
+    "duration": "Video duration",
+    "anyDur": "Any duration",
+    "durShort": "≤ 1 min",
+    "durMedium": "1-10 min",
+    "durLong": "> 10 min"
   },
   "view": {
     "grid": "Thumbnail grid",
@@ -33,8 +38,13 @@
     "dimensions": "Dimensions",
     "taken": "Taken",
     "camera": "Camera",
+    "duration": "Duration",
+    "codec": "Codec",
     "noPreview": "No preview for this format yet",
-    "videoSoon": "Video playback arrives in the next update"
+    "codecUnsupported": "This codec can't be played in-app",
+    "cloudOnly": "This file lives in the cloud only - download it first (TidyMedia never triggers downloads)",
+    "openSystem": "Open in system player",
+    "reveal": "Show in Explorer"
   },
   "roots": {
     "title": "Watched folders",
@@ -86,6 +96,8 @@
     "ERR_SCAN_WRITE_FAILED": "Scan failed writing to the index: {{detail}}",
     "ERR_DB_WRITER_DOWN": "Index database stopped responding — restart the app",
     "ERR_DB_NO_WAL": "Index database location doesn't support fast mode: {{detail}}",
+    "ERR_FILE_GONE": "File no longer exists on disk: {{detail}}",
+    "ERR_FILE_CLOUD": "File is a cloud placeholder - download it first: {{detail}}",
     "ERR_INTERNAL": "Internal error: {{detail}}"
   }
 }

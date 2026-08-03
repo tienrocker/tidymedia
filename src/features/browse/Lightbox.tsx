@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useStore } from "../../state/store";
+import { runSafe, useStore } from "../../state/store";
 import { api, FileDetail, FileRow } from "../../lib/ipc";
 import { canNativeDisplay, mediaUrl, thumbUrl, THUMB_PREVIEW } from "../../lib/media";
-import { fmtSize } from "../../lib/format";
+import { fmtDuration, fmtSize } from "../../lib/format";
 import { fmtDateTime } from "../../lib/time";
 
 interface Zoom {
@@ -49,6 +49,8 @@ function LightboxInner({ index }: { index: number }) {
   const [imgFailed, setImgFailed] = useState(false);
   // media:// fail (ext nói dối nội dung, vd .jpg ruột HEIC) → thử thumb 1600
   const [useThumbFallback, setUseThumbFallback] = useState(false);
+  // Video codec WebView2 không phát được (HEVC thiếu extension...) → nút mở app hệ thống
+  const [videoFailed, setVideoFailed] = useState(false);
   const drag = useRef<{ x: number; y: number } | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
 
@@ -59,6 +61,7 @@ function LightboxInner({ index }: { index: number }) {
     setZoom(ZOOM_RESET);
     setImgFailed(false);
     setUseThumbFallback(false);
+    setVideoFailed(false);
   }, [index, rowId]);
 
   // Row thiếu (mở xa viewport, hoặc re-query lúc scan xóa sạch rows cache) →
@@ -97,9 +100,16 @@ function LightboxInner({ index }: { index: number }) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Focus còn nằm trong ô search/filter phía sau → đừng cướp phím gõ
+      // Focus còn trong ô search/filter, hoặc trong <video> controls (mũi tên
+      // là phím tua của player) → đừng cướp phím
       const el = e.target as HTMLElement | null;
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")) {
+      if (
+        el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.tagName === "SELECT" ||
+          el.tagName === "VIDEO")
+      ) {
         if (e.key === "Escape") useStore.getState().closeLightbox();
         return;
       }
@@ -113,6 +123,7 @@ function LightboxInner({ index }: { index: number }) {
   }, []);
 
   const zoomAt = (clientX: number, clientY: number, factor: number) => {
+    if (row?.kind === 1) return; // video: player tự lo, không zoom transform
     const rect = stageRef.current?.getBoundingClientRect();
     if (!rect) return;
     setZoom((z) => {
@@ -155,6 +166,13 @@ function LightboxInner({ index }: { index: number }) {
         </button>
         <button
           className="rounded border border-neutral-700 px-2 py-0.5 text-xs text-neutral-400 hover:text-neutral-200"
+          onClick={() => row && runSafe(() => api.revealFile(row.id))}
+          title={t("lightbox.reveal")}
+        >
+          📂
+        </button>
+        <button
+          className="rounded border border-neutral-700 px-2 py-0.5 text-xs text-neutral-400 hover:text-neutral-200"
           onClick={() => useStore.getState().closeLightbox()}
           title="Esc"
         >
@@ -191,6 +209,16 @@ function LightboxInner({ index }: { index: number }) {
         >
           {!row ? (
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-neutral-700 border-t-neutral-300" />
+          ) : row.kind === 1 && row.status === 0 && !videoFailed ? (
+            <video
+              key={row.id}
+              src={mediaUrl(row.id, row.mtime)}
+              poster={thumbUrl(row.id, THUMB_PREVIEW, row.mtime)}
+              controls
+              autoPlay
+              className="max-h-full max-w-full"
+              onError={() => setVideoFailed(true)}
+            />
           ) : showImg ? (
             <img
               key={`${row.id}-${useThumbFallback ? "t" : "m"}`}
@@ -217,8 +245,20 @@ function LightboxInner({ index }: { index: number }) {
                 {row.status === 2 ? "☁️" : row.kind === 1 ? "🎬" : "🖼️"}
               </span>
               <span className="text-sm">
-                {row.kind === 1 ? t("lightbox.videoSoon") : t("lightbox.noPreview")}
+                {row.status === 2
+                  ? t("lightbox.cloudOnly")
+                  : row.kind === 1
+                    ? t("lightbox.codecUnsupported")
+                    : t("lightbox.noPreview")}
               </span>
+              {row.kind === 1 && row.status === 0 && (
+                <button
+                  className="rounded border border-neutral-600 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-800"
+                  onClick={() => runSafe(() => api.openFile(row.id))}
+                >
+                  ▶ {t("lightbox.openSystem")}
+                </button>
+              )}
             </div>
           )}
 
@@ -254,6 +294,20 @@ function LightboxInner({ index }: { index: number }) {
                   : row.width != null && row.height != null
                     ? `${row.width} × ${row.height}`
                     : null
+              }
+            />
+            <InfoRow
+              label={t("lightbox.duration")}
+              value={detail?.durationMs != null ? fmtDuration(detail.durationMs) : null}
+            />
+            <InfoRow
+              label={t("lightbox.codec")}
+              value={
+                detail?.vcodec
+                  ? `${detail.vcodec}${detail.acodec ? ` / ${detail.acodec}` : ""}${
+                      detail.fps ? ` · ${Math.round(detail.fps)} fps` : ""
+                    }`
+                  : null
               }
             />
             <InfoRow label={t("list.size")} value={fmtSize(row.size)} />

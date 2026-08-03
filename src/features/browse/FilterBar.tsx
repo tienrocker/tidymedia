@@ -133,6 +133,32 @@ export function FilterBar() {
         <option value="8000000">≥ 8 MP</option>
         <option value="12000000">≥ 12 MP</option>
       </select>
+      <select
+        className={inputCls}
+        title={t("filter.duration")}
+        value={
+          filter.durMinMs != null || filter.durMaxMs != null
+            ? `${filter.durMinMs ?? ""}:${filter.durMaxMs ?? ""}`
+            : ""
+        }
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === "") {
+            setFilter({ durMinMs: undefined, durMaxMs: undefined });
+            return;
+          }
+          const [min, max] = v.split(":");
+          setFilter({
+            durMinMs: min === "" ? undefined : Number(min),
+            durMaxMs: max === "" ? undefined : Number(max),
+          });
+        }}
+      >
+        <option value="">{t("filter.anyDur")}</option>
+        <option value=":60000">{t("filter.durShort")}</option>
+        <option value="60000:600000">{t("filter.durMedium")}</option>
+        <option value="600000:">{t("filter.durLong")}</option>
+      </select>
       <div className="ml-auto flex overflow-hidden rounded border border-neutral-700">
         <button
           className={`px-2 py-1 text-sm ${

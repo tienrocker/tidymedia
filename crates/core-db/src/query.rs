@@ -18,13 +18,15 @@ pub fn query_ids(conn: &Connection, f: &FileFilter) -> Result<Vec<i64>> {
     if f.root_path.is_some() {
         sql.push_str(" JOIN dirs d ON d.id = f.dir_id");
     }
-    if f.min_px.is_some() {
+    if f.min_px.is_some() || f.dur_min_ms.is_some() || f.dur_max_ms.is_some() {
         sql.push_str(" JOIN media_meta m ON m.file_id = f.id");
     }
     if f.include_missing != Some(true) {
         // 0 = present, 2 = cloud placeholder (vẫn browse được, chỉ cấm hash/thumb)
         wheres.push("f.status IN (0, 2)".into());
     }
+    // MOV của Live Photo bị ẩn — cặp HEIC+MOV hiện là 1 đơn vị (badge LIVE)
+    wheres.push("(f.kind = 0 OR f.live_pair_id IS NULL)".into());
     if let Some(text) = f.text.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
         let norm = normalize_for_search(text);
         if norm.chars().count() >= 3 {
@@ -74,6 +76,14 @@ pub fn query_ids(conn: &Connection, f: &FileFilter) -> Result<Vec<i64>> {
         wheres.push("m.width * m.height >= ?".into());
         params.push(Box::new(px));
     }
+    if let Some(v) = f.dur_min_ms {
+        wheres.push("m.duration_ms >= ?".into());
+        params.push(Box::new(v));
+    }
+    if let Some(v) = f.dur_max_ms {
+        wheres.push("m.duration_ms <= ?".into());
+        params.push(Box::new(v));
+    }
     if let Some(root) = f.root_path.as_deref() {
         let (eq, start, end) = path_range(&normalize_path(root));
         wheres.push("(d.path_key = ? OR (d.path_key >= ? AND d.path_key < ?))".into());
@@ -121,7 +131,7 @@ pub fn fetch_rows(conn: &Connection, ids: &[i64]) -> Result<Vec<Option<FileRow>>
     let values: Rc<Vec<Value>> = Rc::new(ids.iter().map(|&i| Value::Integer(i)).collect());
     let mut stmt = conn.prepare_cached(
         "SELECT f.id, f.name, d.path, f.ext, f.kind, f.size, f.mtime, f.status,
-                m.width, m.height, m.taken_at
+                m.width, m.height, m.taken_at, m.duration_ms, f.live_pair_id
          FROM files f
          JOIN dirs d ON d.id = f.dir_id
          LEFT JOIN media_meta m ON m.file_id = f.id
@@ -141,6 +151,8 @@ pub fn fetch_rows(conn: &Connection, ids: &[i64]) -> Result<Vec<Option<FileRow>>
                 width: r.get(8)?,
                 height: r.get(9)?,
                 taken_at: r.get(10)?,
+                duration_ms: r.get(11)?,
+                is_live: r.get::<_, Option<i64>>(12)?.is_some(),
             })
         })?
         .filter_map(|r| r.ok().map(|row| (row.id, row)))

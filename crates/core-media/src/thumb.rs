@@ -43,12 +43,37 @@ pub fn make_thumb(
             bail!("no decoder for .{ext} (ffmpeg not found)");
         };
         // ffmpeg tự áp rotation metadata (HEIC irot, EXIF) từ bản 6+
-        (ffmpeg::decode_scaled(ff, path, target)?, 1)
+        (ffmpeg::decode_scaled(ff, path, target, None)?, 1)
     };
 
     let img = resize_to_fit(&img, target)?;
     let img = apply_orientation(img, orientation);
+    encode_webp(&img)
+}
 
+/// Thumb keyframe cho video: seek ~10% thời lượng (kẹp 1..=30s — tránh frame
+/// đen đầu clip và tránh seek quá xa với video dài), decode + scale trong
+/// ffmpeg, encode WebP. ffmpeg tự áp rotation metadata.
+pub fn make_video_thumb(
+    ffmpeg_bin: &Path,
+    path: &Path,
+    target: u32,
+    duration_ms: Option<i64>,
+) -> Result<Vec<u8>> {
+    let ss = duration_ms
+        .filter(|&d| d > 0)
+        .map(|d| (d as f64 / 1000.0 * 0.1).clamp(1.0, 30.0))
+        .unwrap_or(1.0);
+    let img = match ffmpeg::decode_scaled(ffmpeg_bin, path, target, Some(ss)) {
+        Ok(img) => img,
+        // Clip ngắn hơn điểm seek → thử lại từ frame đầu
+        Err(_) => ffmpeg::decode_scaled(ffmpeg_bin, path, target, None)?,
+    };
+    let img = resize_to_fit(&img, target)?;
+    encode_webp(&img)
+}
+
+fn encode_webp(img: &DynamicImage) -> Result<Vec<u8>> {
     let rgba = img.to_rgba8();
     let (w, h) = (rgba.width(), rgba.height());
     let mem = webp::Encoder::from_rgba(rgba.as_raw(), w, h).encode(75.0);

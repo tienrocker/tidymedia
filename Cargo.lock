@@ -594,6 +594,7 @@ dependencies = [
  "imagesize",
  "kamadak-exif",
  "rusqlite",
+ "serde_json",
  "tracing",
  "webp",
 ]

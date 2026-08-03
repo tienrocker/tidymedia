@@ -1,9 +1,10 @@
--- TidyMedia index schema v3
+-- TidyMedia index schema v4
 -- All timestamps are unix epoch milliseconds unless noted.
 -- v2: dirs.path_key (case-insensitive scoping), files.name_norm (accent-insensitive
 -- search), AUTOINCREMENT (chống rowid reuse), roots.file_count cache, files.status
 -- ghi được từ scanner (cloud placeholder).
 -- v3: trigger files_meta_invalidate — file đổi size/mtime thì meta/hash cũ vô nghĩa.
+-- v4: index files_live_pair — reverse lookup cặp Live Photo (HEIC <-> MOV).
 -- media_meta.taken_at: EXIF không có timezone → lưu wall-clock camera encode như
 -- epoch ms khung UTC; hiển thị/organize đọc với tz=0 là ra đúng giờ camera.
 
@@ -69,6 +70,7 @@ CREATE INDEX files_mtime ON files(mtime);
 CREATE INDEX files_kind_mtime ON files(kind, mtime);
 CREATE INDEX files_name_nc ON files(name COLLATE NOCASE);
 CREATE INDEX files_seen ON files(seen_gen);
+CREATE INDEX files_live_pair ON files(live_pair_id) WHERE live_pair_id IS NOT NULL;
 
 CREATE VIRTUAL TABLE files_fts USING fts5(
   name_norm,

@@ -44,6 +44,8 @@ jobs:
           $dir = "portable-staging"
           New-Item -ItemType Directory $dir | Out-Null
           Copy-Item "target/release/tidymedia.exe" $dir
+          # ffmpeg/ffprobe sidecar (fetch-ffmpeg.ps1 đã chạy trong beforeBuildCommand)
+          Copy-Item -Recurse "src-tauri/binaries" "$dir/binaries"
           # portable.marker: app dùng .\data cạnh exe thay vì %APPDATA%
           New-Item -ItemType File "$dir/portable.marker" | Out-Null
           Compress-Archive -Path "$dir/*" -DestinationPath "TidyMedia_${version}_portable.zip"

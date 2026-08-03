@@ -174,6 +174,66 @@ fn root_overlap_rules() {
 }
 
 #[test]
+fn live_photo_pairing_hides_mov_and_flags_image() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(tmp.path()).unwrap();
+    db.writer.exec(|c| ops::upsert_root(c, "D:\\LP")).unwrap();
+
+    let entries = vec![
+        entry("D:\\LP", "IMG_0001.HEIC", "heic", 0, 4000, 1),
+        entry("D:\\LP", "IMG_0001.MOV", "mov", 1, 2000, 1),
+        entry("D:\\LP", "solo_clip.mov", "mov", 1, 5000, 1), // video thường
+        entry("D:\\LP", "note.jpg", "jpg", 0, 100, 1),       // ảnh không cặp
+        entry("D:\\LP\\Sub", "IMG_0001.MOV", "mov", 1, 999, 1), // khác dir — KHÔNG ghép
+    ];
+    db.writer
+        .exec(move |c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(c, 1, 1, &entries, &mut cache)
+        })
+        .unwrap();
+
+    let paired = db
+        .writer
+        .exec(|c| ops::pair_live_photos(c, "D:\\LP"))
+        .unwrap();
+    assert_eq!(paired, 1, "chi IMG_0001.HEIC duoc ghep");
+
+    // MOV đã ghép bị ẩn; MOV khác dir + solo clip vẫn hiện
+    let ids = db
+        .pool
+        .with(|c| query::query_ids(c, &FileFilter::default()))
+        .unwrap();
+    let rows = db.pool.with(|c| query::fetch_rows(c, &ids)).unwrap();
+    let names: Vec<_> = rows
+        .iter()
+        .flatten()
+        .map(|r| (r.name.clone(), r.dir.clone()))
+        .collect();
+    assert_eq!(ids.len(), 4, "MOV cua Live Photo phai bi an: {names:?}");
+    assert!(!names
+        .iter()
+        .any(|(n, d)| n == "IMG_0001.MOV" && d == "D:\\LP"));
+
+    // Ảnh HEIC gắn cờ is_live; ảnh/video thường thì không
+    let by_name: std::collections::HashMap<String, bool> = rows
+        .iter()
+        .flatten()
+        .map(|r| (r.name.clone(), r.is_live))
+        .collect();
+    assert!(by_name["IMG_0001.HEIC"]);
+    assert!(!by_name["note.jpg"]);
+    assert!(!by_name["solo_clip.mov"]);
+
+    // Idempotent: chạy lại không đổi kết quả
+    let paired2 = db
+        .writer
+        .exec(|c| ops::pair_live_photos(c, "D:\\LP"))
+        .unwrap();
+    assert_eq!(paired2, 1);
+}
+
+#[test]
 fn root_scope_is_case_insensitive_and_exact() {
     let tmp = tempfile::tempdir().unwrap();
     let db = Db::open(tmp.path()).unwrap();

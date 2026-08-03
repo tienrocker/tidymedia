@@ -16,6 +16,9 @@ pub struct FileRow {
     pub width: Option<i64>,
     pub height: Option<i64>,
     pub taken_at: Option<i64>,
+    pub duration_ms: Option<i64>,
+    /// true = ảnh có MOV Live Photo đi kèm (MOV bị ẩn khỏi list, đi theo cặp).
+    pub is_live: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,18 +61,27 @@ pub struct FileFilter {
     pub include_missing: Option<bool>,
     /// Lọc theo tổng pixel (width*height >= min_px). Chỉ khớp file đã có meta.
     pub min_px: Option<i64>,
+    /// Lọc thời lượng video (ms). Chỉ khớp file đã có meta duration.
+    pub dur_min_ms: Option<i64>,
+    pub dur_max_ms: Option<i64>,
 }
 
-/// File chờ trích metadata (meta job M2).
+/// File chờ trích metadata (meta job M2/M3).
 #[derive(Debug, Clone)]
 pub struct PendingMeta {
     pub file_id: i64,
     /// Full path đã ghép sẵn dir + name.
     pub path: String,
+    /// 0 = image (header-only), 1 = video (ffprobe).
+    pub kind: i64,
+    /// Snapshot lúc select — upsert guard theo cặp này (file đổi giữa chừng
+    /// thì meta vừa trích là rác, phải bị bỏ).
+    pub mtime: i64,
+    pub size: i64,
 }
 
 /// Kết quả trích meta của 1 file, chờ ghi vào media_meta.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MetaUpsert {
     pub file_id: i64,
     pub width: Option<i64>,
@@ -78,8 +90,17 @@ pub struct MetaUpsert {
     pub date_source: Option<i64>,
     pub camera: Option<String>,
     pub orientation: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub vcodec: Option<String>,
+    pub acodec: Option<String>,
+    pub bitrate: Option<i64>,
+    pub fps: Option<f64>,
     /// 1 = done, 2 = failed (không đọc nổi dimensions).
     pub meta_state: i64,
+    /// Snapshot từ PendingMeta — upsert chỉ ghi khi files.mtime/size còn khớp
+    /// (file đổi trong lúc extract → bỏ, trigger đã dọn meta rồi, job sau làm lại).
+    pub src_mtime: i64,
+    pub src_size: i64,
 }
 
 /// Row phục vụ protocol thumb:// / media:// — lookup theo file id.
@@ -91,6 +112,8 @@ pub struct MediaSrc {
     pub size: i64,
     pub mtime: i64,
     pub status: i64,
+    /// Từ media_meta (video): điểm seek keyframe thumb.
+    pub duration_ms: Option<i64>,
 }
 
 /// Chi tiết 1 file cho panel info của lightbox.
@@ -109,6 +132,10 @@ pub struct FileDetail {
     pub taken_at: Option<i64>,
     pub camera: Option<String>,
     pub orientation: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub vcodec: Option<String>,
+    pub acodec: Option<String>,
+    pub fps: Option<f64>,
     pub meta_state: Option<i64>,
 }
 

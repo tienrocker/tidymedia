@@ -39,7 +39,7 @@
 2. Windows 10/11 x64。缺少 WebView2 会自动安装；无需其他运行时。
 3. 首次运行：选择**语言**和**时区** → 点击 **+ 添加**，选一个文件夹或整块磁盘（`D:\`）→ 扫描的同时即可浏览搜索。
 
-> HEIC/AVIF 缩略图目前使用 `PATH` 中的 `ffmpeg`（如有）- 视频更新（M3）将直接内置。
+> HEIC/AVIF 缩略图与全部视频功能使用内置的 `ffmpeg`/`ffprobe`（来自 [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 的 GPLv3 构建，构建时锁定版本并校验 SHA256；许可证随附于 `binaries/ffmpeg-LICENSE.txt`）。
 > 首次安装会出现 SmartScreen 警告（暂未购买 Authenticode 证书）。
 
 ## 🛡️ 数据安全是设计出来的

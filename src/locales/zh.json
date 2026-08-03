@@ -8,7 +8,12 @@
     "minMb": "≥ MB",
     "maxMb": "≤ MB",
     "minRes": "最低分辨率",
-    "anyRes": "任意分辨率"
+    "anyRes": "任意分辨率",
+    "duration": "视频时长",
+    "anyDur": "任意时长",
+    "durShort": "≤ 1 分钟",
+    "durMedium": "1-10 分钟",
+    "durLong": "> 10 分钟"
   },
   "view": {
     "grid": "缩略图网格",
@@ -33,8 +38,13 @@
     "dimensions": "尺寸",
     "taken": "拍摄时间",
     "camera": "相机",
+    "duration": "时长",
+    "codec": "编码",
     "noPreview": "此格式暂不支持预览",
-    "videoSoon": "视频播放将在下个版本推出"
+    "codecUnsupported": "此编码无法在应用内播放",
+    "cloudOnly": "此文件仅存于云端 - 请先下载（TidyMedia 绝不主动触发下载）",
+    "openSystem": "用系统播放器打开",
+    "reveal": "在资源管理器中显示"
   },
   "roots": {
     "title": "监视的文件夹",
@@ -84,6 +94,8 @@
     "ERR_SCAN_WRITE_FAILED": "扫描写入索引失败：{{detail}}",
     "ERR_DB_WRITER_DOWN": "索引数据库停止响应——请重启应用",
     "ERR_DB_NO_WAL": "索引存储位置不支持快速模式：{{detail}}",
+    "ERR_FILE_GONE": "文件已不在磁盘上：{{detail}}",
+    "ERR_FILE_CLOUD": "文件是云端占位符 - 请先下载：{{detail}}",
     "ERR_INTERNAL": "内部错误：{{detail}}"
   }
 }

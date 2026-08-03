@@ -5,7 +5,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-ffmpeg.ps1",
     "frontendDist": "../dist"
   },
   "app": {
@@ -26,6 +26,11 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "msi"],
+    "resources": [
+      "binaries/ffmpeg.exe",
+      "binaries/ffprobe.exe",
+      "binaries/ffmpeg-LICENSE.txt"
+    ],
     "windows": {
       "webviewInstallMode": { "type": "embedBootstrapper" }
     },

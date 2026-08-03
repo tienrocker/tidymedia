@@ -39,6 +39,8 @@ fn main() {
             commands::set_excluded_paths,
             commands::start_meta_scan,
             commands::get_file_meta,
+            commands::open_file,
+            commands::reveal_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tidymedia");

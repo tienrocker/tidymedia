@@ -21,3 +21,5 @@ bench-out/
 .vscode/*
 !.vscode/extensions.json
 *.log
+
+src-tauri/binaries/

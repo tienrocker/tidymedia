@@ -39,7 +39,7 @@ Index cả ổ cứng, gõ là ra kết quả, dọn 15 năm ảnh vứt lung tu
 2. Windows 10/11 x64. Thiếu WebView2 thì installer tự cài; không cần runtime nào khác.
 3. Lần chạy đầu: chọn **ngôn ngữ** và **múi giờ** → bấm **+ Thêm** và chọn thư mục hoặc cả ổ (`D:\`) → vừa scan vừa duyệt/tìm bình thường.
 
-> Thumbnail HEIC/AVIF hiện dùng `ffmpeg` trên `PATH` nếu có - bản cập nhật video (M3) sẽ bundle sẵn.
+> Thumbnail HEIC/AVIF và mọi tính năng video dùng `ffmpeg`/`ffprobe` bundle sẵn (bản GPLv3 từ [gyan.dev](https://www.gyan.dev/ffmpeg/builds/), pin version + verify SHA256 lúc build; license đi kèm tại `binaries/ffmpeg-LICENSE.txt`).
 > Lần cài đầu Windows SmartScreen sẽ cảnh báo (chưa mua chứng chỉ Authenticode).
 
 ## 🛡️ An toàn dữ liệu là thiết kế, không phải lời hứa

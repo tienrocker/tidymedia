@@ -39,7 +39,7 @@ Photos and videos pile up for years - iPhone syncs through a dozen different app
 2. Windows 10/11 x64. WebView2 is installed automatically if missing; no other runtime needed.
 3. First run: pick your **language** and **timezone** → click **+ Add** and select a folder or a whole drive (`D:\`) → browse and search while it scans.
 
-> HEIC/AVIF thumbnails currently use `ffmpeg` from your `PATH` if present - it will ship bundled with the video update (M3).
+> HEIC/AVIF thumbnails and all video features use bundled `ffmpeg`/`ffprobe` (GPLv3 builds from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/), pinned + SHA256-verified at build time; license ships as `binaries/ffmpeg-LICENSE.txt`).
 > First-run installs show a SmartScreen warning (no Authenticode certificate yet).
 
 ## 🛡️ Data safety, by design

@@ -3,7 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useStore } from "../../state/store";
 import { FileRow } from "../../lib/ipc";
 import { thumbUrl, THUMB_GRID } from "../../lib/media";
-import { fmtSize } from "../../lib/format";
+import { fmtDuration, fmtSize } from "../../lib/format";
 
 // Cell: thumb vuông + 1 dòng tên. Cột tự co theo bề rộng container.
 const CELL_W = 168;
@@ -27,7 +27,7 @@ function Cell({ row, index }: { row: FileRow | undefined; index: number }) {
   }
 
   const icon =
-    row.status === 2 ? "☁️" : row.kind === 1 ? "🎬" : failed ? "🖼️" : null;
+    row.status === 2 ? "☁️" : failed ? (row.kind === 1 ? "🎬" : "🖼️") : null;
 
   return (
     <button
@@ -37,7 +37,7 @@ function Cell({ row, index }: { row: FileRow | undefined; index: number }) {
       onClick={() => openLightbox(index)}
     >
       <div
-        className="flex w-full items-center justify-center overflow-hidden rounded bg-neutral-900"
+        className="relative flex w-full items-center justify-center overflow-hidden rounded bg-neutral-900"
         style={{ height: THUMB_H }}
       >
         {icon ? (
@@ -52,6 +52,21 @@ function Cell({ row, index }: { row: FileRow | undefined; index: number }) {
             className="h-full w-full object-cover transition-transform duration-100 group-hover:scale-[1.03]"
             onError={() => setFailed(true)}
           />
+        )}
+        {row.kind === 1 && row.durationMs != null && (
+          <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 text-[10px] tabular-nums text-neutral-200">
+            {fmtDuration(row.durationMs)}
+          </span>
+        )}
+        {row.kind === 1 && row.durationMs == null && !icon && (
+          <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 text-[10px] text-neutral-200">
+            ▶
+          </span>
+        )}
+        {row.isLive && row.kind === 0 && (
+          <span className="absolute left-1 top-1 rounded bg-black/70 px-1 text-[9px] font-semibold tracking-wide text-amber-300">
+            ◉ LIVE
+          </span>
         )}
       </div>
       <span className="mt-1 w-full truncate text-xs text-neutral-400 group-hover:text-neutral-200">

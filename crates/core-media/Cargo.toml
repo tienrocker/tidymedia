@@ -7,6 +7,7 @@ edition.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 rusqlite.workspace = true
+serde_json.workspace = true
 image = "0.25"
 fast_image_resize = { version = "5", features = ["image"] }
 webp = "0.3"

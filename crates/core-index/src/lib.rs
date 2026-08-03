@@ -163,11 +163,19 @@ fn make_entry(
         .filter(|e| e.len() < name.len())?
         .to_ascii_lowercase();
     let kind = classify_ext(&ext)?;
-    if ext == "ts" && !is_mpeg_ts(&std::path::Path::new(dir_path).join(&name)) {
-        return None; // TypeScript / text, không phải video
-    }
     let attrs = file_attrs(md);
     let status = if attrs & CLOUD_ATTRS != 0 { 2 } else { 0 };
+    if ext == "ts" {
+        // Cloud placeholder: KHÔNG được mở đọc sniff (1 byte là OneDrive kéo
+        // hydrate nguyên file). Project TypeScript phổ biến hơn hẳn MPEG-TS
+        // trên cloud folder → bỏ qua, khi nào hydrate thì scan sau nhặt lại.
+        if status == 2 {
+            return None;
+        }
+        if !is_mpeg_ts(&std::path::Path::new(dir_path).join(&name)) {
+            return None; // TypeScript / text, không phải video
+        }
+    }
     Some(ScanEntry {
         dir_path: dir_path.to_string(),
         name,

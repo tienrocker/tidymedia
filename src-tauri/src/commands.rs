@@ -1,3 +1,4 @@
+use std::os::windows::process::CommandExt;
 use std::panic::AssertUnwindSafe;
 use std::path::Path;
 use std::sync::atomic::Ordering;
@@ -160,6 +161,14 @@ pub async fn start_scan(state: State<'_, AppState>, root_id: i64) -> CmdResult<i
                         kind: "scan".into(),
                     },
                     Ok(Ok(s)) => {
+                        // Ghép cặp Live Photo (HEIC+MOV cùng stem) trong root vừa
+                        // scan — lỗi chỉ log, không fail scan đã thành công.
+                        let root = path.clone();
+                        if let Err(e) =
+                            writer.exec(move |c| core_db::ops::pair_live_photos(c, &root))
+                        {
+                            tracing::warn!("pair_live_photos failed: {e:#}");
+                        }
                         let mut msg =
                             format!("indexed {}, missing {}", s.indexed, s.marked_missing);
                         if s.walk_errors > 0 || s.skipped_lossy_names > 0 {
@@ -226,13 +235,17 @@ pub async fn start_meta_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
     }
     let db = state.db.clone();
     let jobs = state.jobs.clone();
+    let ctx = MetaCtx {
+        ffprobe: state.ffprobe.clone(),
+    };
     blocking(move || {
         // Giữ gate tới hết đoạn khởi động (sau register job đã hiện trong
         // active map thì caller khác tự thấy) — drop ở mọi đường ra.
         let _gate = guard;
+        let include_video = ctx.ffprobe.is_some();
         let total = db
             .pool
-            .with(core_db::ops::count_pending_meta)
+            .with(|c| core_db::ops::count_pending_meta(c, include_video))
             .map_err(err)?;
         if total == 0 {
             return Ok(None);
@@ -251,7 +264,7 @@ pub async fn start_meta_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
                 let events_progress = events.clone();
                 let cancel_run = cancel.clone();
                 let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    run_meta_job(&db, &cancel_run, job_id, total, &events_progress)
+                    run_meta_job(&db, &ctx, &cancel_run, job_id, total, &events_progress)
                 }));
                 let final_event = match result {
                     Err(_) => JobEvent::Failed {
@@ -290,13 +303,26 @@ pub async fn start_meta_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
     .await
 }
 
+/// Context meta job: tz để đổi creation_time UTC → wall-clock; ffprobe cho video.
+struct MetaCtx {
+    ffprobe: Option<std::path::PathBuf>,
+}
+
 fn run_meta_job(
     db: &core_db::Db,
+    ctx: &MetaCtx,
     cancel: &core_jobs::CancelFlag,
     job_id: i64,
     total: i64,
     events: &crossbeam_channel::Sender<JobEvent>,
 ) -> anyhow::Result<u64> {
+    let include_video = ctx.ffprobe.is_some();
+    // tz đọc 1 lần mỗi job — video creation_time là UTC, cần đổi ra wall-clock
+    let tz_offset_min: i64 = db
+        .pool
+        .with(|c| core_db::ops::kv_get(c, "tz_offset_minutes"))?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     let mut done: u64 = 0;
     let mut cursor: i64 = 0;
     let mut throttle = Throttle::new(200);
@@ -304,16 +330,20 @@ fn run_meta_job(
         if cancel.load(Ordering::Relaxed) {
             return Ok(done);
         }
+        // Video batch nhỏ hơn: mỗi file là 1 process ffprobe (~50-100ms)
         let batch = db
             .pool
-            .with(|c| core_db::ops::select_pending_meta(c, cursor, 256))?;
+            .with(|c| core_db::ops::select_pending_meta(c, cursor, 128, include_video))?;
         let Some(last) = batch.last() else {
             return Ok(done);
         };
         cursor = last.file_id;
-        // Header-only read (imagesize + EXIF) — song song trên global rayon pool.
+        // Ảnh: header-only read; video: ffprobe — song song trên global rayon pool.
         // None = file không đọc được (ổ rút...) → không ghi row, job sau thử lại.
-        let metas: Vec<MetaUpsert> = batch.par_iter().filter_map(extract_one_meta).collect();
+        let metas: Vec<MetaUpsert> = batch
+            .par_iter()
+            .filter_map(|p| extract_one_meta(p, ctx, tz_offset_min))
+            .collect();
         let n = batch.len() as u64;
         if !metas.is_empty() {
             db.writer
@@ -337,11 +367,35 @@ fn run_meta_job(
 /// placeholder (status DB stale — đọc là hydrate, cấm tuyệt đối) — KHÔNG ghi
 /// row để job sau retry khi file quay lại. Truy cập được thì luôn ra row
 /// (decode fail → meta_state=2, không bao giờ chọn lại file hỏng thật).
-fn extract_one_meta(p: &PendingMeta) -> Option<MetaUpsert> {
+fn extract_one_meta(p: &PendingMeta, ctx: &MetaCtx, tz_offset_min: i64) -> Option<MetaUpsert> {
     let path = Path::new(&p.path);
     match std::fs::metadata(path) {
         Ok(md) if !core_media::is_cloud_placeholder(&md) => {}
         _ => return None,
+    }
+    if p.kind == 1 {
+        // select_pending_meta chỉ trả video khi có ffprobe
+        let ff = ctx.ffprobe.as_deref()?;
+        let m = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            core_media::probe_video(ff, path, tz_offset_min)
+        }))
+        .unwrap_or_default();
+        return Some(MetaUpsert {
+            file_id: p.file_id,
+            width: m.width.map(i64::from),
+            height: m.height.map(i64::from),
+            taken_at: m.taken_at,
+            date_source: m.date_source,
+            duration_ms: m.duration_ms,
+            vcodec: m.vcodec,
+            acodec: m.acodec,
+            bitrate: m.bitrate,
+            fps: m.fps,
+            meta_state: if m.ok { 1 } else { 2 },
+            src_mtime: p.mtime,
+            src_size: p.size,
+            ..Default::default()
+        });
     }
     let m = std::panic::catch_unwind(|| core_media::extract_image_meta(path)).unwrap_or_default();
     Some(MetaUpsert {
@@ -353,6 +407,9 @@ fn extract_one_meta(p: &PendingMeta) -> Option<MetaUpsert> {
         camera: m.camera,
         orientation: m.orientation.map(i64::from),
         meta_state: if m.ok { 1 } else { 2 },
+        src_mtime: p.mtime,
+        src_size: p.size,
+        ..Default::default()
     })
 }
 
@@ -391,6 +448,9 @@ pub async fn get_file_meta(
                     camera: d.camera.clone(),
                     orientation: d.orientation,
                     meta_state: if m.ok { 1 } else { 2 },
+                    src_mtime: d.mtime,
+                    src_size: d.size,
+                    ..Default::default()
                 };
                 db.writer
                     .exec_async(move |c| core_db::ops::upsert_meta_batch(c, &[row]));
@@ -399,6 +459,61 @@ pub async fn get_file_meta(
         Ok(detail)
     })
     .await
+}
+
+/// Mở file bằng app mặc định của hệ thống (video codec lạ WebView2 không phát).
+/// Đi qua explorer.exe (ShellExecute) — KHÔNG qua cmd, khỏi dính shell parse
+/// với tên file chứa &, %, khoảng trắng.
+#[tauri::command]
+pub async fn open_file(state: State<'_, AppState>, file_id: i64) -> CmdResult<()> {
+    let db = state.db.clone();
+    blocking(move || {
+        let path = resolve_present_path(&db, file_id)?;
+        // raw_arg tự bọc quote: std chỉ quote khi có space, mà explorer.exe
+        // parse dấu phẩy làm separator → path "D:\Family,2019\..." sẽ gãy.
+        let mut cmd = std::process::Command::new("explorer.exe");
+        cmd.raw_arg(format!("\"{path}\""));
+        cmd.spawn().map_err(|e| format!("ERR_INTERNAL|open: {e}"))?;
+        Ok(())
+    })
+    .await
+}
+
+/// Mở Explorer trỏ thẳng vào file.
+#[tauri::command]
+pub async fn reveal_file(state: State<'_, AppState>, file_id: i64) -> CmdResult<()> {
+    let db = state.db.clone();
+    blocking(move || {
+        let path = resolve_present_path(&db, file_id)?;
+        // explorer /select, không nhận path qua arg riêng — ghép 1 chuỗi
+        let mut cmd = std::process::Command::new("explorer.exe");
+        cmd.raw_arg(format!("/select,\"{path}\""));
+        cmd.spawn()
+            .map_err(|e| format!("ERR_INTERNAL|explorer: {e}"))?;
+        Ok(())
+    })
+    .await
+}
+
+fn resolve_present_path(db: &core_db::Db, file_id: i64) -> CmdResult<String> {
+    let src = db
+        .pool
+        .with(|c| core_db::ops::get_media_src(c, file_id))
+        .map_err(err)?
+        .ok_or("ERR_FILE_GONE|")?;
+    if src.status == 1 || src.status == 3 {
+        return Err(format!("ERR_FILE_GONE|{}", src.path));
+    }
+    // Invariant: check attrs TẠI CHỖ — status DB có thể stale, mở file
+    // placeholder bằng app ngoài cũng là kéo hydrate.
+    match std::fs::metadata(&src.path) {
+        Err(_) => return Err(format!("ERR_FILE_GONE|{}", src.path)),
+        Ok(md) if core_media::is_cloud_placeholder(&md) => {
+            return Err(format!("ERR_FILE_CLOUD|{}", src.path));
+        }
+        Ok(_) => {}
+    }
+    Ok(src.path)
 }
 
 #[tauri::command]

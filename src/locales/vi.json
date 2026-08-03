@@ -8,7 +8,12 @@
     "minMb": "≥ MB",
     "maxMb": "≤ MB",
     "minRes": "Độ phân giải tối thiểu",
-    "anyRes": "Mọi độ phân giải"
+    "anyRes": "Mọi độ phân giải",
+    "duration": "Thời lượng video",
+    "anyDur": "Mọi thời lượng",
+    "durShort": "≤ 1 phút",
+    "durMedium": "1-10 phút",
+    "durLong": "> 10 phút"
   },
   "view": {
     "grid": "Lưới thumbnail",
@@ -33,8 +38,13 @@
     "dimensions": "Kích thước",
     "taken": "Chụp lúc",
     "camera": "Máy ảnh",
+    "duration": "Thời lượng",
+    "codec": "Codec",
     "noPreview": "Định dạng này chưa xem trước được",
-    "videoSoon": "Phát video sẽ có ở bản cập nhật sau"
+    "codecUnsupported": "Codec này không phát được trong app",
+    "cloudOnly": "File chỉ còn trên cloud - tải về trước đã (TidyMedia không bao giờ tự kéo về)",
+    "openSystem": "Mở bằng trình phát hệ thống",
+    "reveal": "Mở vị trí trong Explorer"
   },
   "roots": {
     "title": "Thư mục theo dõi",
@@ -84,6 +94,8 @@
     "ERR_SCAN_WRITE_FAILED": "Scan lỗi khi ghi index: {{detail}}",
     "ERR_DB_WRITER_DOWN": "Database index ngừng phản hồi — khởi động lại app",
     "ERR_DB_NO_WAL": "Vị trí lưu index không hỗ trợ chế độ nhanh: {{detail}}",
+    "ERR_FILE_GONE": "File không còn trên đĩa: {{detail}}",
+    "ERR_FILE_CLOUD": "File đang là placeholder cloud - tải về trước đã: {{detail}}",
     "ERR_INTERNAL": "Lỗi nội bộ: {{detail}}"
   }
 }

@@ -49,8 +49,10 @@ pub struct AppState {
     /// Pool riêng cho decode thumb + đọc media — không bao giờ chiếm thread
     /// webview hay tokio worker.
     pub thumb_pool: Arc<rayon::ThreadPool>,
-    /// ffmpeg cho HEIC/AVIF/JXL. None = format đó hiện icon thay thumb (M3 bundle sidecar).
+    /// ffmpeg cho HEIC/AVIF/JXL + keyframe video. None = hiện icon thay thumb.
     pub ffmpeg: Option<std::path::PathBuf>,
+    /// ffprobe cho metadata video. None = video không có meta/duration (chờ tool).
+    pub ffprobe: Option<std::path::PathBuf>,
     /// Gate serialize đoạn khởi động meta job (check-active → insert → register
     /// không atomic; StrictMode mount 2 lần / 2 scan xong sát nhau sẽ đua).
     pub meta_start_gate: Arc<std::sync::atomic::AtomicBool>,
@@ -84,6 +86,20 @@ pub fn init(app: &AppHandle) -> Result<()> {
     let events_rx = jobs.receiver();
     let writer = db.writer.clone();
 
+    // Bootstrap 1 lần sau khi lên schema v4: ghép Live Photo cho index CÓ SẴN
+    // (bình thường pairing chỉ chạy sau scan — index migrate lên không rescan
+    // thì MOV cứ hiện mãi). Async, không chặn khởi động.
+    writer.exec_async(|c| {
+        if core_db::ops::kv_get(c, "live_pair_bootstrap")?.is_none() {
+            for r in core_db::ops::list_roots(c)? {
+                core_db::ops::pair_live_photos(c, &r.path)?;
+            }
+            core_db::ops::kv_set(c, "live_pair_bootstrap", "1")?;
+            tracing::info!("live photo pairing bootstrapped for existing index");
+        }
+        Ok(())
+    });
+
     let thumbs = Arc::new(core_media::ThumbStore::open(
         &data_dir.join("thumbs.db"),
         THUMB_CACHE_CAP_BYTES,
@@ -101,9 +117,14 @@ pub fn init(app: &AppHandle) -> Result<()> {
             .build()?,
     );
     let ffmpeg = core_media::find_ffmpeg();
+    let ffprobe = core_media::find_ffprobe();
     match &ffmpeg {
-        Some(p) => tracing::info!(path = %p.display(), "ffmpeg found — HEIC/AVIF thumbs on"),
-        None => tracing::info!("ffmpeg not found — HEIC/AVIF hiện icon (M3 bundle sidecar)"),
+        Some(p) => tracing::info!(path = %p.display(), "ffmpeg found — HEIC/AVIF/video thumbs on"),
+        None => tracing::info!("ffmpeg not found — HEIC/AVIF/video hiện icon"),
+    }
+    match &ffprobe {
+        Some(p) => tracing::info!(path = %p.display(), "ffprobe found — video metadata on"),
+        None => tracing::info!("ffprobe not found — video meta để chờ"),
     }
 
     app.manage(AppState {
@@ -113,6 +134,7 @@ pub fn init(app: &AppHandle) -> Result<()> {
         thumbs,
         thumb_pool,
         ffmpeg,
+        ffprobe,
         meta_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
 
