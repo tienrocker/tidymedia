@@ -100,6 +100,10 @@ pub async fn start_scan(state: State<'_, AppState>, root_id: i64) -> CmdResult<i
             .pool
             .with(|c| core_db::ops::get_root(c, root_id))
             .map_err(err)?;
+        let excluded = db
+            .pool
+            .with(core_db::ops::get_excluded_paths)
+            .map_err(err)?;
         let gen = db
             .writer
             .exec(|c| core_db::ops::next_scan_gen(c))
@@ -129,6 +133,7 @@ pub async fn start_scan(state: State<'_, AppState>, root_id: i64) -> CmdResult<i
                         gen,
                         &writer,
                         &cancel_progress,
+                        &excluded,
                         |done| {
                             if throttle.ready() {
                                 let _ = events_progress.send(JobEvent::Progress(JobProgress {
@@ -272,6 +277,23 @@ pub async fn get_settings(state: State<'_, AppState>) -> CmdResult<Settings> {
                     tz_offset_minutes,
                 })
             })
+            .map_err(err)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_excluded_paths(state: State<'_, AppState>) -> CmdResult<Vec<String>> {
+    let db = state.db.clone();
+    blocking(move || db.pool.with(core_db::ops::get_excluded_paths).map_err(err)).await
+}
+
+#[tauri::command]
+pub async fn set_excluded_paths(state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<()> {
+    let writer = state.db.writer.clone();
+    blocking(move || {
+        writer
+            .exec(move |c| core_db::ops::set_excluded_paths(c, &paths))
             .map_err(err)
     })
     .await

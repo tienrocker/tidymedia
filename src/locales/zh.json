@@ -49,7 +49,11 @@
     "systemDefault": "系统",
     "start": "开始使用",
     "save": "保存",
-    "cancel": "取消"
+    "cancel": "取消",
+    "excluded": "排除的文件夹",
+    "excludedEmpty": "无——监视根目录下的所有文件夹都会被扫描。",
+    "excludePick": "选择要从扫描中排除的文件夹",
+    "rescanHint": "排除列表已更改——点击监视文件夹上的 ⟳ 以应用。"
   },
   "errors": {
     "generic": "错误：{{detail}}",

@@ -77,6 +77,7 @@ fn bench_scan(args: &[String]) -> Result<()> {
         gen,
         &db.writer,
         &cancel,
+        &[],
         |done| eprintln!("  scanned {done} ({:.1}s)", t0.elapsed().as_secs_f32()),
     )?;
     let scan_s = t0.elapsed().as_secs_f32();

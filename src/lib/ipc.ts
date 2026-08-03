@@ -75,4 +75,6 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (tzOffsetMinutes: number, setupDone: boolean) =>
     invoke<void>("set_settings", { tzOffsetMinutes, setupDone }),
+  getExcludedPaths: () => invoke<string[]>("get_excluded_paths"),
+  setExcludedPaths: (paths: string[]) => invoke<void>("set_excluded_paths", { paths }),
 };

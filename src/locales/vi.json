@@ -49,7 +49,11 @@
     "systemDefault": "hệ thống",
     "start": "Bắt đầu",
     "save": "Lưu",
-    "cancel": "Hủy"
+    "cancel": "Hủy",
+    "excluded": "Thư mục loại trừ",
+    "excludedEmpty": "Chưa có — mọi thư mục trong root theo dõi đều được quét.",
+    "excludePick": "Chọn thư mục muốn loại khỏi scan",
+    "rescanHint": "Đã đổi thư mục loại trừ — bấm ⟳ trên thư mục theo dõi để áp dụng."
   },
   "errors": {
     "generic": "Lỗi: {{detail}}",

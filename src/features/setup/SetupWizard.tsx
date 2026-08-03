@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { open } from "@tauri-apps/plugin-dialog";
 import { LANGS } from "../../i18n";
+import { api } from "../../lib/ipc";
 import { systemTzOffsetMinutes, tzOptions } from "../../lib/time";
 import { runSafe, useStore } from "../../state/store";
 
@@ -22,19 +24,44 @@ export function SettingsDialog({
   const storedTz = useStore((s) => s.tzOffsetMinutes);
   const [lang, setLang] = useState(i18n.resolvedLanguage ?? "en");
   const [tz, setTz] = useState(firstRun ? systemTzOffsetMinutes() : storedTz);
+  const [excluded, setExcluded] = useState<string[]>([]);
+  const [excludedChanged, setExcludedChanged] = useState(false);
   const systemTz = systemTzOffsetMinutes();
+
+  useEffect(() => {
+    api.getExcludedPaths().then(setExcluded).catch(console.error);
+  }, []);
+
+  const addExcluded = () => {
+    runSafe(async () => {
+      const dir = await open({ directory: true, title: t("wizard.excludePick") });
+      if (typeof dir === "string" && !excluded.includes(dir)) {
+        setExcluded([...excluded, dir]);
+        setExcludedChanged(true);
+      }
+    });
+  };
+
+  const removeExcluded = (p: string) => {
+    setExcluded(excluded.filter((x) => x !== p));
+    setExcludedChanged(true);
+  };
 
   const onSave = () => {
     runSafe(async () => {
       await i18n.changeLanguage(lang);
+      await api.setExcludedPaths(excluded);
       await useStore.getState().saveSettings(tz);
+      if (excludedChanged && !firstRun) {
+        useStore.getState().showToast(t("wizard.rescanHint"), false);
+      }
       onClose?.();
     });
   };
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70">
-      <div className="w-96 rounded-lg border border-neutral-700 bg-neutral-900 p-6 shadow-2xl">
+      <div className="max-h-[85vh] w-[26rem] overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-900 p-6 shadow-2xl">
         <div className="flex items-start justify-between">
           <h1 className="text-lg font-semibold text-neutral-100">
             {firstRun ? t("wizard.title") : t("wizard.settingsTitle")}
@@ -86,6 +113,40 @@ export function SettingsDialog({
             </option>
           ))}
         </select>
+
+        <div className="mt-4 flex items-center justify-between">
+          <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            {t("wizard.excluded")}
+          </label>
+          <button
+            onClick={addExcluded}
+            className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
+          >
+            {t("roots.add")}
+          </button>
+        </div>
+        <div className="mt-1 flex max-h-36 flex-col gap-1 overflow-y-auto">
+          {excluded.length === 0 && (
+            <div className="text-xs text-neutral-600">{t("wizard.excludedEmpty")}</div>
+          )}
+          {excluded.map((p) => (
+            <div
+              key={p}
+              className="group flex items-center gap-2 rounded border border-neutral-800 bg-neutral-950 px-2 py-1"
+            >
+              <span className="min-w-0 flex-1 truncate text-xs text-neutral-300" title={p}>
+                {p}
+              </span>
+              <button
+                onClick={() => removeExcluded(p)}
+                className="rounded px-1 text-xs text-red-400 hover:bg-neutral-800"
+                title={t("roots.remove")}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
 
         <button
           onClick={onSave}

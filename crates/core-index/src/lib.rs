@@ -234,15 +234,25 @@ fn flush_batch(
     n
 }
 
+/// So path dir (uppercase) với danh sách exclude tùy chỉnh (uppercase, sep cuối).
+fn is_excluded(full_path_upper: &str, excluded_upper: &[String]) -> bool {
+    if excluded_upper.is_empty() {
+        return false;
+    }
+    let with_sep = format!("{}\\", full_path_upper.trim_end_matches('\\'));
+    excluded_upper.iter().any(|ex| with_sep.starts_with(ex))
+}
+
 /// Quét `root`, upsert theo batch 5k qua writer, reconcile khi xong (chỉ khi
-/// không cancel và không có lỗi GHI). `on_progress(files_indexed)` gọi sau mỗi
-/// batch — caller tự throttle.
+/// không cancel và không có lỗi GHI). `excluded`: folder user tự loại (cả cây).
+/// `on_progress(files_indexed)` gọi sau mỗi batch — caller tự throttle.
 pub fn scan_root(
     root: &Path,
     volume_id: i64,
     gen: i64,
     writer: &WriterHandle,
     cancel: &CancelFlag,
+    excluded: &[String],
     mut on_progress: impl FnMut(u64),
 ) -> Result<ScanSummary> {
     let root_str = ops::normalize_path(&root.to_string_lossy());
@@ -252,6 +262,17 @@ pub fn scan_root(
     if !root_md.is_dir() {
         bail!("ERR_ROOT_UNREADABLE|{root_str}: not a directory");
     }
+    // Uppercase + trailing sep 1 lần cho cả scan
+    let excluded_upper: Vec<String> = excluded
+        .iter()
+        .map(|p| {
+            let mut u = ops::normalize_path(p).to_uppercase();
+            if !u.ends_with('\\') {
+                u.push('\\');
+            }
+            u
+        })
+        .collect();
 
     let track = Arc::new(ScanTrack::default());
     let dir_cache: Arc<Mutex<HashMap<String, i64>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -276,7 +297,9 @@ pub fn scan_root(
         };
         if md.is_dir() {
             let name_lower = dent.file_name().to_string_lossy().to_ascii_lowercase();
-            if keep_dir(&name_lower, file_attrs(&md)) {
+            let full_upper = dent.path().to_string_lossy().to_uppercase();
+            if keep_dir(&name_lower, file_attrs(&md)) && !is_excluded(&full_upper, &excluded_upper)
+            {
                 subdirs.push(dent.path());
             }
         } else if md.is_file() {
@@ -301,6 +324,7 @@ pub fn scan_root(
             volume_id,
             gen,
             cancel,
+            &excluded_upper,
             &dir_cache,
             &track,
             &mut batch,
@@ -348,6 +372,7 @@ fn walk_subtree(
     volume_id: i64,
     gen: i64,
     cancel: &CancelFlag,
+    excluded_upper: &[String],
     dir_cache: &Arc<Mutex<HashMap<String, i64>>>,
     track: &Arc<ScanTrack>,
     batch: &mut Vec<ScanEntry>,
@@ -356,10 +381,11 @@ fn walk_subtree(
 ) {
     let cancel_walk = cancel.clone();
     let track_walk = track.clone();
+    let excluded_walk = excluded_upper.to_vec();
     let walk = jwalk::WalkDir::new(sub)
         .skip_hidden(false)
         .follow_links(false)
-        .process_read_dir(move |_depth, _path, _state, children| {
+        .process_read_dir(move |_depth, parent, _state, children| {
             if cancel_walk.load(Ordering::Relaxed) {
                 children.clear();
                 return;
@@ -373,6 +399,15 @@ fn walk_subtree(
                 if entry.file_type().is_dir() {
                     if EXCLUDED_DIR_NAMES.contains(&name.as_str()) {
                         return false;
+                    }
+                    if !excluded_walk.is_empty() {
+                        let full_upper = parent
+                            .join(entry.file_name())
+                            .to_string_lossy()
+                            .to_uppercase();
+                        if is_excluded(&full_upper, &excluded_walk) {
+                            return false;
+                        }
                     }
                     match entry.metadata() {
                         Ok(md) => file_attrs(&md) & ATTR_REPARSE_POINT == 0,
@@ -440,8 +475,16 @@ mod tests {
 
         let with_slash = format!("{}\\", data.display());
         let cancel = CancelFlag::default();
-        let summary =
-            scan_root(Path::new(&with_slash), 1, 10, &db.writer, &cancel, |_| {}).unwrap();
+        let summary = scan_root(
+            Path::new(&with_slash),
+            1,
+            10,
+            &db.writer,
+            &cancel,
+            &[],
+            |_| {},
+        )
+        .unwrap();
         assert_eq!(
             summary.indexed, 2,
             "phải thấy cả file ở root lẫn file lồng sâu"
@@ -476,7 +519,7 @@ mod tests {
         std::fs::write(data.join("photo.jpg"), b"x").unwrap();
 
         let cancel = CancelFlag::default();
-        let summary = scan_root(&data, 1, 10, &db.writer, &cancel, |_| {}).unwrap();
+        let summary = scan_root(&data, 1, 10, &db.writer, &cancel, &[], |_| {}).unwrap();
         assert_eq!(
             summary.indexed, 2,
             "chi capture.ts + photo.jpg, khong co store.ts"
@@ -509,9 +552,35 @@ mod tests {
             10,
             &db.writer,
             &cancel,
+            &[],
             |_| {},
         )
         .unwrap_err();
         assert!(err.to_string().contains("ERR_ROOT_UNREADABLE"));
+    }
+
+    /// Exclude tùy chỉnh: cả cây folder bị loại, kể cả tầng đầu lẫn tầng sâu.
+    #[test]
+    fn custom_excluded_paths_skip_subtrees() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = core_db::Db::open(tmp.path()).unwrap();
+        let data = tmp.path().join("data");
+        std::fs::create_dir_all(data.join("Photos")).unwrap();
+        std::fs::create_dir_all(data.join("dev").join("icons")).unwrap();
+        std::fs::create_dir_all(data.join("Photos").join("work")).unwrap();
+        std::fs::write(data.join("Photos").join("keep.jpg"), b"x").unwrap();
+        std::fs::write(data.join("Photos").join("work").join("skip.jpg"), b"x").unwrap();
+        std::fs::write(data.join("dev").join("icons").join("icon.png"), b"x").unwrap();
+
+        let excluded = vec![
+            data.join("dev").to_string_lossy().to_string(), // tầng đầu
+            data.join("Photos")
+                .join("work")
+                .to_string_lossy()
+                .to_string(), // tầng sâu
+        ];
+        let cancel = CancelFlag::default();
+        let summary = scan_root(&data, 1, 10, &db.writer, &cancel, &excluded, |_| {}).unwrap();
+        assert_eq!(summary.indexed, 1, "chi keep.jpg duoc index");
     }
 }

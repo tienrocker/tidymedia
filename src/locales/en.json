@@ -51,7 +51,11 @@
     "systemDefault": "system",
     "start": "Get started",
     "save": "Save",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "excluded": "Excluded folders",
+    "excludedEmpty": "None — every folder in watched roots is scanned.",
+    "excludePick": "Pick a folder to exclude from scanning",
+    "rescanHint": "Excluded folders changed — hit ⟳ on your watched folders to apply."
   },
   "errors": {
     "generic": "Error: {{detail}}",

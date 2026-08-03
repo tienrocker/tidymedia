@@ -409,6 +409,39 @@ pub fn list_jobs(conn: &Connection, limit: i64) -> Result<Vec<JobRow>> {
     Ok(rows)
 }
 
+// ---------- excluded paths (user-defined) ----------
+
+/// Danh sách folder user tự exclude (JSON array trong kv). Path đã normalize.
+pub fn get_excluded_paths(conn: &Connection) -> Result<Vec<String>> {
+    let raw = kv_get(conn, "excluded_paths")?.unwrap_or_else(|| "[]".into());
+    let mut list: Vec<String> = Vec::new();
+    // Parse tay JSON array-of-strings đơn giản để khỏi kéo serde_json vào core-db
+    // — format do chính mình ghi (set_excluded_paths), luôn hợp lệ.
+    for part in raw
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split("\",\"")
+    {
+        let s = part.trim().trim_matches('"').replace("\\\\", "\\");
+        if !s.is_empty() {
+            list.push(s);
+        }
+    }
+    Ok(list)
+}
+
+pub fn set_excluded_paths(conn: &Connection, paths: &[String]) -> Result<()> {
+    let json = format!(
+        "[{}]",
+        paths
+            .iter()
+            .map(|p| format!("\"{}\"", normalize_path(p).replace('\\', "\\\\")))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    kv_set(conn, "excluded_paths", &json)
+}
+
 // ---------- kv ----------
 
 pub fn kv_get(conn: &Connection, key: &str) -> Result<Option<String>> {

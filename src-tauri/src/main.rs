@@ -28,6 +28,8 @@ fn main() {
             commands::fetch_rows,
             commands::get_settings,
             commands::set_settings,
+            commands::get_excluded_paths,
+            commands::set_excluded_paths,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tidymedia");
