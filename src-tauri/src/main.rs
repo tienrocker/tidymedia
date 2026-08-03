@@ -26,6 +26,8 @@ fn main() {
             commands::list_jobs,
             commands::query_files,
             commands::fetch_rows,
+            commands::get_settings,
+            commands::set_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tidymedia");

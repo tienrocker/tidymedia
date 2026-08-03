@@ -1,8 +1,11 @@
--- media-dedup index schema v1
+-- TidyMedia index schema v2
 -- All timestamps are unix epoch milliseconds unless noted.
+-- v2: dirs.path_key (case-insensitive scoping), files.name_norm (accent-insensitive
+-- search), AUTOINCREMENT (chống rowid reuse), roots.file_count cache, files.status
+-- ghi được từ scanner (cloud placeholder).
 
 CREATE TABLE volumes(
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   guid TEXT UNIQUE,              -- \\?\Volume{...}\ khi có; tạm thời "D:" ở M1
   letter TEXT,
   serial INTEGER,
@@ -14,31 +17,34 @@ CREATE TABLE volumes(
 );
 
 CREATE TABLE roots(
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   volume_id INTEGER NOT NULL REFERENCES volumes(id),
-  path TEXT NOT NULL UNIQUE,
+  path TEXT NOT NULL UNIQUE,     -- canonical (GetFinalPathName), drive letter hoa
   last_scan_at INTEGER,
-  scan_state TEXT
+  scan_state TEXT,
+  file_count INTEGER NOT NULL DEFAULT 0   -- cache, update khi scan xong
 );
 
 CREATE TABLE dirs(
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   volume_id INTEGER NOT NULL,
   frn INTEGER,
   parent_id INTEGER,
   name TEXT NOT NULL,
-  path TEXT NOT NULL,            -- materialized full path, no trailing sep (except drive root "D:\")
-  UNIQUE(volume_id, path)
+  path TEXT NOT NULL,            -- materialized full path (display), no trailing sep except "D:\"
+  path_key TEXT NOT NULL,        -- UPPER(path) — mọi scope/so sánh đi qua cột này
+  UNIQUE(volume_id, path_key)
 );
 CREATE INDEX dirs_frn ON dirs(volume_id, frn) WHERE frn IS NOT NULL;
-CREATE INDEX dirs_path ON dirs(path);
+CREATE INDEX dirs_path_key ON dirs(path_key);
 
 CREATE TABLE files(
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   dir_id INTEGER NOT NULL REFERENCES dirs(id),
   volume_id INTEGER NOT NULL,
   frn INTEGER,                   -- NTFS FileReferenceNumber, ổn định qua move/rename
-  name TEXT NOT NULL,
+  name TEXT NOT NULL COLLATE NOCASE,
+  name_norm TEXT NOT NULL,       -- lowercase + bỏ dấu (đ→d) — nguồn cho FTS + LIKE
   original_name TEXT,            -- tên trước khi organize
   ext TEXT,                      -- lowercase, không dấu chấm
   kind INTEGER NOT NULL,         -- 0=image 1=video
@@ -62,20 +68,20 @@ CREATE INDEX files_name_nc ON files(name COLLATE NOCASE);
 CREATE INDEX files_seen ON files(seen_gen);
 
 CREATE VIRTUAL TABLE files_fts USING fts5(
-  name,
+  name_norm,
   content='files',
   content_rowid='id',
   tokenize='trigram'
 );
 CREATE TRIGGER files_fts_ai AFTER INSERT ON files BEGIN
-  INSERT INTO files_fts(rowid, name) VALUES (new.id, new.name);
+  INSERT INTO files_fts(rowid, name_norm) VALUES (new.id, new.name_norm);
 END;
 CREATE TRIGGER files_fts_ad AFTER DELETE ON files BEGIN
-  INSERT INTO files_fts(files_fts, rowid, name) VALUES ('delete', old.id, old.name);
+  INSERT INTO files_fts(files_fts, rowid, name_norm) VALUES ('delete', old.id, old.name_norm);
 END;
-CREATE TRIGGER files_fts_au AFTER UPDATE OF name ON files BEGIN
-  INSERT INTO files_fts(files_fts, rowid, name) VALUES ('delete', old.id, old.name);
-  INSERT INTO files_fts(rowid, name) VALUES (new.id, new.name);
+CREATE TRIGGER files_fts_au AFTER UPDATE OF name_norm ON files BEGIN
+  INSERT INTO files_fts(files_fts, rowid, name_norm) VALUES ('delete', old.id, old.name_norm);
+  INSERT INTO files_fts(rowid, name_norm) VALUES (new.id, new.name_norm);
 END;
 
 CREATE TABLE media_meta(
@@ -116,7 +122,7 @@ CREATE TABLE phashes(
 ) WITHOUT ROWID;
 
 CREATE TABLE dup_groups(
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind INTEGER NOT NULL,         -- 0 exact, 1 similar-image, 2 similar-video
   score REAL,
   created_at INTEGER,
@@ -129,13 +135,13 @@ CREATE TABLE dup_members(
   PRIMARY KEY(group_id, file_id)
 ) WITHOUT ROWID;
 
-CREATE TABLE tags(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+CREATE TABLE tags(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE);
 CREATE TABLE file_tags(
   file_id INTEGER NOT NULL,
   tag_id INTEGER NOT NULL,
   PRIMARY KEY(file_id, tag_id)
 ) WITHOUT ROWID;
-CREATE TABLE albums(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at INTEGER);
+CREATE TABLE albums(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, created_at INTEGER);
 CREATE TABLE album_files(
   album_id INTEGER NOT NULL,
   file_id INTEGER NOT NULL,
@@ -144,14 +150,14 @@ CREATE TABLE album_files(
 ) WITHOUT ROWID;
 
 CREATE TABLE library_roots(
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   volume_id INTEGER NOT NULL UNIQUE REFERENCES volumes(id),
   path TEXT NOT NULL,
   is_primary INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE imports(
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   source_kind TEXT NOT NULL,     -- 'folder' | 'mtp'
   device_id TEXT,
   started_at INTEGER,
@@ -172,7 +178,7 @@ CREATE TABLE import_seen(
 ) WITHOUT ROWID;
 
 CREATE TABLE org_ops(
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   batch_id INTEGER NOT NULL,
   file_id INTEGER NOT NULL,
   old_path TEXT NOT NULL,
@@ -182,7 +188,7 @@ CREATE TABLE org_ops(
 CREATE INDEX org_ops_batch ON org_ops(batch_id);
 
 CREATE TABLE jobs(
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL,
   state TEXT NOT NULL,           -- queued | running | done | failed | cancelled
   params TEXT,

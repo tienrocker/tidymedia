@@ -39,8 +39,14 @@ pub enum JobEvent {
 /// Cờ hủy — job thread poll cờ này giữa các batch.
 pub type CancelFlag = Arc<AtomicBool>;
 
+struct JobInfo {
+    flag: CancelFlag,
+    kind: String,
+    root_id: Option<i64>,
+}
+
 pub struct JobManager {
-    active: Mutex<HashMap<i64, CancelFlag>>,
+    active: Mutex<HashMap<i64, JobInfo>>,
     tx: Sender<JobEvent>,
     rx: Receiver<JobEvent>,
 }
@@ -61,20 +67,55 @@ impl JobManager {
         }
     }
 
-    pub fn register(&self, job_id: i64) -> CancelFlag {
+    pub fn register(&self, job_id: i64, kind: &str, root_id: Option<i64>) -> CancelFlag {
         let flag: CancelFlag = Arc::new(AtomicBool::new(false));
-        self.active.lock().unwrap().insert(job_id, flag.clone());
+        self.active.lock().unwrap().insert(
+            job_id,
+            JobInfo {
+                flag: flag.clone(),
+                kind: kind.to_string(),
+                root_id,
+            },
+        );
         flag
     }
 
     /// Trả true nếu job tồn tại và đã được gắn cờ hủy.
     pub fn cancel(&self, job_id: i64) -> bool {
-        if let Some(flag) = self.active.lock().unwrap().get(&job_id) {
-            flag.store(true, Ordering::Relaxed);
+        if let Some(info) = self.active.lock().unwrap().get(&job_id) {
+            info.flag.store(true, Ordering::Relaxed);
             true
         } else {
             false
         }
+    }
+
+    /// Job id của scan đang chạy trên root này (nếu có) — chặn scan trùng.
+    pub fn active_scan_for_root(&self, root_id: i64) -> Option<i64> {
+        self.active
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, info)| info.kind == "scan" && info.root_id == Some(root_id))
+            .map(|(id, _)| *id)
+    }
+
+    /// Gắn cờ hủy mọi scan của root; trả về danh sách job id bị hủy.
+    pub fn cancel_scans_for_root(&self, root_id: i64) -> Vec<i64> {
+        let map = self.active.lock().unwrap();
+        map.iter()
+            .filter(|(_, info)| info.kind == "scan" && info.root_id == Some(root_id))
+            .map(|(id, info)| {
+                info.flag.store(true, Ordering::Relaxed);
+                *id
+            })
+            .collect()
+    }
+
+    /// Còn job nào trong danh sách đang active không (để đợi cancel xong).
+    pub fn any_active(&self, ids: &[i64]) -> bool {
+        let map = self.active.lock().unwrap();
+        ids.iter().any(|id| map.contains_key(id))
     }
 
     pub fn unregister(&self, job_id: i64) {
@@ -92,25 +133,28 @@ impl JobManager {
 }
 
 /// Helper throttle: chỉ cho qua tối đa 1 lần mỗi `interval`.
+/// Lần gọi đầu tiên luôn ready (không trừ lùi Instant — trừ lùi panic khi
+/// uptime máy nhỏ hơn offset, vì Instant trên Windows là QPC tính từ boot).
 pub struct Throttle {
-    last: std::time::Instant,
+    last: Option<std::time::Instant>,
     interval: std::time::Duration,
 }
 
 impl Throttle {
     pub fn new(interval_ms: u64) -> Self {
         Self {
-            last: std::time::Instant::now() - std::time::Duration::from_secs(3600),
+            last: None,
             interval: std::time::Duration::from_millis(interval_ms),
         }
     }
 
     pub fn ready(&mut self) -> bool {
-        if self.last.elapsed() >= self.interval {
-            self.last = std::time::Instant::now();
-            true
-        } else {
-            false
+        match self.last {
+            Some(t) if t.elapsed() < self.interval => false,
+            _ => {
+                self.last = Some(std::time::Instant::now());
+                true
+            }
         }
     }
 }

@@ -55,14 +55,21 @@ fn bench_scan(args: &[String]) -> Result<()> {
     let db_dir = PathBuf::from(flag(args, "--db").context("--db <dir> là bắt buộc")?);
 
     let db = core_db::Db::open(&db_dir)?;
-    let root_str = root.to_string_lossy().to_string();
-    let root_id = db
-        .writer
-        .exec(move |c| core_db::ops::upsert_root(c, &root_str))?;
+    // Canonical hóa như app thật (giải alias/case, bỏ \\?\ prefix)
+    let canon = fs::canonicalize(&root)?;
+    let canon_str = canon.to_string_lossy();
+    let root_str = canon_str
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&canon_str)
+        .to_string();
+    let root_id = {
+        let rs = root_str.clone();
+        db.writer.exec(move |c| core_db::ops::upsert_root(c, &rs))?
+    };
     let (root_path, volume_id) = db.pool.with(|c| core_db::ops::get_root(c, root_id))?;
 
-    let gen = 1_000_000; // generation giả cho bench
-    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let gen = db.writer.exec(|c| core_db::ops::next_scan_gen(c))?;
+    let cancel = core_index::CancelFlag::default();
     let t0 = std::time::Instant::now();
     let summary = core_index::scan_root(
         Path::new(&root_path),
@@ -74,9 +81,11 @@ fn bench_scan(args: &[String]) -> Result<()> {
     )?;
     let scan_s = t0.elapsed().as_secs_f32();
     println!(
-        "SCAN: {} files indexed, {} missing, {:.2}s ({:.0} files/s)",
+        "SCAN: {} files indexed, {} missing, {} walk-errors, {} lossy-skipped, {:.2}s ({:.0} files/s)",
         summary.indexed,
         summary.marked_missing,
+        summary.walk_errors,
+        summary.skipped_lossy_names,
         scan_s,
         summary.indexed as f32 / scan_s.max(0.001)
     );

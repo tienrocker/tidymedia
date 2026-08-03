@@ -64,4 +64,6 @@ pub struct ScanEntry {
     pub size: i64,
     pub mtime: i64,
     pub attrs: u32,
+    /// 0 = present, 2 = cloud placeholder (OFFLINE / RECALL_* attrs).
+    pub status: i64,
 }

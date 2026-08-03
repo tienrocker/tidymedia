@@ -6,10 +6,10 @@ use rusqlite::types::Value;
 use rusqlite::{params_from_iter, Connection, ToSql};
 
 use crate::models::{FileFilter, FileRow};
-use crate::ops::like_escape;
+use crate::ops::{normalize_for_search, normalize_path, path_range};
 
 /// Chạy filter → trả toàn bộ ID khớp theo thứ tự sort (Everything-style result cache).
-/// UI sẽ fetch cửa sổ bằng `fetch_rows`, không bao giờ serialize cả list.
+/// UI fetch cửa sổ bằng `fetch_rows`, không bao giờ serialize cả list.
 pub fn query_ids(conn: &Connection, f: &FileFilter) -> Result<Vec<i64>> {
     let mut sql = String::from("SELECT f.id FROM files f");
     let mut wheres: Vec<String> = Vec::new();
@@ -19,17 +19,21 @@ pub fn query_ids(conn: &Connection, f: &FileFilter) -> Result<Vec<i64>> {
         sql.push_str(" JOIN dirs d ON d.id = f.dir_id");
     }
     if f.include_missing != Some(true) {
-        wheres.push("f.status = 0".into());
+        // 0 = present, 2 = cloud placeholder (vẫn browse được, chỉ cấm hash/thumb)
+        wheres.push("f.status IN (0, 2)".into());
     }
     if let Some(text) = f.text.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
-        if text.chars().count() >= 3 {
-            // FTS5 trigram: substring match thật sự, <10ms trên 1M rows
+        let norm = normalize_for_search(text);
+        if norm.chars().count() >= 3 {
+            // FTS5 trigram trên name_norm: substring + không phân biệt dấu
             wheres.push("f.id IN (SELECT rowid FROM files_fts WHERE files_fts MATCH ?)".into());
-            params.push(Box::new(format!("\"{}\"", text.replace('"', "\"\""))));
+            params.push(Box::new(format!("\"{}\"", norm.replace('"', "\"\""))));
         } else {
-            // Query ngắn: prefix LIKE trên index NOCASE
-            wheres.push("f.name LIKE ? ESCAPE '!'".into());
-            params.push(Box::new(format!("{}%", like_escape(text))));
+            // Query ngắn: substring LIKE trên name_norm (full scan chấp nhận được —
+            // semantics nhất quán với nhánh FTS, không nhảy kết quả ở mốc 3 ký tự)
+            wheres.push("f.name_norm LIKE ? ESCAPE '!'".into());
+            let escaped = norm.replace('!', "!!").replace('%', "!%").replace('_', "!_");
+            params.push(Box::new(format!("%{escaped}%")));
         }
     }
     if let Some(kind) = f.kind {
@@ -60,14 +64,11 @@ pub fn query_ids(conn: &Connection, f: &FileFilter) -> Result<Vec<i64>> {
         params.push(Box::new(v));
     }
     if let Some(root) = f.root_path.as_deref() {
-        let root = crate::ops::normalize_path(root);
-        let mut base = root.clone();
-        if !base.ends_with('\\') {
-            base.push('\\');
-        }
-        wheres.push("(d.path = ? OR d.path LIKE ? ESCAPE '!')".into());
-        params.push(Box::new(root));
-        params.push(Box::new(format!("{}%", like_escape(&base))));
+        let (eq, start, end) = path_range(&normalize_path(root));
+        wheres.push("(d.path_key = ? OR (d.path_key >= ? AND d.path_key < ?))".into());
+        params.push(Box::new(eq));
+        params.push(Box::new(start));
+        params.push(Box::new(end));
     }
 
     if !wheres.is_empty() {
@@ -99,8 +100,10 @@ pub fn query_ids(conn: &Connection, f: &FileFilter) -> Result<Vec<i64>> {
     Ok(ids)
 }
 
-/// Hydrate 1 cửa sổ ID → FileRow, giữ nguyên thứ tự input. `ids` đã được cap ở caller.
-pub fn fetch_rows(conn: &Connection, ids: &[i64]) -> Result<Vec<FileRow>> {
+/// Hydrate 1 cửa sổ ID → đúng 1 slot cho MỖI id yêu cầu, giữ nguyên thứ tự.
+/// Id đã biến mất giữa chừng (remove_root đang chạy...) → slot None — frontend
+/// không bao giờ bị lệch index vì thiếu row.
+pub fn fetch_rows(conn: &Connection, ids: &[i64]) -> Result<Vec<Option<FileRow>>> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -125,5 +128,5 @@ pub fn fetch_rows(conn: &Connection, ids: &[i64]) -> Result<Vec<FileRow>> {
         })?
         .filter_map(|r| r.ok().map(|row| (row.id, row)))
         .collect();
-    Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
+    Ok(ids.iter().map(|id| by_id.remove(id)).collect())
 }

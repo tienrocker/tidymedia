@@ -1,3 +1,4 @@
+use std::panic::AssertUnwindSafe;
 use std::path::Path;
 
 use anyhow::Result;
@@ -25,12 +26,13 @@ impl WriterHandle {
             .send(Box::new(move |conn| {
                 let _ = rtx.send(f(conn));
             }))
-            .map_err(|_| anyhow::anyhow!("db writer thread is gone"))?;
+            .map_err(|_| anyhow::anyhow!("ERR_DB_WRITER_DOWN|writer thread is gone"))?;
         rrx.recv()
-            .map_err(|_| anyhow::anyhow!("db writer dropped result"))?
+            .map_err(|_| anyhow::anyhow!("ERR_DB_WRITER_DOWN|writer dropped result (panic?)"))?
     }
 
-    /// Fire-and-forget (dùng cho batch scan). Lỗi được log, không propagate.
+    /// Fire-and-forget. Lỗi trong `f` do closure tự xử lý/ghi nhận (vd error
+    /// counter của scan); ở đây chỉ log phòng hờ.
     pub fn exec_async<F>(&self, f: F)
     where
         F: FnOnce(&mut Connection) -> Result<()> + Send + 'static,
@@ -54,7 +56,15 @@ pub fn spawn_writer(db_path: &Path) -> Result<WriterHandle> {
         .name("db-writer".into())
         .spawn(move || {
             while let Ok(op) = rx.recv() {
-                op(&mut conn);
+                // Một op panic không được giết writer — bắt lại, rollback nếu
+                // đang dở transaction, đi tiếp.
+                let result = std::panic::catch_unwind(AssertUnwindSafe(|| op(&mut conn)));
+                if result.is_err() {
+                    tracing::error!("db write op panicked — rolled back, writer continues");
+                    if !conn.is_autocommit() {
+                        let _ = conn.execute_batch("ROLLBACK;");
+                    }
+                }
             }
         })
         .expect("spawn db-writer thread");
@@ -66,9 +76,13 @@ fn apply_write_pragmas(conn: &Connection) -> Result<()> {
         "PRAGMA journal_mode=WAL;
          PRAGMA synchronous=NORMAL;
          PRAGMA busy_timeout=5000;
-         PRAGMA cache_size=-262144;
+         PRAGMA cache_size=-131072;
          PRAGMA foreign_keys=ON;
          PRAGMA temp_store=MEMORY;",
     )?;
+    let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
+    if !mode.eq_ignore_ascii_case("wal") {
+        anyhow::bail!("ERR_DB_NO_WAL|journal_mode={mode} — index db phải nằm trên ổ hỗ trợ WAL");
+    }
     Ok(())
 }

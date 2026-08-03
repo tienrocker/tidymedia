@@ -41,36 +41,57 @@ impl QueryCache {
 }
 
 pub struct AppState {
-    pub db: Db,
-    pub jobs: JobManager,
-    pub queries: Mutex<QueryCache>,
+    pub db: Arc<Db>,
+    pub jobs: Arc<JobManager>,
+    pub queries: Arc<Mutex<QueryCache>>,
+}
+
+/// Data dir: portable.marker cạnh exe → .\data cạnh exe (chạy từ USB);
+/// không thì app_data_dir (+\dev cho debug build — dev không được đụng data thật).
+fn resolve_data_dir(app: &AppHandle) -> Result<std::path::PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            if exe_dir.join("portable.marker").exists() {
+                return Ok(exe_dir.join("data"));
+            }
+        }
+    }
+    let mut dir = app.path().app_data_dir()?;
+    if cfg!(debug_assertions) {
+        dir = dir.join("dev");
+    }
+    Ok(dir)
 }
 
 pub fn init(app: &AppHandle) -> Result<()> {
-    let mut data_dir = app.path().app_data_dir()?;
-    if cfg!(debug_assertions) {
-        // Dev build tuyệt đối không đụng data của bản cài thật.
-        data_dir = data_dir.join("dev");
-    }
+    let data_dir = resolve_data_dir(app)?;
     tracing::info!(dir = %data_dir.display(), "opening index db");
-    let db = Db::open(&data_dir)?;
+    let db = Arc::new(Db::open(&data_dir)?);
 
-    let jobs = JobManager::new();
+    let jobs = Arc::new(JobManager::new());
     let events_rx = jobs.receiver();
     let writer = db.writer.clone();
 
     app.manage(AppState {
         db,
         jobs,
-        queries: Mutex::new(QueryCache::new()),
+        queries: Arc::new(Mutex::new(QueryCache::new())),
     });
 
-    // Event pump: JobEvent → UI (tauri events) + jobs table + index://changed debounce.
+    // Event pump: JobEvent → UI (tauri events) + jobs table + index://changed.
+    // index://changed khi đang scan giãn 2.5s — UI re-query cả list, không được spam.
     let handle = app.clone();
     std::thread::Builder::new()
         .name("job-event-pump".into())
         .spawn(move || {
-            let mut last_changed = Instant::now() - Duration::from_secs(60);
+            let mut last_changed: Option<Instant> = None;
+            let emit_changed = |handle: &AppHandle, last: &mut Option<Instant>| {
+                let due = !last.is_some_and(|t| t.elapsed() < Duration::from_millis(2500));
+                if due {
+                    *last = Some(Instant::now());
+                    let _ = handle.emit("index://changed", ());
+                }
+            };
             while let Ok(ev) = events_rx.recv() {
                 match ev {
                     JobEvent::Progress(p) => {
@@ -88,9 +109,8 @@ pub fn init(app: &AppHandle) -> Result<()> {
                         });
                         let is_scan = p.kind == "scan";
                         let _ = handle.emit("job://progress", &p);
-                        if is_scan && last_changed.elapsed() >= Duration::from_millis(500) {
-                            last_changed = Instant::now();
-                            let _ = handle.emit("index://changed", ());
+                        if is_scan {
+                            emit_changed(&handle, &mut last_changed);
                         }
                     }
                     JobEvent::Done {
@@ -98,12 +118,22 @@ pub fn init(app: &AppHandle) -> Result<()> {
                         kind,
                         message,
                     } => {
-                        writer.exec_async(move |c| core_db::ops::finish_job(c, job_id, "done", None));
+                        writer.exec_async({
+                            let message = message.clone();
+                            move |c| {
+                                if let Some(m) = &message {
+                                    core_db::ops::update_job_progress(c, job_id, -1, None, Some(m))
+                                        .ok();
+                                }
+                                core_db::ops::finish_job(c, job_id, "done", None)
+                            }
+                        });
                         handle.state::<AppState>().jobs.unregister(job_id);
                         let _ = handle.emit(
                             "job://done",
                             &serde_json::json!({ "jobId": job_id, "kind": kind, "message": message }),
                         );
+                        last_changed = None;
                         let _ = handle.emit("index://changed", ());
                     }
                     JobEvent::Failed { job_id, kind, error } => {
