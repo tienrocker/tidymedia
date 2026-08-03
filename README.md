@@ -1,55 +1,106 @@
-# TidyMedia
+<div align="center">
 
-Fast media manager + library consolidator for Windows.
+# 🗂️ TidyMedia
 
-Index entire drives in the background, search instantly as you type, find duplicates
-(exact + perceptual), consolidate scattered photos/videos into a clean date-based
-library, and import directly from iPhone / SD cards — without ever trusting
-inconsistent file names.
+**Blazing-fast media manager & library consolidator for Windows.**
+Index an entire drive, search as you type, and untangle 15 years of scattered photos — safely.
 
-**Stack:** Tauri 2 + Rust · React 18 + Vite + TanStack Virtual · SQLite (WAL, FTS5 trigram)
+[![CI](https://github.com/tienrocker/tidymedia/actions/workflows/ci.yml/badge.svg)](https://github.com/tienrocker/tidymedia/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/tienrocker/tidymedia?include_prereleases&label=release)](https://github.com/tienrocker/tidymedia/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078d6)
+![Built with](https://img.shields.io/badge/built%20with-Tauri%202%20%2B%20Rust-orange)
 
-## Why
+**English** · [Tiếng Việt](README.vi.md) · [中文](README.zh.md)
 
-Media collected over 15 years — iPhone syncs through many different apps, cameras,
-chat apps — ends up scattered across drives with duplicate copies and colliding
-names (`IMG_1234.JPG` from three different phones). TidyMedia treats **content as
-identity** (BLAKE3 + EXIF taken-date, never file names) and is built around three pillars:
+</div>
 
-1. **Browse & search a whole drive instantly** — NTFS-aware scanning, index-first
-   architecture, virtualized UI that scrolls smoothly through 1M+ items.
-2. **Deduplicate safely** — tiered hashing (size → xxh3 → full BLAKE3), perceptual
-   matching for re-encoded copies, side-by-side review UI, Recycle Bin only.
-3. **Consolidate** — organize everything into `Library\YYYY\YYYY-MM\` with
-   collision-proof date-based names; atomic same-volume moves; full undo journal.
+---
 
-Current status: **M1** (index + instant search) — scan of a 200k-file corpus in ~15s,
-search-as-you-type in 20–30 ms. See the milestone plan in the repo issues/docs.
+Photos and videos pile up for years — iPhone syncs through a dozen different apps, cameras, chat apps — until your drives are full of duplicates and colliding names (`IMG_1234.JPG` from three different phones). TidyMedia treats **content as identity**, never file names, and is built around three pillars:
 
-## i18n
+1. **Browse & search a whole drive, instantly** — index-first architecture; the UI never touches the filesystem while you browse.
+2. **Deduplicate safely** — tiered hashing (size → xxh3 → full BLAKE3) + perceptual matching, side-by-side review, Recycle Bin only. *(in progress — M4)*
+3. **Consolidate** — organize everything into `Library\YYYY\YYYY-MM\` with collision-proof date-based names and a full undo journal. *(in progress — M5)*
 
-UI ships in **English, Tiếng Việt, 中文** (react-i18next, `src/locales/*.json`).
-PRs adding locales are welcome.
+## ✨ Highlights
 
-## Development
+- ⚡ **Fast for real** — 218,000 files on a real drive indexed in **under 10 seconds**; search answers in **20–40 ms** *while the scan is still running*.
+- 🔎 **Search that forgives** — substring, accent-insensitive (`anh tet` finds `Ảnh Tết`), filters for kind / size / date / resolution.
+- 🖼️ **Thumbnail grid & lightbox** — fully virtualized grid that scrolls smoothly through a million items, WebP thumbnail cache (2 GB LRU), cursor-anchored zoom & pan, EXIF info panel (taken date, camera, dimensions). HEIC/AVIF via ffmpeg.
+- 🌥️ **Cloud-safe** — OneDrive/iCloud placeholders are indexed but **never hydrated**: TidyMedia will not silently pull gigabytes down from the cloud.
+- 🕐 **Timezone-aware** — you pick your timezone on first run; date filters and (soon) library file names respect it, not whatever the OS guesses.
+- 🌍 **English · Tiếng Việt · 中文** out of the box.
+- 📦 **Tiny native app** — Tauri 2 + Rust, no Electron. NSIS installer, MSI, and a portable ZIP that keeps its data next to the exe.
+
+## 🚀 Getting started
+
+1. Grab the latest **setup .exe**, **.msi**, or **portable .zip** from [Releases](https://github.com/tienrocker/tidymedia/releases).
+2. Windows 10/11 x64. WebView2 is installed automatically if missing; no other runtime needed.
+3. First run: pick your **language** and **timezone** → click **+ Add** and select a folder or a whole drive (`D:\`) → browse and search while it scans.
+
+> HEIC/AVIF thumbnails currently use `ffmpeg` from your `PATH` if present — it will ship bundled with the video update (M3).
+> First-run installs show a SmartScreen warning (no Authenticode certificate yet).
+
+## 🛡️ Data safety, by design
+
+Five invariants every destructive code path must pass — not guidelines, hard rules:
+
+1. Nothing is ever deleted without a **BLAKE3-verified** surviving copy — quick hashes only *filter* candidates, they are never grounds for deletion.
+2. Size+mtime re-checked immediately before any delete/overwrite (TOCTOU guard) — abort on mismatch.
+3. Same volume ⇒ **atomic rename**; cross volume ⇒ copy → flush → verify → only then delete the source.
+4. Every delete goes to the **Recycle Bin** (quarantine folder as fallback) — never a direct hard delete.
+5. Every destructive operation is **journaled**, dry-run previewed, and undoable.
+
+## 🗺️ Roadmap
+
+| Milestone | Scope | Status |
+|---|---|---|
+| M1 | Whole-drive index, instant search, virtualized browse | ✅ |
+| M2 | Thumbnail grid, lightbox + EXIF, HEIC, metadata jobs | ✅ |
+| M3 | Video: keyframe thumbs, in-app playback, Live Photo pairing, bundled ffmpeg | 🔜 |
+| M4 | Exact dedup: tiered hashing, 2–4-up compare UI, keyboard-first review | ⏳ |
+| M5 | Organize: date-based library, atomic moves, undo journal | ⏳ |
+| M6 | iPhone / SD import via WPD/MTP, incremental "already imported" | ⏳ |
+| M7 | Perceptual similarity, tags, albums, storage analytics | ⏳ |
+| M8 | NTFS MFT/USN fast scan — full drive rescan in seconds | ⏳ |
+
+## ⚙️ Performance
+
+Measured on a 200k-file synthetic corpus (generated by the bundled `devtool gen-tree`) plus a real 218k-file consumer drive:
+
+| Operation | Result |
+|---|---|
+| Cold scan, 200k files | ~12–15 s |
+| Real drive, 218k files | ~10 s |
+| Search-as-you-type (FTS5 trigram) | 20–40 ms |
+| Fetch one result window | < 1 ms |
+| UI while scanning | scrolls & searches normally |
+
+**Stack:** Tauri 2 + Rust · React 18 + Vite + TanStack Virtual · SQLite (WAL, FTS5 trigram, single-writer)
+
+## 🛠️ Building from source
+
+Prerequisites: Rust (stable, MSVC), Node.js 20+.
 
 ```powershell
 npm install
-npm run tauri dev
+npm run tauri dev      # develop (isolated dev data dir — never touches a real install)
+npm run tauri build    # release build: NSIS + MSI bundles
+cargo test --workspace # headless core tests, no GUI needed
 ```
 
-- Dev builds use an isolated data dir (`…\com.polyvn.tidymedia\dev\`) so they never
-  touch a real installation's index or library.
-- Core crates are Tauri-free and test headlessly: `cargo test --workspace`
-- Generate a synthetic test corpus:
-  `cargo run -p devtool --release -- gen-tree --root D:\.testdata --files 200000 --dupe-sets 500`
-- Benchmark scan/search: `cargo run -p devtool --release -- bench-scan --root <path> --db <dir>`
-
-## Release
+Generate a synthetic test corpus / benchmark:
 
 ```powershell
-.\scripts\release.ps1 minor   # bump version + changelog + commit + tag
-git push --follow-tags        # CI builds the NSIS installer -> draft GitHub Release
+cargo run -p devtool --release -- gen-tree --root D:\.testdata --files 200000 --dupe-sets 500
+cargo run -p devtool --release -- bench-scan --root <path> --db <dir>
 ```
 
-First-run installs show a SmartScreen warning (no Authenticode certificate yet).
+## 🌍 i18n & contributing
+
+All UI strings live in `src/locales/{en,vi,zh}.json` (react-i18next). New strings must land in all three files — PRs adding more locales are welcome, as are bug reports with reproduction steps.
+
+## 📄 License
+
+[MIT](LICENSE) © [tienrocker](https://github.com/tienrocker)
