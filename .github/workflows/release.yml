@@ -33,6 +33,20 @@ jobs:
           # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "media-dedup ${{ github.ref_name }}"
+          releaseName: "TidyMedia ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+      - name: Build portable ZIP
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $dir = "portable-staging"
+          New-Item -ItemType Directory $dir | Out-Null
+          Copy-Item "target/release/tidymedia.exe" $dir
+          # portable.marker: app dùng .\data cạnh exe thay vì %APPDATA%
+          New-Item -ItemType File "$dir/portable.marker" | Out-Null
+          Compress-Archive -Path "$dir/*" -DestinationPath "TidyMedia_${version}_portable.zip"
+          gh release upload "${{ github.ref_name }}" "TidyMedia_${version}_portable.zip" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

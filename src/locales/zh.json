@@ -25,7 +25,7 @@
     "title": "监视的文件夹",
     "add": "+ 添加",
     "empty": "还没有内容。点击「+ 添加」选择整个磁盘（如 D:\\）或文件夹。",
-    "files": "{{n}} 个文件",
+    "files_other": "{{formatted}} 个文件",
     "rescan": "重新扫描",
     "remove": "从索引中移除",
     "removeConfirm": "从索引中移除「{{path}}」？（不会改动磁盘上的文件）",
@@ -37,7 +37,31 @@
     "stop": "停止"
   },
   "status": {
-    "files": "{{n}} 个文件",
+    "files_other": "{{formatted}} 个文件",
     "query": "查询 {{ms}} 毫秒"
+  },
+  "wizard": {
+    "title": "欢迎使用 TidyMedia",
+    "subtitle": "两个快速选择——之后可以更改。",
+    "language": "语言",
+    "timezone": "时区（用于日期显示与整理）",
+    "systemDefault": "系统",
+    "start": "开始使用"
+  },
+  "errors": {
+    "generic": "错误：{{detail}}",
+    "ERR_NOT_DIR": "不是文件夹：{{detail}}",
+    "ERR_UNC_UNSUPPORTED": "暂不支持网络路径（\\\\server\\…）：{{detail}}",
+    "ERR_ROOT_COVERED": "已被监视文件夹 {{detail}} 索引",
+    "ERR_ROOT_DRIVE_RELATIVE": "请选择完整路径（如 D:\\）——当前为 {{detail}}",
+    "ERR_ROOT_NO_DRIVE": "仅支持带盘符的本地磁盘：{{detail}}",
+    "ERR_ROOT_NOT_FOUND": "监视的文件夹已不存在（{{detail}}）",
+    "ERR_ROOT_UNREADABLE": "无法读取该文件夹/磁盘——磁盘已连接吗？{{detail}}",
+    "ERR_SCAN_ACTIVE": "该文件夹正在扫描中",
+    "ERR_SCAN_STOP_TIMEOUT": "扫描未能及时停止——请重试",
+    "ERR_SCAN_WRITE_FAILED": "扫描写入索引失败：{{detail}}",
+    "ERR_DB_WRITER_DOWN": "索引数据库停止响应——请重启应用",
+    "ERR_DB_NO_WAL": "索引存储位置不支持快速模式：{{detail}}",
+    "ERR_INTERNAL": "内部错误：{{detail}}"
   }
 }

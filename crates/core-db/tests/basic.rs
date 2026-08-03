@@ -29,7 +29,14 @@ fn scan_upsert_query_reconcile() {
     let entries = vec![
         entry("D:\\TestPhotos", "IMG_1234.jpg", "jpg", 0, 1000, 500),
         entry("D:\\TestPhotos", "IMG_1234.mov", "mov", 1, 9000, 500),
-        entry("D:\\TestPhotos\\2019", "beach_sunset.jpg", "jpg", 0, 2000, 900),
+        entry(
+            "D:\\TestPhotos\\2019",
+            "beach_sunset.jpg",
+            "jpg",
+            0,
+            2000,
+            900,
+        ),
         entry("D:\\TestPhotos\\2019", "ảnh tết.png", "png", 0, 3000, 100),
     ];
     db.writer
@@ -91,7 +98,14 @@ fn scan_upsert_query_reconcile() {
     let rescan = vec![
         entry("D:\\TestPhotos", "IMG_1234.jpg", "jpg", 0, 1000, 500),
         entry("D:\\TestPhotos", "IMG_1234.mov", "mov", 1, 9000, 500),
-        entry("D:\\TestPhotos\\2019", "beach_sunset.jpg", "jpg", 0, 2000, 900),
+        entry(
+            "D:\\TestPhotos\\2019",
+            "beach_sunset.jpg",
+            "jpg",
+            0,
+            2000,
+            900,
+        ),
     ];
     db.writer
         .exec(move |c| {
@@ -184,5 +198,9 @@ fn root_scope_is_case_insensitive_and_exact() {
         ..Default::default()
     };
     let ids = db.pool.with(|c| query::query_ids(c, &f)).unwrap();
-    assert_eq!(ids.len(), 2, "scope phai gom root (khac case) + subtree, khong gom sibling");
+    assert_eq!(
+        ids.len(),
+        2,
+        "scope phai gom root (khac case) + subtree, khong gom sibling"
+    );
 }

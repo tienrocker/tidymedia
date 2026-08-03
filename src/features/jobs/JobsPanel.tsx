@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useStore } from "../../state/store";
+import { runSafe, useStore } from "../../state/store";
 import { fmtCount } from "../../lib/format";
 
 export function JobsPanel() {
@@ -16,11 +16,18 @@ export function JobsPanel() {
       </div>
       {active.size === 0 && (
         <div className="px-1 text-xs text-neutral-600">
-          {lastFinished
-            ? `${lastFinished.kind} #${lastFinished.id}: ${lastFinished.state}${
-                lastFinished.message ? ` — ${lastFinished.message}` : ""
-              }`
-            : t("jobs.none")}
+          {lastFinished ? (
+            <span className={lastFinished.state === "failed" ? "text-red-400" : ""}>
+              {lastFinished.kind} #{lastFinished.id}: {lastFinished.state}
+              {lastFinished.error
+                ? ` — ${lastFinished.error}`
+                : lastFinished.message
+                  ? ` — ${lastFinished.message}`
+                  : ""}
+            </span>
+          ) : (
+            t("jobs.none")
+          )}
         </div>
       )}
       {[...active.values()].map((j) => (
@@ -32,7 +39,7 @@ export function JobsPanel() {
           <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
           <button
             className="rounded px-1 text-xs text-red-400 hover:bg-neutral-800"
-            onClick={() => useStore.getState().cancelJob(j.jobId)}
+            onClick={() => runSafe(() => useStore.getState().cancelJob(j.jobId))}
           >
             {t("jobs.stop")}
           </button>

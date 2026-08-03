@@ -1,0 +1,3 @@
+# crt-static: link tĩnh VC runtime — máy Windows sạch không cần cài VC++ redist.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

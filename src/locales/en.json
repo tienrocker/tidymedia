@@ -25,7 +25,8 @@
     "title": "Watched folders",
     "add": "+ Add",
     "empty": "Nothing yet. Click \"+ Add\" and pick a whole drive (e.g. D:\\) or a folder.",
-    "files": "{{n}} files",
+    "files_one": "{{formatted}} file",
+    "files_other": "{{formatted}} files",
     "rescan": "Rescan",
     "remove": "Remove from index",
     "removeConfirm": "Remove \"{{path}}\" from the index? (files on disk are not touched)",
@@ -37,7 +38,32 @@
     "stop": "stop"
   },
   "status": {
-    "files": "{{n}} files",
+    "files_one": "{{formatted}} file",
+    "files_other": "{{formatted}} files",
     "query": "query {{ms}} ms"
+  },
+  "wizard": {
+    "title": "Welcome to TidyMedia",
+    "subtitle": "Two quick choices — you can change them later.",
+    "language": "Language",
+    "timezone": "Timezone (used for dates & organizing)",
+    "systemDefault": "system",
+    "start": "Get started"
+  },
+  "errors": {
+    "generic": "Error: {{detail}}",
+    "ERR_NOT_DIR": "Not a folder: {{detail}}",
+    "ERR_UNC_UNSUPPORTED": "Network paths (\\\\server\\…) are not supported yet: {{detail}}",
+    "ERR_ROOT_COVERED": "Already indexed by watched folder {{detail}}",
+    "ERR_ROOT_DRIVE_RELATIVE": "Pick a full path like D:\\ — got {{detail}}",
+    "ERR_ROOT_NO_DRIVE": "Only local drives with a letter are supported: {{detail}}",
+    "ERR_ROOT_NOT_FOUND": "Watched folder no longer exists ({{detail}})",
+    "ERR_ROOT_UNREADABLE": "Can't read this folder/drive — is it connected? {{detail}}",
+    "ERR_SCAN_ACTIVE": "This folder is already being scanned",
+    "ERR_SCAN_STOP_TIMEOUT": "Scan didn't stop in time — try again",
+    "ERR_SCAN_WRITE_FAILED": "Scan failed writing to the index: {{detail}}",
+    "ERR_DB_WRITER_DOWN": "Index database stopped responding — restart the app",
+    "ERR_DB_NO_WAL": "Index database location doesn't support fast mode: {{detail}}",
+    "ERR_INTERNAL": "Internal error: {{detail}}"
   }
 }

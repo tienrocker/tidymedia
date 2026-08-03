@@ -217,8 +217,8 @@ pub fn scan_root(
 ) -> Result<ScanSummary> {
     let root_str = ops::normalize_path(&root.to_string_lossy());
     let root = Path::new(&root_str);
-    let root_md = std::fs::metadata(root)
-        .map_err(|e| anyhow!("ERR_ROOT_UNREADABLE|{root_str}: {e}"))?;
+    let root_md =
+        std::fs::metadata(root).map_err(|e| anyhow!("ERR_ROOT_UNREADABLE|{root_str}: {e}"))?;
     if !root_md.is_dir() {
         bail!("ERR_ROOT_UNREADABLE|{root_str}: not a directory");
     }
@@ -229,8 +229,8 @@ pub fn scan_root(
     let mut indexed: u64 = 0;
 
     // ---- Tầng đầu: tự read_dir (đồng nhất "D:\" và folder thường) ----
-    let read_dir = std::fs::read_dir(root)
-        .map_err(|e| anyhow!("ERR_ROOT_UNREADABLE|{root_str}: {e}"))?;
+    let read_dir =
+        std::fs::read_dir(root).map_err(|e| anyhow!("ERR_ROOT_UNREADABLE|{root_str}: {e}"))?;
     let mut subdirs: Vec<PathBuf> = Vec::new();
     for dent in read_dir {
         if cancel.load(Ordering::Relaxed) {
@@ -266,7 +266,15 @@ pub fn scan_root(
             break;
         }
         walk_subtree(
-            &sub, writer, volume_id, gen, cancel, &dir_cache, &track, &mut batch, &mut indexed,
+            &sub,
+            writer,
+            volume_id,
+            gen,
+            cancel,
+            &dir_cache,
+            &track,
+            &mut batch,
+            &mut indexed,
             &mut on_progress,
         );
     }
@@ -402,16 +410,12 @@ mod tests {
 
         let with_slash = format!("{}\\", data.display());
         let cancel = CancelFlag::default();
-        let summary = scan_root(
-            Path::new(&with_slash),
-            1,
-            10,
-            &db.writer,
-            &cancel,
-            |_| {},
-        )
-        .unwrap();
-        assert_eq!(summary.indexed, 2, "phải thấy cả file ở root lẫn file lồng sâu");
+        let summary =
+            scan_root(Path::new(&with_slash), 1, 10, &db.writer, &cancel, |_| {}).unwrap();
+        assert_eq!(
+            summary.indexed, 2,
+            "phải thấy cả file ở root lẫn file lồng sâu"
+        );
         assert_eq!(summary.walk_errors, 0);
 
         let ids = db

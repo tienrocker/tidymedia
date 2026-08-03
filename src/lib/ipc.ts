@@ -8,7 +8,7 @@ export interface FileRow {
   kind: number; // 0=image 1=video
   size: number;
   mtime: number;
-  status: number;
+  status: number; // 0 present, 1 missing, 2 cloud placeholder, 3 missing-volume
 }
 
 export interface RootInfo {
@@ -57,6 +57,11 @@ export interface QueryResult {
   total: number;
 }
 
+export interface Settings {
+  setupDone: boolean;
+  tzOffsetMinutes: number | null;
+}
+
 export const api = {
   addRoot: (path: string) => invoke<number>("add_root", { path }),
   listRoots: () => invoke<RootInfo[]>("list_roots"),
@@ -66,5 +71,8 @@ export const api = {
   listJobs: () => invoke<JobRow[]>("list_jobs"),
   queryFiles: (filter: FileFilter) => invoke<QueryResult>("query_files", { filter }),
   fetchRows: (queryId: number, start: number, count: number) =>
-    invoke<FileRow[]>("fetch_rows", { queryId, start, count }),
+    invoke<(FileRow | null)[]>("fetch_rows", { queryId, start, count }),
+  getSettings: () => invoke<Settings>("get_settings"),
+  setSettings: (tzOffsetMinutes: number, setupDone: boolean) =>
+    invoke<void>("set_settings", { tzOffsetMinutes, setupDone }),
 };

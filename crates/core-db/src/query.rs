@@ -32,7 +32,10 @@ pub fn query_ids(conn: &Connection, f: &FileFilter) -> Result<Vec<i64>> {
             // Query ngắn: substring LIKE trên name_norm (full scan chấp nhận được —
             // semantics nhất quán với nhánh FTS, không nhảy kết quả ở mốc 3 ký tự)
             wheres.push("f.name_norm LIKE ? ESCAPE '!'".into());
-            let escaped = norm.replace('!', "!!").replace('%', "!%").replace('_', "!_");
+            let escaped = norm
+                .replace('!', "!!")
+                .replace('%', "!%")
+                .replace('_', "!_");
             params.push(Box::new(format!("%{escaped}%")));
         }
     }

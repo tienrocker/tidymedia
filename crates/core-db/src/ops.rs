@@ -18,9 +18,26 @@ pub fn ensure_schema(conn: &mut Connection) -> Result<()> {
     let tx = conn.transaction()?;
     // Wipe schema cũ (v0/v1). DROP TABLE tự kéo trigger + FTS shadow tables theo.
     for t in [
-        "files_fts", "org_ops", "import_seen", "imports", "library_roots", "album_files",
-        "albums", "file_tags", "tags", "dup_members", "dup_groups", "phashes", "hashes",
-        "media_meta", "files", "dirs", "roots", "volumes", "jobs", "kv",
+        "files_fts",
+        "org_ops",
+        "import_seen",
+        "imports",
+        "library_roots",
+        "album_files",
+        "albums",
+        "file_tags",
+        "tags",
+        "dup_members",
+        "dup_groups",
+        "phashes",
+        "hashes",
+        "media_meta",
+        "files",
+        "dirs",
+        "roots",
+        "volumes",
+        "jobs",
+        "kv",
     ] {
         tx.execute_batch(&format!("DROP TABLE IF EXISTS {t};"))?;
     }
@@ -100,8 +117,7 @@ pub fn path_range(root: &str) -> (String, String, String) {
     (eq, start, end)
 }
 
-const ROOT_SCOPE: &str =
-    "(d.path_key = ?1 OR (d.path_key >= ?2 AND d.path_key < ?3))";
+const ROOT_SCOPE: &str = "(d.path_key = ?1 OR (d.path_key >= ?2 AND d.path_key < ?3))";
 
 // ---------- roots / volumes ----------
 
@@ -151,8 +167,11 @@ pub fn upsert_root(conn: &mut Connection, canonical: &str) -> Result<i64> {
          ON CONFLICT(guid) DO NOTHING",
         params![guid, now_ms()],
     )?;
-    let volume_id: i64 =
-        tx.query_row("SELECT id FROM volumes WHERE guid = ?1", params![guid], |r| r.get(0))?;
+    let volume_id: i64 = tx.query_row(
+        "SELECT id FROM volumes WHERE guid = ?1",
+        params![guid],
+        |r| r.get(0),
+    )?;
     tx.execute(
         "INSERT INTO roots(volume_id, path) VALUES(?1, ?2)",
         params![volume_id, path],
@@ -281,8 +300,7 @@ pub fn upsert_scan_batch(
                         .unwrap_or(&e.dir_path)
                         .to_string();
                     dir_ins.execute(params![volume_id, dir_name, e.dir_path, path_key])?;
-                    let id: i64 =
-                        dir_get.query_row(params![volume_id, path_key], |r| r.get(0))?;
+                    let id: i64 = dir_get.query_row(params![volume_id, path_key], |r| r.get(0))?;
                     dir_cache.insert(path_key, id);
                     id
                 }
@@ -395,7 +413,9 @@ pub fn list_jobs(conn: &Connection, limit: i64) -> Result<Vec<JobRow>> {
 
 pub fn kv_get(conn: &Connection, key: &str) -> Result<Option<String>> {
     Ok(conn
-        .query_row("SELECT value FROM kv WHERE key = ?1", params![key], |r| r.get(0))
+        .query_row("SELECT value FROM kv WHERE key = ?1", params![key], |r| {
+            r.get(0)
+        })
         .optional()?)
 }
 

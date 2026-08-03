@@ -100,7 +100,10 @@ pub async fn start_scan(state: State<'_, AppState>, root_id: i64) -> CmdResult<i
             .pool
             .with(|c| core_db::ops::get_root(c, root_id))
             .map_err(err)?;
-        let gen = db.writer.exec(|c| core_db::ops::next_scan_gen(c)).map_err(err)?;
+        let gen = db
+            .writer
+            .exec(|c| core_db::ops::next_scan_gen(c))
+            .map_err(err)?;
         let params = format!("{{\"rootId\":{root_id}}}");
         let job_id = db
             .writer
@@ -187,7 +190,12 @@ pub async fn cancel_job(state: State<'_, AppState>, job_id: i64) -> CmdResult<bo
 #[tauri::command]
 pub async fn list_jobs(state: State<'_, AppState>) -> CmdResult<Vec<JobRow>> {
     let db = state.db.clone();
-    blocking(move || db.pool.with(|c| core_db::ops::list_jobs(c, 30)).map_err(err)).await
+    blocking(move || {
+        db.pool
+            .with(|c| core_db::ops::list_jobs(c, 30))
+            .map_err(err)
+    })
+    .await
 }
 
 #[derive(Serialize)]
@@ -257,8 +265,8 @@ pub async fn get_settings(state: State<'_, AppState>) -> CmdResult<Settings> {
                 let setup_done = core_db::ops::kv_get(c, "setup_done")?
                     .map(|v| v == "1")
                     .unwrap_or(false);
-                let tz_offset_minutes = core_db::ops::kv_get(c, "tz_offset_minutes")?
-                    .and_then(|v| v.parse().ok());
+                let tz_offset_minutes =
+                    core_db::ops::kv_get(c, "tz_offset_minutes")?.and_then(|v| v.parse().ok());
                 Ok(Settings {
                     setup_done,
                     tz_offset_minutes,

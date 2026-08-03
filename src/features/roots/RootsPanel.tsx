@@ -1,26 +1,26 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
-import { useStore } from "../../state/store";
+import { runSafe, useStore } from "../../state/store";
 import { fmtCount } from "../../lib/format";
 
 export function RootsPanel() {
   const { t } = useTranslation();
   const roots = useStore((s) => s.roots);
+  const activeJobs = useStore((s) => s.activeJobs);
+  const scanning = activeJobs.size > 0;
 
-  const onAdd = async () => {
-    const dir = await open({ directory: true, title: t("roots.pickTitle") });
-    if (typeof dir === "string") {
-      try {
+  const onAdd = () => {
+    runSafe(async () => {
+      const dir = await open({ directory: true, title: t("roots.pickTitle") });
+      if (typeof dir === "string") {
         await useStore.getState().addRootAndScan(dir);
-      } catch (e) {
-        alert(String(e));
       }
-    }
+    });
   };
 
-  const onRemove = async (id: number, path: string) => {
+  const onRemove = (id: number, path: string) => {
     if (confirm(t("roots.removeConfirm", { path }))) {
-      await useStore.getState().removeRoot(id);
+      runSafe(() => useStore.getState().removeRoot(id));
     }
   };
 
@@ -50,13 +50,14 @@ export function RootsPanel() {
               {r.path}
             </div>
             <div className="text-xs text-neutral-600">
-              {t("roots.files", { n: fmtCount(r.fileCount) })}
+              {t("roots.files", { count: r.fileCount, formatted: fmtCount(r.fileCount) })}
             </div>
           </div>
           <button
             title={t("roots.rescan")}
-            className="hidden rounded px-1 text-xs text-neutral-400 hover:bg-neutral-800 group-hover:block"
-            onClick={() => useStore.getState().scanRoot(r.id)}
+            disabled={scanning}
+            className="hidden rounded px-1 text-xs text-neutral-400 hover:bg-neutral-800 disabled:opacity-30 group-hover:block"
+            onClick={() => runSafe(() => useStore.getState().scanRoot(r.id))}
           >
             ⟳
           </button>
