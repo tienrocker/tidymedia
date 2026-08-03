@@ -3,7 +3,7 @@
 # 🗂️ TidyMedia
 
 **Blazing-fast media manager & library consolidator for Windows.**
-Index an entire drive, search as you type, and untangle 15 years of scattered photos — safely.
+Index an entire drive, search as you type, and untangle 15 years of scattered photos - safely.
 
 [![CI](https://github.com/tienrocker/tidymedia/actions/workflows/ci.yml/badge.svg)](https://github.com/tienrocker/tidymedia/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/tienrocker/tidymedia?include_prereleases&label=release)](https://github.com/tienrocker/tidymedia/releases)
@@ -17,21 +17,21 @@ Index an entire drive, search as you type, and untangle 15 years of scattered ph
 
 ---
 
-Photos and videos pile up for years — iPhone syncs through a dozen different apps, cameras, chat apps — until your drives are full of duplicates and colliding names (`IMG_1234.JPG` from three different phones). TidyMedia treats **content as identity**, never file names, and is built around three pillars:
+Photos and videos pile up for years - iPhone syncs through a dozen different apps, cameras, chat apps - until your drives are full of duplicates and colliding names (`IMG_1234.JPG` from three different phones). TidyMedia treats **content as identity**, never file names, and is built around three pillars:
 
-1. **Browse & search a whole drive, instantly** — index-first architecture; the UI never touches the filesystem while you browse.
-2. **Deduplicate safely** — tiered hashing (size → xxh3 → full BLAKE3) + perceptual matching, side-by-side review, Recycle Bin only. *(in progress — M4)*
-3. **Consolidate** — organize everything into `Library\YYYY\YYYY-MM\` with collision-proof date-based names and a full undo journal. *(in progress — M5)*
+1. **Browse & search a whole drive, instantly** - index-first architecture; the UI never touches the filesystem while you browse.
+2. **Deduplicate safely** - tiered hashing (size → xxh3 → full BLAKE3) + perceptual matching, side-by-side review, Recycle Bin only. *(in progress - M4)*
+3. **Consolidate** - organize everything into `Library\YYYY\YYYY-MM\` with collision-proof date-based names and a full undo journal. *(in progress - M5)*
 
 ## ✨ Highlights
 
-- ⚡ **Fast for real** — 218,000 files on a real drive indexed in **under 10 seconds**; search answers in **20–40 ms** *while the scan is still running*.
-- 🔎 **Search that forgives** — substring, accent-insensitive (`anh tet` finds `Ảnh Tết`), filters for kind / size / date / resolution.
-- 🖼️ **Thumbnail grid & lightbox** — fully virtualized grid that scrolls smoothly through a million items, WebP thumbnail cache (2 GB LRU), cursor-anchored zoom & pan, EXIF info panel (taken date, camera, dimensions). HEIC/AVIF via ffmpeg.
-- 🌥️ **Cloud-safe** — OneDrive/iCloud placeholders are indexed but **never hydrated**: TidyMedia will not silently pull gigabytes down from the cloud.
-- 🕐 **Timezone-aware** — you pick your timezone on first run; date filters and (soon) library file names respect it, not whatever the OS guesses.
+- ⚡ **Fast for real** - 218,000 files on a real drive indexed in **under 10 seconds**; search answers in **20-40 ms** *while the scan is still running*.
+- 🔎 **Search that forgives** - substring, accent-insensitive (`anh tet` finds `Ảnh Tết`), filters for kind / size / date / resolution.
+- 🖼️ **Thumbnail grid & lightbox** - fully virtualized grid that scrolls smoothly through a million items, WebP thumbnail cache (2 GB LRU), cursor-anchored zoom & pan, EXIF info panel (taken date, camera, dimensions). HEIC/AVIF via ffmpeg.
+- 🌥️ **Cloud-safe** - OneDrive/iCloud placeholders are indexed but **never hydrated**: TidyMedia will not silently pull gigabytes down from the cloud.
+- 🕐 **Timezone-aware** - you pick your timezone on first run; date filters and (soon) library file names respect it, not whatever the OS guesses.
 - 🌍 **English · Tiếng Việt · 中文** out of the box.
-- 📦 **Tiny native app** — Tauri 2 + Rust, no Electron. NSIS installer, MSI, and a portable ZIP that keeps its data next to the exe.
+- 📦 **Tiny native app** - Tauri 2 + Rust, no Electron. NSIS installer, MSI, and a portable ZIP that keeps its data next to the exe.
 
 ## 🚀 Getting started
 
@@ -39,17 +39,17 @@ Photos and videos pile up for years — iPhone syncs through a dozen different a
 2. Windows 10/11 x64. WebView2 is installed automatically if missing; no other runtime needed.
 3. First run: pick your **language** and **timezone** → click **+ Add** and select a folder or a whole drive (`D:\`) → browse and search while it scans.
 
-> HEIC/AVIF thumbnails currently use `ffmpeg` from your `PATH` if present — it will ship bundled with the video update (M3).
+> HEIC/AVIF thumbnails currently use `ffmpeg` from your `PATH` if present - it will ship bundled with the video update (M3).
 > First-run installs show a SmartScreen warning (no Authenticode certificate yet).
 
 ## 🛡️ Data safety, by design
 
-Five invariants every destructive code path must pass — not guidelines, hard rules:
+Five invariants every destructive code path must pass - not guidelines, hard rules:
 
-1. Nothing is ever deleted without a **BLAKE3-verified** surviving copy — quick hashes only *filter* candidates, they are never grounds for deletion.
-2. Size+mtime re-checked immediately before any delete/overwrite (TOCTOU guard) — abort on mismatch.
+1. Nothing is ever deleted without a **BLAKE3-verified** surviving copy - quick hashes only *filter* candidates, they are never grounds for deletion.
+2. Size+mtime re-checked immediately before any delete/overwrite (TOCTOU guard) - abort on mismatch.
 3. Same volume ⇒ **atomic rename**; cross volume ⇒ copy → flush → verify → only then delete the source.
-4. Every delete goes to the **Recycle Bin** (quarantine folder as fallback) — never a direct hard delete.
+4. Every delete goes to the **Recycle Bin** (quarantine folder as fallback) - never a direct hard delete.
 5. Every destructive operation is **journaled**, dry-run previewed, and undoable.
 
 ## 🗺️ Roadmap
@@ -59,11 +59,11 @@ Five invariants every destructive code path must pass — not guidelines, hard r
 | M1 | Whole-drive index, instant search, virtualized browse | ✅ |
 | M2 | Thumbnail grid, lightbox + EXIF, HEIC, metadata jobs | ✅ |
 | M3 | Video: keyframe thumbs, in-app playback, Live Photo pairing, bundled ffmpeg | 🔜 |
-| M4 | Exact dedup: tiered hashing, 2–4-up compare UI, keyboard-first review | ⏳ |
+| M4 | Exact dedup: tiered hashing, 2-4-up compare UI, keyboard-first review | ⏳ |
 | M5 | Organize: date-based library, atomic moves, undo journal | ⏳ |
 | M6 | iPhone / SD import via WPD/MTP, incremental "already imported" | ⏳ |
 | M7 | Perceptual similarity, tags, albums, storage analytics | ⏳ |
-| M8 | NTFS MFT/USN fast scan — full drive rescan in seconds | ⏳ |
+| M8 | NTFS MFT/USN fast scan - full drive rescan in seconds | ⏳ |
 
 ## ⚙️ Performance
 
@@ -71,9 +71,9 @@ Measured on a 200k-file synthetic corpus (generated by the bundled `devtool gen-
 
 | Operation | Result |
 |---|---|
-| Cold scan, 200k files | ~12–15 s |
+| Cold scan, 200k files | ~12-15 s |
 | Real drive, 218k files | ~10 s |
-| Search-as-you-type (FTS5 trigram) | 20–40 ms |
+| Search-as-you-type (FTS5 trigram) | 20-40 ms |
 | Fetch one result window | < 1 ms |
 | UI while scanning | scrolls & searches normally |
 
@@ -85,7 +85,7 @@ Prerequisites: Rust (stable, MSVC), Node.js 20+.
 
 ```powershell
 npm install
-npm run tauri dev      # develop (isolated dev data dir — never touches a real install)
+npm run tauri dev      # develop (isolated dev data dir - never touches a real install)
 npm run tauri build    # release build: NSIS + MSI bundles
 cargo test --workspace # headless core tests, no GUI needed
 ```
@@ -99,7 +99,7 @@ cargo run -p devtool --release -- bench-scan --root <path> --db <dir>
 
 ## 🌍 i18n & contributing
 
-All UI strings live in `src/locales/{en,vi,zh}.json` (react-i18next). New strings must land in all three files — PRs adding more locales are welcome, as are bug reports with reproduction steps.
+All UI strings live in `src/locales/{en,vi,zh}.json` (react-i18next). New strings must land in all three files - PRs adding more locales are welcome, as are bug reports with reproduction steps.
 
 ## 📄 License
 
