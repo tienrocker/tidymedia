@@ -51,6 +51,9 @@ pub struct AppState {
     pub thumb_pool: Arc<rayon::ThreadPool>,
     /// ffmpeg cho HEIC/AVIF/JXL. None = format đó hiện icon thay thumb (M3 bundle sidecar).
     pub ffmpeg: Option<std::path::PathBuf>,
+    /// Gate serialize đoạn khởi động meta job (check-active → insert → register
+    /// không atomic; StrictMode mount 2 lần / 2 scan xong sát nhau sẽ đua).
+    pub meta_start_gate: Arc<std::sync::atomic::AtomicBool>,
 }
 
 const THUMB_CACHE_CAP_BYTES: i64 = 2 * 1024 * 1024 * 1024;
@@ -92,6 +95,9 @@ pub fn init(app: &AppHandle) -> Result<()> {
         rayon::ThreadPoolBuilder::new()
             .num_threads((cores / 2).clamp(2, 6))
             .thread_name(|i| format!("thumb-{i}"))
+            // Lưới an toàn thứ 2 (handler đã catch_unwind): KHÔNG có handler thì
+            // rayon abort cả process khi task panic.
+            .panic_handler(|_| tracing::error!("thumb pool task panicked (caught)"))
             .build()?,
     );
     let ffmpeg = core_media::find_ffmpeg();
@@ -107,6 +113,7 @@ pub fn init(app: &AppHandle) -> Result<()> {
         thumbs,
         thumb_pool,
         ffmpeg,
+        meta_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
 
     // Event pump: JobEvent → UI (tauri events) + jobs table + index://changed.

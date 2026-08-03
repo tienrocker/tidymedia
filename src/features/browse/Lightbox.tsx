@@ -47,19 +47,27 @@ function LightboxInner({ index }: { index: number }) {
   const [showInfo, setShowInfo] = useState(false);
   const [detail, setDetail] = useState<FileDetail | null>(null);
   const [imgFailed, setImgFailed] = useState(false);
+  // media:// fail (ext nói dối nội dung, vd .jpg ruột HEIC) → thử thumb 1600
+  const [useThumbFallback, setUseThumbFallback] = useState(false);
   const drag = useRef<{ x: number; y: number } | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
 
-  // Đổi ảnh → reset zoom/lỗi, kéo thêm hàng xóm nếu row chưa có
+  const rowId = row?.id;
+
+  // Đổi ảnh (index hoặc id tại index đổi) → reset zoom/lỗi/fallback
   useEffect(() => {
     setZoom(ZOOM_RESET);
     setImgFailed(false);
+    setUseThumbFallback(false);
+  }, [index, rowId]);
+
+  // Row thiếu (mở xa viewport, hoặc re-query lúc scan xóa sạch rows cache) →
+  // fetch lại. Deps có `row` để spinner tự hồi sau mỗi lần runQuery.
+  useEffect(() => {
     if (!row) useStore.getState().ensureRange(Math.max(0, index - 3), index + 3);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index]);
+  }, [index, row]);
 
   // Panel info: fetch meta (backend tự trích on-demand nếu job chưa tới file này)
-  const rowId = row?.id;
   useEffect(() => {
     setDetail(null);
     if (rowId == null) return;
@@ -118,7 +126,9 @@ function LightboxInner({ index }: { index: number }) {
     });
   };
 
-  const src = row ? srcFor(row) : null;
+  const primary = row ? srcFor(row) : null;
+  const src =
+    useThumbFallback && row ? thumbUrl(row.id, THUMB_PREVIEW, row.mtime) : primary;
   const showImg = src != null && !imgFailed;
 
   return (
@@ -183,11 +193,17 @@ function LightboxInner({ index }: { index: number }) {
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-neutral-700 border-t-neutral-300" />
           ) : showImg ? (
             <img
-              key={row.id}
+              key={`${row.id}-${useThumbFallback ? "t" : "m"}`}
               src={src}
               alt={row.name}
               draggable={false}
-              onError={() => setImgFailed(true)}
+              onError={() => {
+                if (!useThumbFallback && canNativeDisplay(row.ext)) {
+                  setUseThumbFallback(true);
+                } else {
+                  setImgFailed(true);
+                }
+              }}
               className="max-h-full max-w-full select-none object-contain"
               style={{
                 transform: `translate(${zoom.tx}px, ${zoom.ty}px) scale(${zoom.scale})`,

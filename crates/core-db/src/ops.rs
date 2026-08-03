@@ -481,10 +481,14 @@ pub fn select_pending_meta(
 pub fn upsert_meta_batch(conn: &mut Connection, rows: &[MetaUpsert]) -> Result<()> {
     let tx = conn.transaction()?;
     {
+        // INSERT..SELECT..WHERE EXISTS: file có thể đã bị remove_root xóa giữa
+        // lúc job select batch và lúc ghi — id chết thì bỏ qua im lặng thay vì
+        // FK violation làm rollback cả batch + job Failed.
         let mut ins = tx.prepare_cached(
             "INSERT INTO media_meta(file_id, width, height, taken_at, date_source, camera,
                                     orientation, meta_state)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+             WHERE EXISTS(SELECT 1 FROM files WHERE id = ?1)
              ON CONFLICT(file_id) DO UPDATE SET
                width = excluded.width, height = excluded.height,
                taken_at = excluded.taken_at, date_source = excluded.date_source,

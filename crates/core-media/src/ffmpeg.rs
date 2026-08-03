@@ -1,8 +1,14 @@
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 use image::DynamicImage;
+
+/// ffmpeg treo (file hỏng, ổ mạng chập chờn) không được phép chiếm thread
+/// của thumb pool vĩnh viễn — quá hạn là kill child.
+const FFMPEG_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Tìm ffmpeg: cạnh exe → exe\binaries → PATH. M3 sẽ bundle sidecar vào
 /// binaries\ — code này tự nhặt được mà không cần sửa.
@@ -38,20 +44,59 @@ pub fn decode_scaled(ffmpeg: &Path, input: &Path, box_px: u32) -> Result<Dynamic
     cmd.args(["-v", "error", "-nostdin", "-i"])
         .arg(input)
         .args(["-frames:v", "1", "-vf", &filter])
-        .args(["-f", "image2pipe", "-c:v", "png", "-"]);
+        .args(["-f", "image2pipe", "-c:v", "png", "-"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let out = cmd.output()?;
-    if !out.status.success() || out.stdout.is_empty() {
+    let mut child = cmd.spawn()?;
+
+    // Đọc pipe trên thread riêng — child ghi nhiều hơn buffer pipe mà mình
+    // chỉ ngồi wait là deadlock kinh điển.
+    let mut stdout_pipe = child.stdout.take().expect("stdout piped");
+    let out_reader = std::thread::spawn(move || {
+        let mut v = Vec::new();
+        let _ = stdout_pipe.read_to_end(&mut v);
+        v
+    });
+    let mut stderr_pipe = child.stderr.take().expect("stderr piped");
+    let err_reader = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = stderr_pipe.read_to_string(&mut s);
+        s
+    });
+
+    let deadline = Instant::now() + FFMPEG_TIMEOUT;
+    let status = loop {
+        match child.try_wait()? {
+            Some(st) => break st,
+            None => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    bail!(
+                        "ffmpeg timeout sau {}s ({})",
+                        FFMPEG_TIMEOUT.as_secs(),
+                        input.display()
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(30));
+            }
+        }
+    };
+    let stdout_data = out_reader.join().unwrap_or_default();
+    let stderr_text = err_reader.join().unwrap_or_default();
+    if !status.success() || stdout_data.is_empty() {
         bail!(
             "ffmpeg decode failed ({}): {}",
             input.display(),
-            String::from_utf8_lossy(&out.stderr).trim()
+            stderr_text.trim()
         );
     }
-    Ok(image::load_from_memory(&out.stdout)?)
+    Ok(image::load_from_memory(&stdout_data)?)
 }

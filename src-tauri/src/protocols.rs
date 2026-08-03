@@ -6,6 +6,7 @@
 //! Handler KHÔNG được block thread webview: mọi việc (DB lookup, decode, đọc file)
 //! dispatch sang thumb_pool rồi trả lời qua responder.
 
+use std::panic::AssertUnwindSafe;
 use std::path::Path;
 
 use core_db::MediaSrc;
@@ -14,9 +15,9 @@ use tauri::{AppHandle, Manager, UriSchemeResponder};
 
 use crate::state::AppState;
 
-/// File media:// to hơn mức này (0.5GB) → 404 thay vì nuốt RAM (ảnh hợp lệ
+/// File media:// to hơn mức này → 404 thay vì nuốt RAM (ảnh hiển thị native
 /// không bao giờ tới cỡ đó; video đi đường Range riêng ở M3).
-const MAX_MEDIA_BYTES: i64 = 512 * 1024 * 1024;
+const MAX_MEDIA_BYTES: i64 = 256 * 1024 * 1024;
 
 pub fn spawn_thumb(app: AppHandle, request: Request<Vec<u8>>, responder: UriSchemeResponder) {
     let state = app.state::<AppState>();
@@ -24,7 +25,16 @@ pub fn spawn_thumb(app: AppHandle, request: Request<Vec<u8>>, responder: UriSche
     let thumbs = state.thumbs.clone();
     let ffmpeg = state.ffmpeg.clone();
     state.thumb_pool.spawn(move || {
-        let resp = thumb_response(&db, &thumbs, ffmpeg.as_deref(), &request);
+        // Decoder panic với file hỏng (image crate, webp encode unwrap) mà lọt
+        // ra ngoài task rayon là process::abort CẢ APP — và grid load lại đúng
+        // thumb đó ở lần mở sau = crash-loop. Bắt lại, trả 404.
+        let resp = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            thumb_response(&db, &thumbs, ffmpeg.as_deref(), &request)
+        }))
+        .unwrap_or_else(|_| {
+            tracing::warn!(uri = %request.uri(), "thumb handler panicked — tra 404");
+            status(404)
+        });
         responder.respond(resp);
     });
 }
@@ -33,7 +43,11 @@ pub fn spawn_media(app: AppHandle, request: Request<Vec<u8>>, responder: UriSche
     let state = app.state::<AppState>();
     let db = state.db.clone();
     state.thumb_pool.spawn(move || {
-        let resp = media_response(&db, &request);
+        let resp = std::panic::catch_unwind(AssertUnwindSafe(|| media_response(&db, &request)))
+            .unwrap_or_else(|_| {
+                tracing::warn!(uri = %request.uri(), "media handler panicked — tra 404");
+                status(404)
+            });
         responder.respond(resp);
     });
 }
@@ -63,6 +77,13 @@ fn thumb_response(
         return ok(data, "image/webp");
     }
 
+    // status trong DB có thể stale (OneDrive "Free up space" SAU lần scan cuối)
+    // → check attrs thật ngay trước khi decode, không bao giờ kéo hydrate.
+    match std::fs::metadata(&src.path) {
+        Ok(md) if !core_media::is_cloud_placeholder(&md) => {}
+        _ => return status(404),
+    }
+
     let ext = src.ext.as_deref().unwrap_or("");
     match core_media::make_thumb(Path::new(&src.path), ext, s, ffmpeg) {
         Ok(data) => {
@@ -88,6 +109,11 @@ fn media_response(db: &core_db::Db, request: &Request<Vec<u8>>) -> Response<Vec<
     };
     if src.status != 0 || src.size > MAX_MEDIA_BYTES {
         return status(404);
+    }
+    // Như thumb: attrs thật quyết định, không tin status snapshot
+    match std::fs::metadata(&src.path) {
+        Ok(md) if !core_media::is_cloud_placeholder(&md) && md.len() as i64 <= MAX_MEDIA_BYTES => {}
+        _ => return status(404),
     }
     match std::fs::read(&src.path) {
         Ok(bytes) => ok(bytes, mime_for(src.ext.as_deref().unwrap_or(""))),

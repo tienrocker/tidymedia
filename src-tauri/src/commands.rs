@@ -118,6 +118,7 @@ pub async fn start_scan(state: State<'_, AppState>, root_id: i64) -> CmdResult<i
         let cancel = jobs.register(job_id, "scan", Some(root_id));
         let events = jobs.sender();
         let writer = db.writer.clone();
+        let writer_cleanup = db.writer.clone();
 
         std::thread::Builder::new()
             .name(format!("scan-{job_id}"))
@@ -181,11 +182,28 @@ pub async fn start_scan(state: State<'_, AppState>, root_id: i64) -> CmdResult<i
                 };
                 let _ = events.send(final_event);
             })
-            .map_err(|e| format!("ERR_INTERNAL|spawn: {e}"))?;
+            .map_err(|e| {
+                // Như meta: spawn fail phải dọn registry + job row, không để
+                // job ma chặn ERR_SCAN_ACTIVE vĩnh viễn.
+                jobs.unregister(job_id);
+                writer_cleanup.exec_async(move |c| {
+                    core_db::ops::finish_job(c, job_id, "failed", Some("ERR_INTERNAL|spawn failed"))
+                });
+                format!("ERR_INTERNAL|spawn: {e}")
+            })?;
 
         Ok(job_id)
     })
     .await
+}
+
+/// Hạ gate meta_start_gate khi ra khỏi scope — kể cả early-return/lỗi,
+/// không bao giờ khóa chết đường khởi động meta.
+struct GateGuard(std::sync::Arc<std::sync::atomic::AtomicBool>);
+impl Drop for GateGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 /// Meta job: trích dimensions + EXIF cho mọi ảnh chưa có meta. Idempotent —
@@ -193,12 +211,25 @@ pub async fn start_scan(state: State<'_, AppState>, root_id: i64) -> CmdResult<i
 /// chạy; không còn gì để làm → None (không tạo job row rác).
 #[tauri::command]
 pub async fn start_meta_scan(state: State<'_, AppState>) -> CmdResult<Option<i64>> {
+    // Gate atomic: check-active → count → insert → register kéo dài hàng trăm
+    // ms; không có gate thì 2 lời gọi sát nhau tạo 2 job cày trùng cả thư viện.
+    let gate = state.meta_start_gate.clone();
+    if gate
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Ok(state.jobs.active_job_of_kind("meta"));
+    }
+    let guard = GateGuard(gate);
     if let Some(id) = state.jobs.active_job_of_kind("meta") {
-        return Ok(Some(id));
+        return Ok(Some(id)); // guard drop → gate hạ
     }
     let db = state.db.clone();
     let jobs = state.jobs.clone();
     blocking(move || {
+        // Giữ gate tới hết đoạn khởi động (sau register job đã hiện trong
+        // active map thì caller khác tự thấy) — drop ở mọi đường ra.
+        let _gate = guard;
         let total = db
             .pool
             .with(core_db::ops::count_pending_meta)
@@ -212,6 +243,7 @@ pub async fn start_meta_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
             .map_err(err)?;
         let cancel = jobs.register(job_id, "meta", None);
         let events = jobs.sender();
+        let writer_cleanup = db.writer.clone();
 
         std::thread::Builder::new()
             .name(format!("meta-{job_id}"))
@@ -244,7 +276,15 @@ pub async fn start_meta_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
                 };
                 let _ = events.send(final_event);
             })
-            .map_err(|e| format!("ERR_INTERNAL|spawn: {e}"))?;
+            .map_err(|e| {
+                // Spawn fail mà bỏ mặc: job row kẹt 'running' + active map giữ
+                // id ma → không bao giờ chạy meta được nữa tới khi restart.
+                jobs.unregister(job_id);
+                writer_cleanup.exec_async(move |c| {
+                    core_db::ops::finish_job(c, job_id, "failed", Some("ERR_INTERNAL|spawn failed"))
+                });
+                format!("ERR_INTERNAL|spawn: {e}")
+            })?;
         Ok(Some(job_id))
     })
     .await
@@ -293,13 +333,15 @@ fn run_meta_job(
     }
 }
 
-/// None = file không truy cập được (ổ offline, bị lock) — KHÔNG ghi row để job
-/// sau retry. Truy cập được thì luôn ra row (decode fail → meta_state=2, không
-/// bao giờ chọn lại file hỏng thật).
+/// None = file không truy cập được (ổ offline, bị lock) HOẶC là cloud
+/// placeholder (status DB stale — đọc là hydrate, cấm tuyệt đối) — KHÔNG ghi
+/// row để job sau retry khi file quay lại. Truy cập được thì luôn ra row
+/// (decode fail → meta_state=2, không bao giờ chọn lại file hỏng thật).
 fn extract_one_meta(p: &PendingMeta) -> Option<MetaUpsert> {
     let path = Path::new(&p.path);
-    if std::fs::metadata(path).is_err() {
-        return None;
+    match std::fs::metadata(path) {
+        Ok(md) if !core_media::is_cloud_placeholder(&md) => {}
+        _ => return None,
     }
     let m = std::panic::catch_unwind(|| core_media::extract_image_meta(path)).unwrap_or_default();
     Some(MetaUpsert {
@@ -328,11 +370,10 @@ pub async fn get_file_meta(
             .with(|c| core_db::ops::get_file_detail(c, file_id))
             .map_err(err)?;
         if let Some(d) = detail.as_mut() {
-            if d.meta_state.is_none()
-                && d.kind == 0
-                && d.status == 0
-                && std::fs::metadata(core_db::ops::join_path(&d.dir, &d.name)).is_ok()
-            {
+            let readable = std::fs::metadata(core_db::ops::join_path(&d.dir, &d.name))
+                .map(|md| !core_media::is_cloud_placeholder(&md))
+                .unwrap_or(false);
+            if d.meta_state.is_none() && d.kind == 0 && d.status == 0 && readable {
                 let path = core_db::ops::join_path(&d.dir, &d.name);
                 let m = core_media::extract_image_meta(Path::new(&path));
                 d.width = m.width.map(i64::from);

@@ -24,3 +24,21 @@ pub fn clamp_thumb_size(s: u32) -> u32 {
         1600
     }
 }
+
+/// FILE_ATTRIBUTE_OFFLINE (0x1000) | RECALL_ON_OPEN (0x40000) |
+/// RECALL_ON_DATA_ACCESS (0x400000) — invariant dự án: KHÔNG BAO GIỜ đọc nội
+/// dung cloud placeholder (đọc là kéo hydrate cả OneDrive/iCloud). Check này
+/// phải gọi TẠI CHỖ ngay trước khi mở file — status trong DB có thể stale
+/// (file bị dehydrate sau lần scan cuối).
+pub fn is_cloud_placeholder(md: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        md.file_attributes() & (0x1000 | 0x0004_0000 | 0x0040_0000) != 0
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = md;
+        false
+    }
+}

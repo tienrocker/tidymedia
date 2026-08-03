@@ -15,7 +15,8 @@ const IMAGE_CRATE_EXTS: &[&str] = &[
 
 /// Ảnh quá to (pixel bomb / panorama khổng lồ) không decode bằng image crate
 /// trong process — đẩy sang ffmpeg (process riêng, chết cũng không sao).
-const MAX_IN_PROCESS_PIXELS: u64 = 120_000_000;
+/// 80MP RGBA ≈ 320MB/decode; pool tối đa 6 thread → trần RAM tạm ~2GB.
+const MAX_IN_PROCESS_PIXELS: u64 = 80_000_000;
 
 /// Sinh thumbnail WebP q75 lọt hộp `target`×`target` (không upscale).
 /// EXIF orientation được áp SAU resize (rẻ hơn 50 lần so với xoay full-res).
