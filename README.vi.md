@@ -21,7 +21,7 @@ Index cả ổ cứng, gõ là ra kết quả, dọn 15 năm ảnh vứt lung tu
 
 1. **Duyệt & tìm kiếm cả ổ đĩa, tức thì** - kiến trúc index-first; UI không bao giờ đụng filesystem khi duyệt.
 2. **Dedup an toàn** - hash phân tầng (size → xxh3 → BLAKE3 đầy đủ) + so trùng perceptual, UI so ảnh cạnh nhau, chỉ xóa vào Thùng rác. *(đang làm - M4)*
-3. **Gom thư viện** - tổ chức tất cả về `Library\YYYY\YYYY-MM\` với tên theo ngày chụp chống đụng độ, kèm nhật ký undo đầy đủ. *(đang làm - M5)*
+3. **Gom thư viện** - dồn tất cả về thư mục do chính bạn chọn, cấu trúc theo ngày tùy chỉnh được (mặc định `YYYY\YYYY-MM`), tên file theo ngày chụp chống đụng độ, kèm nhật ký undo đầy đủ. *(đang làm - M5)*
 
 ## ✨ Điểm nổi bật
 
@@ -60,7 +60,7 @@ Năm bất biến mà mọi đường code phá hủy đều phải qua - luật
 | M2 | Lưới thumbnail, lightbox + EXIF, HEIC, job metadata | ✅ |
 | M3 | Video: thumb keyframe, phát trong app, ghép cặp Live Photo, bundle ffmpeg | 🔜 |
 | M4 | Dedup exact: hash phân tầng, UI so 2-4 ảnh cạnh nhau, review bằng bàn phím | ⏳ |
-| M5 | Gom thư viện: tổ chức theo ngày, move atomic, nhật ký undo | ⏳ |
+| M5 | Gom thư viện: thư mục đích tự chọn, format ngày tùy chỉnh, move atomic, nhật ký undo | ⏳ |
 | M6 | Import iPhone / SD qua WPD/MTP, nhớ "đã import" incremental | ⏳ |
 | M7 | So trùng perceptual, tag, album, phân tích dung lượng | ⏳ |
 | M8 | Scan nhanh NTFS MFT/USN - rescan cả ổ trong vài giây | ⏳ |

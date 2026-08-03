@@ -21,7 +21,7 @@ Photos and videos pile up for years - iPhone syncs through a dozen different app
 
 1. **Browse & search a whole drive, instantly** - index-first architecture; the UI never touches the filesystem while you browse.
 2. **Deduplicate safely** - tiered hashing (size → xxh3 → full BLAKE3) + perceptual matching, side-by-side review, Recycle Bin only. *(in progress - M4)*
-3. **Consolidate** - organize everything into `Library\YYYY\YYYY-MM\` with collision-proof date-based names and a full undo journal. *(in progress - M5)*
+3. **Consolidate** - move everything into a library folder *you* choose, laid out by a date structure you can customize (default `YYYY\YYYY-MM`), with collision-proof date-based names and a full undo journal. *(in progress - M5)*
 
 ## ✨ Highlights
 
@@ -60,7 +60,7 @@ Five invariants every destructive code path must pass - not guidelines, hard rul
 | M2 | Thumbnail grid, lightbox + EXIF, HEIC, metadata jobs | ✅ |
 | M3 | Video: keyframe thumbs, in-app playback, Live Photo pairing, bundled ffmpeg | 🔜 |
 | M4 | Exact dedup: tiered hashing, 2-4-up compare UI, keyboard-first review | ⏳ |
-| M5 | Organize: date-based library, atomic moves, undo journal | ⏳ |
+| M5 | Organize: user-chosen library folder, configurable date layout, atomic moves, undo journal | ⏳ |
 | M6 | iPhone / SD import via WPD/MTP, incremental "already imported" | ⏳ |
 | M7 | Perceptual similarity, tags, albums, storage analytics | ⏳ |
 | M8 | NTFS MFT/USN fast scan - full drive rescan in seconds | ⏳ |
