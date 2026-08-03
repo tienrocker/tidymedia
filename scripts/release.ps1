@@ -35,15 +35,19 @@ switch -Regex ($Bump) {
 
 Write-Host "Version: $cur -> $new"
 
+# PS 5.1: Set-Content -Encoding utf8 ghi BOM -> tauri-action parse JSON chet.
+# Luon ghi bang UTF8 KHONG BOM.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
 # 1) Bump Cargo.toml (chỉ dòng đầu tiên khớp — nằm trong [workspace.package])
 $content = $content -replace "(?m)^version\s*=\s*`"$([regex]::Escape($cur.ToString()))`"", "version = `"$new`""
-Set-Content $cargoToml $content -Encoding utf8 -NoNewline
+[System.IO.File]::WriteAllText($cargoToml, $content, $utf8NoBom)
 
 # 2) Sync package.json (cosmetic)
 $pkgPath = Join-Path $repo "package.json"
 $pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
 $pkg.version = $new
-($pkg | ConvertTo-Json -Depth 10) + "`n" | Set-Content $pkgPath -Encoding utf8 -NoNewline
+[System.IO.File]::WriteAllText($pkgPath, (($pkg | ConvertTo-Json -Depth 10) + "`n"), $utf8NoBom)
 
 # 3) Cập nhật Cargo.lock cho version mới
 cargo update --workspace --quiet
