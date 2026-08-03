@@ -9,6 +9,25 @@ export interface FileRow {
   size: number;
   mtime: number;
   status: number; // 0 present, 1 missing, 2 cloud placeholder, 3 missing-volume
+  width: number | null; // null = meta job chưa chạy tới
+  height: number | null;
+  takenAt: number | null;
+}
+
+export interface FileDetail {
+  id: number;
+  name: string;
+  dir: string;
+  kind: number;
+  status: number;
+  size: number;
+  mtime: number;
+  width: number | null;
+  height: number | null;
+  takenAt: number | null;
+  camera: string | null;
+  orientation: number | null;
+  metaState: number | null;
 }
 
 export interface RootInfo {
@@ -50,6 +69,7 @@ export interface FileFilter {
   rootPath?: string;
   sort?: string;
   includeMissing?: boolean;
+  minPx?: number; // width*height >= minPx (chỉ khớp file đã có meta)
 }
 
 export interface QueryResult {
@@ -77,4 +97,6 @@ export const api = {
     invoke<void>("set_settings", { tzOffsetMinutes, setupDone }),
   getExcludedPaths: () => invoke<string[]>("get_excluded_paths"),
   setExcludedPaths: (paths: string[]) => invoke<void>("set_excluded_paths", { paths }),
+  startMetaScan: () => invoke<number | null>("start_meta_scan"),
+  getFileMeta: (fileId: number) => invoke<FileDetail | null>("get_file_meta", { fileId }),
 };

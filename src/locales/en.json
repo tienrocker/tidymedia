@@ -6,7 +6,13 @@
     "images": "Images",
     "videos": "Videos",
     "minMb": "≥ MB",
-    "maxMb": "≤ MB"
+    "maxMb": "≤ MB",
+    "minRes": "Minimum resolution",
+    "anyRes": "Any resolution"
+  },
+  "view": {
+    "grid": "Thumbnail grid",
+    "list": "Details list"
   },
   "sort": {
     "newest": "Newest first",
@@ -18,8 +24,17 @@
   "list": {
     "name": "Name",
     "folder": "Folder",
+    "dims": "Dimensions",
     "size": "Size",
     "modified": "Modified"
+  },
+  "lightbox": {
+    "info": "Info",
+    "dimensions": "Dimensions",
+    "taken": "Taken",
+    "camera": "Camera",
+    "noPreview": "No preview for this format yet",
+    "videoSoon": "Video playback arrives in the next update"
   },
   "roots": {
     "title": "Watched folders",

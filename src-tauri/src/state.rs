@@ -44,7 +44,16 @@ pub struct AppState {
     pub db: Arc<Db>,
     pub jobs: Arc<JobManager>,
     pub queries: Arc<Mutex<QueryCache>>,
+    /// Cache thumbnail WebP (thumbs.db, LRU 2GB) — mất là re-generate, không quý.
+    pub thumbs: Arc<core_media::ThumbStore>,
+    /// Pool riêng cho decode thumb + đọc media — không bao giờ chiếm thread
+    /// webview hay tokio worker.
+    pub thumb_pool: Arc<rayon::ThreadPool>,
+    /// ffmpeg cho HEIC/AVIF/JXL. None = format đó hiện icon thay thumb (M3 bundle sidecar).
+    pub ffmpeg: Option<std::path::PathBuf>,
 }
+
+const THUMB_CACHE_CAP_BYTES: i64 = 2 * 1024 * 1024 * 1024;
 
 /// Data dir: portable.marker cạnh exe → .\data cạnh exe (chạy từ USB);
 /// không thì app_data_dir (+\dev cho debug build — dev không được đụng data thật).
@@ -72,10 +81,32 @@ pub fn init(app: &AppHandle) -> Result<()> {
     let events_rx = jobs.receiver();
     let writer = db.writer.clone();
 
+    let thumbs = Arc::new(core_media::ThumbStore::open(
+        &data_dir.join("thumbs.db"),
+        THUMB_CACHE_CAP_BYTES,
+    )?);
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let thumb_pool = Arc::new(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads((cores / 2).clamp(2, 6))
+            .thread_name(|i| format!("thumb-{i}"))
+            .build()?,
+    );
+    let ffmpeg = core_media::find_ffmpeg();
+    match &ffmpeg {
+        Some(p) => tracing::info!(path = %p.display(), "ffmpeg found — HEIC/AVIF thumbs on"),
+        None => tracing::info!("ffmpeg not found — HEIC/AVIF hiện icon (M3 bundle sidecar)"),
+    }
+
     app.manage(AppState {
         db,
         jobs,
         queries: Arc::new(Mutex::new(QueryCache::new())),
+        thumbs,
+        thumb_pool,
+        ffmpeg,
     });
 
     // Event pump: JobEvent → UI (tauri events) + jobs table + index://changed.

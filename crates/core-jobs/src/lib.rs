@@ -100,6 +100,16 @@ impl JobManager {
             .map(|(id, _)| *id)
     }
 
+    /// Job id đầu tiên đang chạy theo kind (vd "meta") — chặn job trùng loại.
+    pub fn active_job_of_kind(&self, kind: &str) -> Option<i64> {
+        self.active
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, info)| info.kind == kind)
+            .map(|(id, _)| *id)
+    }
+
     /// Gắn cờ hủy mọi scan của root; trả về danh sách job id bị hủy.
     pub fn cancel_scans_for_root(&self, root_id: i64) -> Vec<i64> {
         let map = self.active.lock().unwrap();

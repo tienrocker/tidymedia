@@ -12,6 +12,10 @@ pub struct FileRow {
     pub size: i64,
     pub mtime: i64,
     pub status: i64,
+    /// Dimensions hiển thị từ media_meta (None = meta job chưa chạy tới).
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub taken_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -52,6 +56,60 @@ pub struct FileFilter {
     pub root_path: Option<String>,
     pub sort: Option<String>,
     pub include_missing: Option<bool>,
+    /// Lọc theo tổng pixel (width*height >= min_px). Chỉ khớp file đã có meta.
+    pub min_px: Option<i64>,
+}
+
+/// File chờ trích metadata (meta job M2).
+#[derive(Debug, Clone)]
+pub struct PendingMeta {
+    pub file_id: i64,
+    /// Full path đã ghép sẵn dir + name.
+    pub path: String,
+}
+
+/// Kết quả trích meta của 1 file, chờ ghi vào media_meta.
+#[derive(Debug, Clone)]
+pub struct MetaUpsert {
+    pub file_id: i64,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub taken_at: Option<i64>,
+    pub date_source: Option<i64>,
+    pub camera: Option<String>,
+    pub orientation: Option<i64>,
+    /// 1 = done, 2 = failed (không đọc nổi dimensions).
+    pub meta_state: i64,
+}
+
+/// Row phục vụ protocol thumb:// / media:// — lookup theo file id.
+#[derive(Debug, Clone)]
+pub struct MediaSrc {
+    pub path: String,
+    pub ext: Option<String>,
+    pub kind: i64,
+    pub size: i64,
+    pub mtime: i64,
+    pub status: i64,
+}
+
+/// Chi tiết 1 file cho panel info của lightbox.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDetail {
+    pub id: i64,
+    pub name: String,
+    pub dir: String,
+    pub kind: i64,
+    pub status: i64,
+    pub size: i64,
+    pub mtime: i64,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub taken_at: Option<i64>,
+    pub camera: Option<String>,
+    pub orientation: Option<i64>,
+    pub meta_state: Option<i64>,
 }
 
 /// Một file do scanner tìm thấy, chờ ghi vào index.

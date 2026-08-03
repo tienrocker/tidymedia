@@ -6,7 +6,13 @@
     "images": "图片",
     "videos": "视频",
     "minMb": "≥ MB",
-    "maxMb": "≤ MB"
+    "maxMb": "≤ MB",
+    "minRes": "最低分辨率",
+    "anyRes": "任意分辨率"
+  },
+  "view": {
+    "grid": "缩略图网格",
+    "list": "详细列表"
   },
   "sort": {
     "newest": "最新优先",
@@ -18,8 +24,17 @@
   "list": {
     "name": "名称",
     "folder": "文件夹",
+    "dims": "尺寸",
     "size": "大小",
     "modified": "修改时间"
+  },
+  "lightbox": {
+    "info": "信息",
+    "dimensions": "尺寸",
+    "taken": "拍摄时间",
+    "camera": "相机",
+    "noPreview": "此格式暂不支持预览",
+    "videoSoon": "视频播放将在下个版本推出"
   },
   "roots": {
     "title": "监视的文件夹",

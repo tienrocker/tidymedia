@@ -7,7 +7,7 @@ import { fmtDateTime } from "../../lib/time";
 
 const ROW_H = 30;
 const GRID_COLS =
-  "grid grid-cols-[28px_minmax(180px,2fr)_minmax(180px,3fr)_90px_130px] items-center gap-2 px-3";
+  "grid grid-cols-[28px_minmax(180px,2fr)_minmax(180px,3fr)_100px_90px_130px] items-center gap-2 px-3";
 
 export function FileList() {
   const { t } = useTranslation();
@@ -49,6 +49,7 @@ export function FileList() {
         <span />
         <span>{t("list.name")}</span>
         <span>{t("list.folder")}</span>
+        <span className="text-right">{t("list.dims")}</span>
         <span className="text-right">{t("list.size")}</span>
         <span className="text-right">{t("list.modified")}</span>
       </div>
@@ -61,6 +62,7 @@ export function FileList() {
                 key={vi.key}
                 className={`${GRID_COLS} absolute left-0 top-0 w-full border-b border-neutral-900 hover:bg-neutral-900`}
                 style={{ height: ROW_H, transform: `translateY(${vi.start}px)` }}
+                onDoubleClick={() => row && useStore.getState().openLightbox(vi.index)}
               >
                 {row ? (
                   <>
@@ -72,6 +74,11 @@ export function FileList() {
                     </span>
                     <span className="truncate text-neutral-500" title={row.dir}>
                       {row.dir}
+                    </span>
+                    <span className="text-right tabular-nums text-neutral-500">
+                      {row.width != null && row.height != null
+                        ? `${row.width}×${row.height}`
+                        : ""}
                     </span>
                     <span className="text-right tabular-nums text-neutral-400">
                       {fmtSize(row.size)}
@@ -85,6 +92,7 @@ export function FileList() {
                     <span />
                     <span className="h-3 w-40 animate-pulse rounded bg-neutral-900" />
                     <span className="h-3 w-56 animate-pulse rounded bg-neutral-900" />
+                    <span />
                     <span />
                     <span />
                   </>

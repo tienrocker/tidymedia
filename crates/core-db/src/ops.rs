@@ -4,15 +4,34 @@ use anyhow::{anyhow, bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use unicode_normalization::UnicodeNormalization;
 
-use crate::models::{JobRow, RootInfo, ScanEntry};
+use crate::models::{FileDetail, JobRow, MediaSrc, MetaUpsert, PendingMeta, RootInfo, ScanEntry};
 
-/// Bump khi đổi schema. Lệch version → wipe & recreate (index rebuild bằng rescan,
-/// chấp nhận được pre-1.0; sau 1.0 sẽ có migration thật).
-const SCHEMA_VERSION: i64 = 2;
+/// Bump khi đổi schema. Có migration tăng dần cho các bước gần (giữ index của
+/// user); version lạ/quá cũ → wipe & recreate (rebuild bằng rescan, ok pre-1.0).
+const SCHEMA_VERSION: i64 = 3;
+
+/// v2 → v3: chỉ thêm trigger invalidate meta/hash khi file đổi nội dung.
+/// PHẢI giống hệt trigger cùng tên trong schema.sql.
+const MIGRATE_V2_V3: &str = "
+CREATE TRIGGER files_meta_invalidate AFTER UPDATE OF size, mtime ON files
+WHEN old.size != new.size OR old.mtime != new.mtime
+BEGIN
+  DELETE FROM media_meta WHERE file_id = old.id;
+  DELETE FROM hashes WHERE file_id = old.id;
+  DELETE FROM phashes WHERE file_id = old.id;
+END;";
 
 pub fn ensure_schema(conn: &mut Connection) -> Result<()> {
     let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if version == SCHEMA_VERSION {
+        return Ok(());
+    }
+    if version == 2 {
+        let tx = conn.transaction()?;
+        tx.execute_batch(MIGRATE_V2_V3)?;
+        tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        tx.commit()?;
+        tracing::info!("schema migrated v2 -> v{SCHEMA_VERSION} (index giữ nguyên)");
         return Ok(());
     }
     let tx = conn.transaction()?;
@@ -407,6 +426,141 @@ pub fn list_jobs(conn: &Connection, limit: i64) -> Result<Vec<JobRow>> {
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+// ---------- media meta (M2) ----------
+
+/// Ghép full path từ dirs.path + files.name ("D:\" đã có sep, còn lại thì chưa).
+pub fn join_path(dir: &str, name: &str) -> String {
+    if dir.ends_with('\\') {
+        format!("{dir}{name}")
+    } else {
+        format!("{dir}\\{name}")
+    }
+}
+
+/// Số ảnh present chưa có meta — dùng để quyết định có mở meta job không.
+pub fn count_pending_meta(conn: &Connection) -> Result<i64> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*) FROM files f LEFT JOIN media_meta m ON m.file_id = f.id
+         WHERE m.file_id IS NULL AND f.kind = 0 AND f.status = 0",
+        [],
+        |r| r.get(0),
+    )?)
+}
+
+/// 1 batch ảnh chờ trích meta, keyset pagination theo f.id (`after_id`) —
+/// file KHÔNG ĐỌC ĐƯỢC (ổ rút giữa chừng) được job bỏ qua không ghi row,
+/// cursor vẫn tiến nên loop không bao giờ kẹt; job sau tự thử lại.
+pub fn select_pending_meta(
+    conn: &Connection,
+    after_id: i64,
+    limit: i64,
+) -> Result<Vec<PendingMeta>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT f.id, d.path, f.name
+         FROM files f
+         JOIN dirs d ON d.id = f.dir_id
+         LEFT JOIN media_meta m ON m.file_id = f.id
+         WHERE m.file_id IS NULL AND f.kind = 0 AND f.status = 0 AND f.id > ?1
+         ORDER BY f.id LIMIT ?2",
+    )?;
+    let rows = stmt
+        .query_map(params![after_id, limit], |r| {
+            let dir: String = r.get(1)?;
+            let name: String = r.get(2)?;
+            Ok(PendingMeta {
+                file_id: r.get(0)?,
+                path: join_path(&dir, &name),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+pub fn upsert_meta_batch(conn: &mut Connection, rows: &[MetaUpsert]) -> Result<()> {
+    let tx = conn.transaction()?;
+    {
+        let mut ins = tx.prepare_cached(
+            "INSERT INTO media_meta(file_id, width, height, taken_at, date_source, camera,
+                                    orientation, meta_state)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(file_id) DO UPDATE SET
+               width = excluded.width, height = excluded.height,
+               taken_at = excluded.taken_at, date_source = excluded.date_source,
+               camera = excluded.camera, orientation = excluded.orientation,
+               meta_state = excluded.meta_state",
+        )?;
+        for m in rows {
+            ins.execute(params![
+                m.file_id,
+                m.width,
+                m.height,
+                m.taken_at,
+                m.date_source,
+                m.camera,
+                m.orientation,
+                m.meta_state
+            ])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Lookup cho protocol thumb:// / media://.
+pub fn get_media_src(conn: &Connection, file_id: i64) -> Result<Option<MediaSrc>> {
+    Ok(conn
+        .query_row(
+            "SELECT d.path, f.name, f.ext, f.kind, f.size, f.mtime, f.status
+             FROM files f JOIN dirs d ON d.id = f.dir_id WHERE f.id = ?1",
+            params![file_id],
+            |r| {
+                let dir: String = r.get(0)?;
+                let name: String = r.get(1)?;
+                Ok(MediaSrc {
+                    path: join_path(&dir, &name),
+                    ext: r.get(2)?,
+                    kind: r.get(3)?,
+                    size: r.get(4)?,
+                    mtime: r.get(5)?,
+                    status: r.get(6)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// Chi tiết file + meta cho panel info lightbox.
+pub fn get_file_detail(conn: &Connection, file_id: i64) -> Result<Option<FileDetail>> {
+    Ok(conn
+        .query_row(
+            "SELECT f.id, f.name, d.path, f.kind, f.status, f.size, f.mtime,
+                    m.width, m.height, m.taken_at, m.camera, m.orientation, m.meta_state
+             FROM files f
+             JOIN dirs d ON d.id = f.dir_id
+             LEFT JOIN media_meta m ON m.file_id = f.id
+             WHERE f.id = ?1",
+            params![file_id],
+            |r| {
+                Ok(FileDetail {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    dir: r.get(2)?,
+                    kind: r.get(3)?,
+                    status: r.get(4)?,
+                    size: r.get(5)?,
+                    mtime: r.get(6)?,
+                    width: r.get(7)?,
+                    height: r.get(8)?,
+                    taken_at: r.get(9)?,
+                    camera: r.get(10)?,
+                    orientation: r.get(11)?,
+                    meta_state: r.get(12)?,
+                })
+            },
+        )
+        .optional()?)
 }
 
 // ---------- excluded paths (user-defined) ----------

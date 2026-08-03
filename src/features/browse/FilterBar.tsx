@@ -46,6 +46,8 @@ export function FilterBar() {
   const filter = useStore((s) => s.filter);
   const setFilter = useStore((s) => s.setFilter);
   const tz = useStore((s) => s.tzOffsetMinutes);
+  const viewMode = useStore((s) => s.viewMode);
+  const setViewMode = useStore((s) => s.setViewMode);
 
   // IME (Telex/Pinyin): không bắn query khi đang gõ dở tổ hợp
   const [text, setText] = useState("");
@@ -117,6 +119,44 @@ export function FilterBar() {
         <option value="size_desc">{t("sort.largest")}</option>
         <option value="size_asc">{t("sort.smallest")}</option>
       </select>
+      <select
+        className={inputCls}
+        title={t("filter.minRes")}
+        value={filter.minPx ?? ""}
+        onChange={(e) =>
+          setFilter({ minPx: e.target.value === "" ? undefined : Number(e.target.value) })
+        }
+      >
+        <option value="">{t("filter.anyRes")}</option>
+        <option value="2000000">≥ 2 MP</option>
+        <option value="5000000">≥ 5 MP</option>
+        <option value="8000000">≥ 8 MP</option>
+        <option value="12000000">≥ 12 MP</option>
+      </select>
+      <div className="ml-auto flex overflow-hidden rounded border border-neutral-700">
+        <button
+          className={`px-2 py-1 text-sm ${
+            viewMode === "grid"
+              ? "bg-neutral-700 text-neutral-100"
+              : "bg-neutral-900 text-neutral-500 hover:text-neutral-300"
+          }`}
+          title={t("view.grid")}
+          onClick={() => setViewMode("grid")}
+        >
+          ▦
+        </button>
+        <button
+          className={`px-2 py-1 text-sm ${
+            viewMode === "list"
+              ? "bg-neutral-700 text-neutral-100"
+              : "bg-neutral-900 text-neutral-500 hover:text-neutral-300"
+          }`}
+          title={t("view.list")}
+          onClick={() => setViewMode("list")}
+        >
+          ☰
+        </button>
+      </div>
     </div>
   );
 }

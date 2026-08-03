@@ -3,10 +3,12 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import { LANGS } from "./i18n";
 import { errText } from "./lib/errors";
-import { JobProgress } from "./lib/ipc";
+import { api, JobProgress } from "./lib/ipc";
 import { useStore } from "./state/store";
 import { FilterBar } from "./features/browse/FilterBar";
 import { FileList } from "./features/browse/FileList";
+import { FileGrid } from "./features/browse/FileGrid";
+import { Lightbox } from "./features/browse/Lightbox";
 import { StatusBar } from "./features/browse/StatusBar";
 import { RootsPanel } from "./features/roots/RootsPanel";
 import { JobsPanel } from "./features/jobs/JobsPanel";
@@ -33,6 +35,7 @@ export default function App() {
   const filter = useStore((s) => s.filter);
   const setupDone = useStore((s) => s.setupDone);
   const settingsLoaded = useStore((s) => s.settingsLoaded);
+  const viewMode = useStore((s) => s.viewMode);
   const [showSettings, setShowSettings] = useState(false);
   const debounceRef = useRef<number | undefined>(undefined);
 
@@ -49,6 +52,9 @@ export default function App() {
     void useStore.getState().loadSettings();
     void useStore.getState().loadRoots();
     void useStore.getState().refreshJobs();
+    // Ảnh index rồi mà chưa có meta (app tắt giữa chừng...) → chạy nốt.
+    // Không còn gì pending thì backend trả null, không tạo job rác.
+    api.startMetaScan().catch((e) => console.error("start_meta_scan failed", e));
 
     // index://changed: Rust đã giãn 2.5s khi đang scan; debounce JS 1500ms nữa
     // để gom event done+changed. Re-query GIỮ scroll (không đụng filterEpoch).
@@ -57,10 +63,14 @@ export default function App() {
       listen<JobProgress>("job://progress", (e) => {
         useStore.getState().onJobProgress(e.payload);
       }),
-      listen<{ jobId: number; message?: string }>("job://done", (e) => {
+      listen<{ jobId: number; kind?: string; message?: string }>("job://done", (e) => {
         useStore.getState().onJobEnd(e.payload.jobId);
         void useStore.getState().loadRoots();
         void useStore.getState().refreshJobs();
+        // Scan xong → trích meta cho file mới (idempotent, đang chạy thì thôi)
+        if (e.payload.kind === "scan") {
+          api.startMetaScan().catch((err) => console.error("start_meta_scan failed", err));
+        }
       }),
       listen<{ jobId: number; error?: string }>("job://failed", (e) => {
         useStore.getState().onJobEnd(e.payload.jobId);
@@ -116,9 +126,10 @@ export default function App() {
       </aside>
       <main className="flex min-w-0 flex-1 flex-col">
         <FilterBar />
-        <FileList />
+        {viewMode === "grid" ? <FileGrid /> : <FileList />}
         <StatusBar />
       </main>
+      <Lightbox />
       {settingsLoaded && !setupDone && <SettingsDialog firstRun />}
       {showSettings && (
         <SettingsDialog firstRun={false} onClose={() => setShowSettings(false)} />

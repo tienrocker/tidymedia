@@ -3,8 +3,9 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use core_db::{FileFilter, FileRow, JobRow, RootInfo};
+use core_db::{FileDetail, FileFilter, FileRow, JobRow, MetaUpsert, PendingMeta, RootInfo};
 use core_jobs::{JobEvent, JobProgress, Throttle};
+use rayon::prelude::*;
 use serde::Serialize;
 use tauri::State;
 
@@ -183,6 +184,178 @@ pub async fn start_scan(state: State<'_, AppState>, root_id: i64) -> CmdResult<i
             .map_err(|e| format!("ERR_INTERNAL|spawn: {e}"))?;
 
         Ok(job_id)
+    })
+    .await
+}
+
+/// Meta job: trích dimensions + EXIF cho mọi ảnh chưa có meta. Idempotent —
+/// gọi lúc nào cũng được (sau scan, lúc mở app): đang chạy → trả job id đang
+/// chạy; không còn gì để làm → None (không tạo job row rác).
+#[tauri::command]
+pub async fn start_meta_scan(state: State<'_, AppState>) -> CmdResult<Option<i64>> {
+    if let Some(id) = state.jobs.active_job_of_kind("meta") {
+        return Ok(Some(id));
+    }
+    let db = state.db.clone();
+    let jobs = state.jobs.clone();
+    blocking(move || {
+        let total = db
+            .pool
+            .with(core_db::ops::count_pending_meta)
+            .map_err(err)?;
+        if total == 0 {
+            return Ok(None);
+        }
+        let job_id = db
+            .writer
+            .exec(|c| core_db::ops::insert_job(c, "meta", None))
+            .map_err(err)?;
+        let cancel = jobs.register(job_id, "meta", None);
+        let events = jobs.sender();
+
+        std::thread::Builder::new()
+            .name(format!("meta-{job_id}"))
+            .spawn(move || {
+                let events_progress = events.clone();
+                let cancel_run = cancel.clone();
+                let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    run_meta_job(&db, &cancel_run, job_id, total, &events_progress)
+                }));
+                let final_event = match result {
+                    Err(_) => JobEvent::Failed {
+                        job_id,
+                        kind: "meta".into(),
+                        error: "ERR_INTERNAL|meta thread panicked".into(),
+                    },
+                    Ok(Ok(_)) if cancel.load(Ordering::Relaxed) => JobEvent::Cancelled {
+                        job_id,
+                        kind: "meta".into(),
+                    },
+                    Ok(Ok(done)) => JobEvent::Done {
+                        job_id,
+                        kind: "meta".into(),
+                        message: Some(format!("meta {done}")),
+                    },
+                    Ok(Err(e)) => JobEvent::Failed {
+                        job_id,
+                        kind: "meta".into(),
+                        error: format!("{e:#}"),
+                    },
+                };
+                let _ = events.send(final_event);
+            })
+            .map_err(|e| format!("ERR_INTERNAL|spawn: {e}"))?;
+        Ok(Some(job_id))
+    })
+    .await
+}
+
+fn run_meta_job(
+    db: &core_db::Db,
+    cancel: &core_jobs::CancelFlag,
+    job_id: i64,
+    total: i64,
+    events: &crossbeam_channel::Sender<JobEvent>,
+) -> anyhow::Result<u64> {
+    let mut done: u64 = 0;
+    let mut cursor: i64 = 0;
+    let mut throttle = Throttle::new(200);
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(done);
+        }
+        let batch = db
+            .pool
+            .with(|c| core_db::ops::select_pending_meta(c, cursor, 256))?;
+        let Some(last) = batch.last() else {
+            return Ok(done);
+        };
+        cursor = last.file_id;
+        // Header-only read (imagesize + EXIF) — song song trên global rayon pool.
+        // None = file không đọc được (ổ rút...) → không ghi row, job sau thử lại.
+        let metas: Vec<MetaUpsert> = batch.par_iter().filter_map(extract_one_meta).collect();
+        let n = batch.len() as u64;
+        if !metas.is_empty() {
+            db.writer
+                .exec(move |c| core_db::ops::upsert_meta_batch(c, &metas))?;
+        }
+        done += n;
+        if throttle.ready() {
+            let _ = events.send(JobEvent::Progress(JobProgress {
+                job_id,
+                kind: "meta".into(),
+                done,
+                // Scan chạy song song có thể thêm file → done vượt total ban đầu
+                total: Some(total.max(done as i64) as u64),
+                message: None,
+            }));
+        }
+    }
+}
+
+/// None = file không truy cập được (ổ offline, bị lock) — KHÔNG ghi row để job
+/// sau retry. Truy cập được thì luôn ra row (decode fail → meta_state=2, không
+/// bao giờ chọn lại file hỏng thật).
+fn extract_one_meta(p: &PendingMeta) -> Option<MetaUpsert> {
+    let path = Path::new(&p.path);
+    if std::fs::metadata(path).is_err() {
+        return None;
+    }
+    let m = std::panic::catch_unwind(|| core_media::extract_image_meta(path)).unwrap_or_default();
+    Some(MetaUpsert {
+        file_id: p.file_id,
+        width: m.width.map(i64::from),
+        height: m.height.map(i64::from),
+        taken_at: m.taken_at,
+        date_source: m.date_source,
+        camera: m.camera,
+        orientation: m.orientation.map(i64::from),
+        meta_state: if m.ok { 1 } else { 2 },
+    })
+}
+
+/// Chi tiết file cho panel info lightbox. Meta chưa có (job chưa chạy tới) mà
+/// là ảnh present → trích ngay tại chỗ (header-only, vài ms) + persist async.
+#[tauri::command]
+pub async fn get_file_meta(
+    state: State<'_, AppState>,
+    file_id: i64,
+) -> CmdResult<Option<FileDetail>> {
+    let db = state.db.clone();
+    blocking(move || {
+        let mut detail = db
+            .pool
+            .with(|c| core_db::ops::get_file_detail(c, file_id))
+            .map_err(err)?;
+        if let Some(d) = detail.as_mut() {
+            if d.meta_state.is_none()
+                && d.kind == 0
+                && d.status == 0
+                && std::fs::metadata(core_db::ops::join_path(&d.dir, &d.name)).is_ok()
+            {
+                let path = core_db::ops::join_path(&d.dir, &d.name);
+                let m = core_media::extract_image_meta(Path::new(&path));
+                d.width = m.width.map(i64::from);
+                d.height = m.height.map(i64::from);
+                d.taken_at = m.taken_at;
+                d.camera = m.camera.clone();
+                d.orientation = m.orientation.map(i64::from);
+                d.meta_state = Some(if m.ok { 1 } else { 2 });
+                let row = MetaUpsert {
+                    file_id: d.id,
+                    width: d.width,
+                    height: d.height,
+                    taken_at: d.taken_at,
+                    date_source: m.date_source,
+                    camera: d.camera.clone(),
+                    orientation: d.orientation,
+                    meta_state: if m.ok { 1 } else { 2 },
+                };
+                db.writer
+                    .exec_async(move |c| core_db::ops::upsert_meta_batch(c, &[row]));
+            }
+        }
+        Ok(detail)
     })
     .await
 }

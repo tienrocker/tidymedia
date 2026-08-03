@@ -25,6 +25,16 @@ interface ToastMsg {
   error: boolean;
 }
 
+export type ViewMode = "grid" | "list";
+
+function initialViewMode(): ViewMode {
+  try {
+    return localStorage.getItem("viewMode") === "list" ? "list" : "grid";
+  } catch {
+    return "grid";
+  }
+}
+
 interface AppStore {
   filter: FileFilter;
   /** Chỉ tăng khi FILTER đổi — FileList reset scroll theo cái này, KHÔNG theo queryId
@@ -44,7 +54,14 @@ interface AppStore {
   setupDone: boolean;
   settingsLoaded: boolean;
   toast: ToastMsg | null;
+  viewMode: ViewMode;
+  /** Index (trong query hiện tại) của file đang mở lightbox; null = đóng. */
+  lightboxIndex: number | null;
 
+  setViewMode: (m: ViewMode) => void;
+  openLightbox: (index: number) => void;
+  closeLightbox: () => void;
+  stepLightbox: (delta: number) => void;
   setFilter: (patch: Partial<FileFilter>) => void;
   runQuery: () => Promise<void>;
   ensureRange: (start: number, end: number) => void;
@@ -78,6 +95,32 @@ export const useStore = create<AppStore>((set, get) => ({
   setupDone: true, // đừng nháy wizard trước khi load xong settings
   settingsLoaded: false,
   toast: null,
+  viewMode: initialViewMode(),
+  lightboxIndex: null,
+
+  setViewMode: (m) => {
+    try {
+      localStorage.setItem("viewMode", m);
+    } catch {
+      // private mode — thôi kệ, chỉ mất persist
+    }
+    set({ viewMode: m });
+  },
+
+  openLightbox: (index) => {
+    set({ lightboxIndex: index });
+    // Kéo sẵn hàng xóm để prev/next không trắng
+    get().ensureRange(Math.max(0, index - 3), index + 3);
+  },
+
+  closeLightbox: () => set({ lightboxIndex: null }),
+
+  stepLightbox: (delta) => {
+    const { lightboxIndex, total } = get();
+    if (lightboxIndex == null || total === 0) return;
+    const next = Math.min(total - 1, Math.max(0, lightboxIndex + delta));
+    if (next !== lightboxIndex) get().openLightbox(next);
+  },
 
   setFilter: (patch) =>
     set({
@@ -92,6 +135,7 @@ export const useStore = create<AppStore>((set, get) => ({
       const t0 = performance.now();
       const res = await api.queryFiles(get().filter);
       if (seq !== querySeq) return; // đã có query mới hơn
+      const lb = get().lightboxIndex;
       set({
         queryId: res.queryId,
         total: res.total,
@@ -100,6 +144,8 @@ export const useStore = create<AppStore>((set, get) => ({
         pageOrder: [],
         queryMs: performance.now() - t0,
         querying: false,
+        // Kết quả mới ngắn hơn vị trí đang xem → đóng lightbox thay vì trỏ bậy
+        lightboxIndex: lb != null && lb >= res.total ? null : lb,
       });
     } catch (e) {
       if (seq === querySeq) set({ querying: false });

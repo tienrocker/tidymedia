@@ -1,8 +1,11 @@
--- TidyMedia index schema v2
+-- TidyMedia index schema v3
 -- All timestamps are unix epoch milliseconds unless noted.
 -- v2: dirs.path_key (case-insensitive scoping), files.name_norm (accent-insensitive
 -- search), AUTOINCREMENT (chống rowid reuse), roots.file_count cache, files.status
 -- ghi được từ scanner (cloud placeholder).
+-- v3: trigger files_meta_invalidate — file đổi size/mtime thì meta/hash cũ vô nghĩa.
+-- media_meta.taken_at: EXIF không có timezone → lưu wall-clock camera encode như
+-- epoch ms khung UTC; hiển thị/organize đọc với tz=0 là ra đúng giờ camera.
 
 CREATE TABLE volumes(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,6 +85,16 @@ END;
 CREATE TRIGGER files_fts_au AFTER UPDATE OF name_norm ON files BEGIN
   INSERT INTO files_fts(files_fts, rowid, name_norm) VALUES ('delete', old.id, old.name_norm);
   INSERT INTO files_fts(rowid, name_norm) VALUES (new.id, new.name_norm);
+END;
+
+-- File đổi nội dung (size/mtime khác) → dimensions/EXIF/hash cũ là rác.
+-- Thumb tự invalidate theo src_mtime trong thumbs.db, không cần trigger.
+CREATE TRIGGER files_meta_invalidate AFTER UPDATE OF size, mtime ON files
+WHEN old.size != new.size OR old.mtime != new.mtime
+BEGIN
+  DELETE FROM media_meta WHERE file_id = old.id;
+  DELETE FROM hashes WHERE file_id = old.id;
+  DELETE FROM phashes WHERE file_id = old.id;
 END;
 
 CREATE TABLE media_meta(

@@ -4,3 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+rusqlite.workspace = true
+image = "0.25"
+fast_image_resize = { version = "5", features = ["image"] }
+webp = "0.3"
+kamadak-exif = "0.6"
+imagesize = "0.13"
