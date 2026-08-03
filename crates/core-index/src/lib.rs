@@ -38,6 +38,10 @@ pub const EXCLUDED_DIR_NAMES: &[&str] = &[
     ".staging",
     ".quarantine",
     "node_modules",
+    ".git",
+    ".svn",
+    ".hg",
+    "__pycache__",
 ];
 
 const ATTR_REPARSE_POINT: u32 = 0x400;
@@ -114,6 +118,29 @@ fn keep_dir(name_lower: &str, attrs: u32) -> bool {
     !EXCLUDED_DIR_NAMES.contains(&name_lower) && attrs & ATTR_REPARSE_POINT == 0
 }
 
+/// ".ts" vừa là video MPEG-TS vừa là TypeScript — phân biệt bằng nội dung:
+/// MPEG-TS có sync byte 0x47 ở đầu MỌI packet 188 byte. TypeScript thì không.
+/// Chỉ file ext "ts" mới phải mở đọc (16 byte + seek) — các ext khác miễn phí.
+fn is_mpeg_ts(path: &std::path::Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut b = [0u8; 1];
+    if f.read_exact(&mut b).is_err() || b[0] != 0x47 {
+        return false;
+    }
+    // Packet thứ 2 (offset 188) cũng phải là 0x47 — chống trùng hợp byte đầu
+    if f.seek(SeekFrom::Start(188)).is_err() {
+        return false;
+    }
+    match f.read_exact(&mut b) {
+        Ok(()) => b[0] == 0x47,
+        // File < 189 byte: 1 packet TS hợp lệ tối thiểu cũng 188 byte → loại
+        Err(_) => false,
+    }
+}
+
 /// OsString → ScanEntry nếu là media. Tên không phải Unicode hợp lệ (unpaired
 /// surrogate) → bỏ + đếm: đường dẫn không round-trip được thì mọi thao tác
 /// move/delete sau này đều nguy hiểm.
@@ -136,6 +163,9 @@ fn make_entry(
         .filter(|e| e.len() < name.len())?
         .to_ascii_lowercase();
     let kind = classify_ext(&ext)?;
+    if ext == "ts" && !is_mpeg_ts(&std::path::Path::new(dir_path).join(&name)) {
+        return None; // TypeScript / text, không phải video
+    }
     let attrs = file_attrs(md);
     let status = if attrs & CLOUD_ATTRS != 0 { 2 } else { 0 };
     Some(ScanEntry {
@@ -423,6 +453,48 @@ mod tests {
             .with(|c| core_db::query::query_ids(c, &core_db::FileFilter::default()))
             .unwrap();
         assert_eq!(ids.len(), 2);
+    }
+
+    /// ".ts" TypeScript phải bị loại, ".ts" MPEG-TS thật phải được index.
+    #[test]
+    fn ts_extension_content_sniff() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = core_db::Db::open(tmp.path()).unwrap();
+        let data = tmp.path().join("data");
+        std::fs::create_dir_all(&data).unwrap();
+
+        std::fs::write(
+            data.join("store.ts"),
+            "import { create } from \"zustand\";\n",
+        )
+        .unwrap();
+        // MPEG-TS giả lập: 2 packet 188 byte, mỗi packet mở đầu 0x47
+        let mut ts = vec![0u8; 376];
+        ts[0] = 0x47;
+        ts[188] = 0x47;
+        std::fs::write(data.join("capture.ts"), &ts).unwrap();
+        std::fs::write(data.join("photo.jpg"), b"x").unwrap();
+
+        let cancel = CancelFlag::default();
+        let summary = scan_root(&data, 1, 10, &db.writer, &cancel, |_| {}).unwrap();
+        assert_eq!(
+            summary.indexed, 2,
+            "chi capture.ts + photo.jpg, khong co store.ts"
+        );
+
+        let ids = db
+            .pool
+            .with(|c| {
+                core_db::query::query_ids(
+                    c,
+                    &core_db::FileFilter {
+                        text: Some("store".into()),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        assert!(ids.is_empty(), "store.ts khong duoc nam trong index");
     }
 
     /// Root không tồn tại (ổ rời bị rút) phải FAIL, không được "done 0 files".
