@@ -42,11 +42,14 @@
   },
   "wizard": {
     "title": "欢迎使用 TidyMedia",
-    "subtitle": "两个快速选择——之后可以更改。",
+    "settingsTitle": "设置",
+    "subtitle": "两个快速选择——之后可通过 ⚙ 更改。",
     "language": "语言",
     "timezone": "时区（用于日期显示与整理）",
     "systemDefault": "系统",
-    "start": "开始使用"
+    "start": "开始使用",
+    "save": "保存",
+    "cancel": "取消"
   },
   "errors": {
     "generic": "错误：{{detail}}",

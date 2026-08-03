@@ -10,24 +10,48 @@ const LANG_LABELS: Record<string, string> = {
   zh: "中文",
 };
 
-export function SetupWizard() {
+/** Dùng cho cả first-run (bắt buộc, không đóng được) lẫn chỉnh sửa từ nút ⚙. */
+export function SettingsDialog({
+  firstRun,
+  onClose,
+}: {
+  firstRun: boolean;
+  onClose?: () => void;
+}) {
   const { t, i18n } = useTranslation();
+  const storedTz = useStore((s) => s.tzOffsetMinutes);
   const [lang, setLang] = useState(i18n.resolvedLanguage ?? "en");
-  const [tz, setTz] = useState(systemTzOffsetMinutes());
+  const [tz, setTz] = useState(firstRun ? systemTzOffsetMinutes() : storedTz);
   const systemTz = systemTzOffsetMinutes();
 
   const onSave = () => {
     runSafe(async () => {
       await i18n.changeLanguage(lang);
       await useStore.getState().saveSettings(tz);
+      onClose?.();
     });
   };
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70">
       <div className="w-96 rounded-lg border border-neutral-700 bg-neutral-900 p-6 shadow-2xl">
-        <h1 className="text-lg font-semibold text-neutral-100">{t("wizard.title")}</h1>
-        <p className="mt-1 text-xs text-neutral-500">{t("wizard.subtitle")}</p>
+        <div className="flex items-start justify-between">
+          <h1 className="text-lg font-semibold text-neutral-100">
+            {firstRun ? t("wizard.title") : t("wizard.settingsTitle")}
+          </h1>
+          {!firstRun && (
+            <button
+              onClick={onClose}
+              className="rounded px-1.5 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+              title={t("wizard.cancel")}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+        {firstRun && (
+          <p className="mt-1 text-xs text-neutral-500">{t("wizard.subtitle")}</p>
+        )}
 
         <label className="mt-5 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
           {t("wizard.language")}
@@ -67,7 +91,7 @@ export function SetupWizard() {
           onClick={onSave}
           className="mt-6 w-full rounded bg-emerald-700 py-2 font-semibold text-white hover:bg-emerald-600"
         >
-          {t("wizard.start")}
+          {firstRun ? t("wizard.start") : t("wizard.save")}
         </button>
       </div>
     </div>

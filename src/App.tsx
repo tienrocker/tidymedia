@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import { LANGS } from "./i18n";
@@ -10,7 +10,7 @@ import { FileList } from "./features/browse/FileList";
 import { StatusBar } from "./features/browse/StatusBar";
 import { RootsPanel } from "./features/roots/RootsPanel";
 import { JobsPanel } from "./features/jobs/JobsPanel";
-import { SetupWizard } from "./features/setup/SetupWizard";
+import { SettingsDialog } from "./features/setup/SetupWizard";
 
 function Toast() {
   const toast = useStore((s) => s.toast);
@@ -33,6 +33,7 @@ export default function App() {
   const filter = useStore((s) => s.filter);
   const setupDone = useStore((s) => s.setupDone);
   const settingsLoaded = useStore((s) => s.settingsLoaded);
+  const [showSettings, setShowSettings] = useState(false);
   const debounceRef = useRef<number | undefined>(undefined);
 
   // Filter đổi → re-query (debounce 150ms)
@@ -87,17 +88,26 @@ export default function App() {
           <span className="text-sm font-semibold tracking-wide text-neutral-400">
             {t("app.name")}
           </span>
-          <select
-            className="rounded border border-neutral-800 bg-neutral-900 px-1 py-0.5 text-xs text-neutral-400 outline-none"
-            value={i18n.resolvedLanguage ?? "en"}
-            onChange={(e) => void i18n.changeLanguage(e.target.value)}
-          >
-            {LANGS.map((l) => (
-              <option key={l} value={l}>
-                {l.toUpperCase()}
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center gap-1">
+            <select
+              className="rounded border border-neutral-800 bg-neutral-900 px-1 py-0.5 text-xs text-neutral-400 outline-none"
+              value={i18n.resolvedLanguage ?? "en"}
+              onChange={(e) => void i18n.changeLanguage(e.target.value)}
+            >
+              {LANGS.map((l) => (
+                <option key={l} value={l}>
+                  {l.toUpperCase()}
+                </option>
+              ))}
+            </select>
+            <button
+              title={t("wizard.settingsTitle")}
+              onClick={() => setShowSettings(true)}
+              className="rounded border border-neutral-800 bg-neutral-900 px-1.5 py-0.5 text-xs text-neutral-400 hover:text-neutral-200"
+            >
+              ⚙
+            </button>
+          </div>
         </div>
         <RootsPanel />
         <div className="mt-auto">
@@ -109,7 +119,10 @@ export default function App() {
         <FileList />
         <StatusBar />
       </main>
-      {settingsLoaded && !setupDone && <SetupWizard />}
+      {settingsLoaded && !setupDone && <SettingsDialog firstRun />}
+      {showSettings && (
+        <SettingsDialog firstRun={false} onClose={() => setShowSettings(false)} />
+      )}
       <Toast />
     </div>
   );

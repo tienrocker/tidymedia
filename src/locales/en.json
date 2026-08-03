@@ -44,11 +44,14 @@
   },
   "wizard": {
     "title": "Welcome to TidyMedia",
-    "subtitle": "Two quick choices — you can change them later.",
+    "settingsTitle": "Settings",
+    "subtitle": "Two quick choices — you can change them later via ⚙.",
     "language": "Language",
     "timezone": "Timezone (used for dates & organizing)",
     "systemDefault": "system",
-    "start": "Get started"
+    "start": "Get started",
+    "save": "Save",
+    "cancel": "Cancel"
   },
   "errors": {
     "generic": "Error: {{detail}}",

@@ -42,11 +42,14 @@
   },
   "wizard": {
     "title": "Chào mừng tới TidyMedia",
-    "subtitle": "Hai lựa chọn nhanh — đổi lại sau cũng được.",
+    "settingsTitle": "Cài đặt",
+    "subtitle": "Hai lựa chọn nhanh — sau này đổi lại bằng nút ⚙.",
     "language": "Ngôn ngữ",
     "timezone": "Múi giờ (dùng cho ngày tháng & tổ chức file)",
     "systemDefault": "hệ thống",
-    "start": "Bắt đầu"
+    "start": "Bắt đầu",
+    "save": "Lưu",
+    "cancel": "Hủy"
   },
   "errors": {
     "generic": "Lỗi: {{detail}}",
