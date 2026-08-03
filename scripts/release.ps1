@@ -9,6 +9,14 @@ $ErrorActionPreference = "Stop"
 $repo = Split-Path $PSScriptRoot -Parent
 Set-Location $repo
 
+# git in warning (CRLF...) ra stderr; PowerShell 5.1 bien no thanh NativeCommandError
+# va giet script voi EAP=Stop. Bao moi lenh git qua helper nay.
+function Invoke-Git {
+    $ErrorActionPreference = "Continue"
+    & git @args 2>&1 | ForEach-Object { "$_" } | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "git $($args -join ' ') failed ($LASTEXITCODE)" }
+}
+
 # Version sống duy nhất ở workspace Cargo.toml ([workspace.package]).
 $cargoToml = Join-Path $repo "Cargo.toml"
 $content = Get-Content $cargoToml -Raw
@@ -40,17 +48,17 @@ $pkg.version = $new
 # 3) Cập nhật Cargo.lock cho version mới
 cargo update --workspace --quiet
 
-# 4) Changelog qua git-cliff nếu có
+# 4) Changelog qua git-cliff neu co
 if (Get-Command git-cliff -ErrorAction SilentlyContinue) {
     git-cliff --tag "v$new" -o CHANGELOG.md
-    git add CHANGELOG.md
+    Invoke-Git add CHANGELOG.md
 } else {
-    Write-Host "git-cliff không có trong PATH - bỏ qua CHANGELOG (cargo install git-cliff)"
+    Write-Host "git-cliff khong co trong PATH - bo qua CHANGELOG (cargo install git-cliff)"
 }
 
 # 5) Commit + tag + push
-git add Cargo.toml Cargo.lock package.json
-git commit -m "chore(release): v$new"
-git tag "v$new"
-Write-Host "Đã tag v$new. Push bằng:"
+Invoke-Git add Cargo.toml Cargo.lock package.json
+Invoke-Git -c core.safecrlf=false commit -m "chore(release): v$new"
+Invoke-Git tag "v$new"
+Write-Host "Da tag v$new. Push bang:"
 Write-Host "  git push --follow-tags"
