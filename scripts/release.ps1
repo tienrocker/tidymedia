@@ -59,6 +59,7 @@ if (Get-Command git-cliff -ErrorAction SilentlyContinue) {
 # 5) Commit + tag + push
 Invoke-Git add Cargo.toml Cargo.lock package.json
 Invoke-Git -c core.safecrlf=false commit -m "chore(release): v$new"
-Invoke-Git tag "v$new"
+# Annotated tag - de git push --follow-tags mang tag theo (lightweight thi khong)
+Invoke-Git tag -a "v$new" -m "v$new"
 Write-Host "Da tag v$new. Push bang:"
 Write-Host "  git push --follow-tags"
