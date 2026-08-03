@@ -8,5 +8,7 @@ name = "devtool"
 path = "src/main.rs"
 
 [dependencies]
+core-db.workspace = true
+core-index.workspace = true
 anyhow.workspace = true
 filetime = "0.2"

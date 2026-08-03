@@ -39,11 +39,110 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("gen-tree") => gen_tree(&args[1..]),
+        Some("bench-scan") => bench_scan(&args[1..]),
         _ => {
-            eprintln!("usage: devtool gen-tree --root <path> --files <n> [--dupe-sets <n>]");
+            eprintln!(
+                "usage:\n  devtool gen-tree --root <path> --files <n> [--dupe-sets <n>]\n  devtool bench-scan --root <path> --db <dir>"
+            );
             std::process::exit(2);
         }
     }
+}
+
+/// M1 verification: scan root vào 1 db tạm + đo query latency.
+fn bench_scan(args: &[String]) -> Result<()> {
+    let root = PathBuf::from(flag(args, "--root").context("--root <path> là bắt buộc")?);
+    let db_dir = PathBuf::from(flag(args, "--db").context("--db <dir> là bắt buộc")?);
+
+    let db = core_db::Db::open(&db_dir)?;
+    let root_str = root.to_string_lossy().to_string();
+    let root_id = db
+        .writer
+        .exec(move |c| core_db::ops::upsert_root(c, &root_str))?;
+    let (root_path, volume_id) = db.pool.with(|c| core_db::ops::get_root(c, root_id))?;
+
+    let gen = 1_000_000; // generation giả cho bench
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let t0 = std::time::Instant::now();
+    let summary = core_index::scan_root(
+        Path::new(&root_path),
+        volume_id,
+        gen,
+        &db.writer,
+        &cancel,
+        |done| eprintln!("  scanned {done} ({:.1}s)", t0.elapsed().as_secs_f32()),
+    )?;
+    let scan_s = t0.elapsed().as_secs_f32();
+    println!(
+        "SCAN: {} files indexed, {} missing, {:.2}s ({:.0} files/s)",
+        summary.indexed,
+        summary.marked_missing,
+        scan_s,
+        summary.indexed as f32 / scan_s.max(0.001)
+    );
+
+    // Query benchmarks: các pattern search chính
+    let cases: &[(&str, core_db::FileFilter)] = &[
+        ("all (no filter)", core_db::FileFilter::default()),
+        (
+            "text 1 char 'i'",
+            core_db::FileFilter {
+                text: Some("i".into()),
+                ..Default::default()
+            },
+        ),
+        (
+            "text 3 chars 'img'",
+            core_db::FileFilter {
+                text: Some("img".into()),
+                ..Default::default()
+            },
+        ),
+        (
+            "text 8 chars 'creensho'",
+            core_db::FileFilter {
+                text: Some("creensho".into()),
+                ..Default::default()
+            },
+        ),
+        (
+            "videos > 100 bytes, sort size",
+            core_db::FileFilter {
+                kind: Some(1),
+                size_min: Some(100),
+                sort: Some("size_desc".into()),
+                ..Default::default()
+            },
+        ),
+    ];
+    for (label, filter) in cases {
+        // warm + đo lần 2 (lần 1 dính page-cache lạnh)
+        let _ = db.pool.with(|c| core_db::query::query_ids(c, filter))?;
+        let t = std::time::Instant::now();
+        let ids = db.pool.with(|c| core_db::query::query_ids(c, filter))?;
+        println!(
+            "QUERY [{label}]: {} rows in {:.1}ms",
+            ids.len(),
+            t.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+
+    // fetch_rows cửa sổ giữa list
+    let ids = db
+        .pool
+        .with(|c| core_db::query::query_ids(c, &core_db::FileFilter::default()))?;
+    if ids.len() > 300 {
+        let mid = ids.len() / 2;
+        let window = ids[mid..mid + 200].to_vec();
+        let t = std::time::Instant::now();
+        let rows = db.pool.with(|c| core_db::query::fetch_rows(c, &window))?;
+        println!(
+            "FETCH window 200 rows @ middle: {} rows in {:.1}ms",
+            rows.len(),
+            t.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+    Ok(())
 }
 
 fn flag(args: &[String], name: &str) -> Option<String> {

@@ -677,6 +677,8 @@ name = "devtool"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "core-db",
+ "core-index",
  "filetime",
 ]
 
