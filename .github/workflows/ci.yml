@@ -32,6 +32,18 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # tauri-build validate bundle.resources lúc compile — CI check/test không
+      # bundle nên placeholder rỗng là đủ, khỏi tải 90MB ffmpeg mỗi run.
+      # Release thật đi qua release.yml -> beforeBuildCommand fetch bản thật
+      # (pin version + SHA256).
+      - name: Stub ffmpeg resources
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
+          foreach ($f in "ffmpeg.exe", "ffprobe.exe", "ffmpeg-LICENSE.txt") {
+            New-Item -ItemType File -Force "src-tauri/binaries/$f" | Out-Null
+          }
+
       - name: rustfmt
         run: cargo fmt --all --check
 
