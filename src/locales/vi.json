@@ -19,6 +19,34 @@
     "grid": "Lưới thumbnail",
     "list": "Danh sách chi tiết"
   },
+  "mode": {
+    "browse": "Duyệt",
+    "dedup": "Trùng lặp"
+  },
+  "dedup": {
+    "scan": "Quét trùng lặp",
+    "scanning": "Đang quét…",
+    "stats": "{{n}} nhóm · lãng phí {{size}}",
+    "empty": "Chưa thấy trùng lặp. Bấm \"Quét trùng lặp\" sau khi index xong.",
+    "pickGroup": "Chọn 1 nhóm bên trái. Bản nào đánh dấu sẽ bị xóa, còn lại giữ nguyên.",
+    "copies": "{{n}} bản",
+    "wasted": "dọn được {{size}}",
+    "markDelete": "Xóa",
+    "marked": "Sẽ xóa",
+    "bestRes": "nét nhất",
+    "bestSize": "lớn nhất",
+    "oldest": "cũ nhất",
+    "rule": "Rule tự chọn",
+    "ruleRes": "Giữ bản nét nhất",
+    "ruleOldest": "Giữ bản cũ nhất",
+    "ruleNewest": "Giữ bản mới nhất",
+    "deleteBtn": "Xóa {{n}} bản ({{size}})",
+    "confirm": "Chuyển {{n}} file ({{size}}) vào Thùng rác? Mỗi ảnh luôn còn ít nhất 1 bản đã verify.",
+    "deleteResult": "Đã chuyển {{n}} file vào Thùng rác (giải phóng {{size}})",
+    "skipped": "{{n}} bản bỏ qua (file đổi trên đĩa hoặc thiếu bản verify)",
+    "keepGuard": "Mỗi nhóm phải giữ lại ít nhất 1 bản",
+    "keys": "Space / click: đánh dấu xóa · 1-9: giữ bản đó · Mũi tên: chuyển · Enter: nhóm kế · Lăn chuột: zoom đồng bộ"
+  },
   "sort": {
     "newest": "Mới nhất",
     "oldest": "Cũ nhất",

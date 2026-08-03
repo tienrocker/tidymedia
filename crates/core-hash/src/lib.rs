@@ -38,3 +38,60 @@ pub fn full_blake3(path: &Path) -> Result<[u8; 32]> {
     hasher.update_mmap_rayon(path)?;
     Ok(*hasher.finalize().as_bytes())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_file(name: &str, content: &[u8]) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join("tidymedia-test-hash");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(format!("{}_{name}", std::process::id()));
+        std::fs::write(&p, content).unwrap();
+        p
+    }
+
+    #[test]
+    fn quick64_same_content_same_hash() {
+        let a = temp_file("qa.bin", &vec![7u8; 20_000]);
+        let b = temp_file("qb.bin", &vec![7u8; 20_000]);
+        assert_eq!(quick64(&a).unwrap(), quick64(&b).unwrap());
+        std::fs::remove_file(a).ok();
+        std::fs::remove_file(b).ok();
+    }
+
+    #[test]
+    fn quick64_differs_on_edge_change_and_size() {
+        let mut base = vec![1u8; 20_000];
+        let a = temp_file("qe_a.bin", &base);
+        base[0] = 99;
+        let b = temp_file("qe_b.bin", &base);
+        let c = temp_file("qe_c.bin", &vec![1u8; 20_001]); // khác size
+        assert_ne!(quick64(&a).unwrap(), quick64(&b).unwrap());
+        assert_ne!(quick64(&a).unwrap(), quick64(&c).unwrap());
+        for p in [a, b, c] {
+            std::fs::remove_file(p).ok();
+        }
+    }
+
+    #[test]
+    fn quick64_small_and_mid_sizes_ok() {
+        // < 4KB và 4-8KB không panic (nhánh tail chồng lấn head)
+        let a = temp_file("qs.bin", &[5u8; 100]);
+        let b = temp_file("qm.bin", &[5u8; 6000]);
+        assert!(quick64(&a).is_ok());
+        assert!(quick64(&b).is_ok());
+        std::fs::remove_file(a).ok();
+        std::fs::remove_file(b).ok();
+    }
+
+    #[test]
+    fn full_blake3_matches_reference() {
+        let p = temp_file("full.bin", b"hello world");
+        assert_eq!(
+            full_blake3(&p).unwrap(),
+            *blake3::hash(b"hello world").as_bytes()
+        );
+        std::fs::remove_file(p).ok();
+    }
+}

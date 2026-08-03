@@ -12,14 +12,14 @@ use tauri::State;
 
 use crate::state::AppState;
 
-type CmdResult<T> = Result<T, String>;
+pub(crate) type CmdResult<T> = Result<T, String>;
 
-fn err(e: anyhow::Error) -> String {
+pub(crate) fn err(e: anyhow::Error) -> String {
     format!("{e:#}")
 }
 
 /// Mọi command đều blocking DB/fs → chạy trên blocking pool, không giữ tokio worker.
-async fn blocking<R, F>(f: F) -> CmdResult<R>
+pub(crate) async fn blocking<R, F>(f: F) -> CmdResult<R>
 where
     R: Send + 'static,
     F: FnOnce() -> CmdResult<R> + Send + 'static,
@@ -206,9 +206,9 @@ pub async fn start_scan(state: State<'_, AppState>, root_id: i64) -> CmdResult<i
     .await
 }
 
-/// Hạ gate meta_start_gate khi ra khỏi scope — kể cả early-return/lỗi,
-/// không bao giờ khóa chết đường khởi động meta.
-struct GateGuard(std::sync::Arc<std::sync::atomic::AtomicBool>);
+/// Hạ gate start khi ra khỏi scope — kể cả early-return/lỗi, không bao giờ
+/// khóa chết đường khởi động job (dùng chung cho meta + hash).
+pub(crate) struct GateGuard(pub(crate) std::sync::Arc<std::sync::atomic::AtomicBool>);
 impl Drop for GateGuard {
     fn drop(&mut self) {
         self.0.store(false, Ordering::Release);

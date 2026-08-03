@@ -10,6 +10,7 @@ import { FileList } from "./features/browse/FileList";
 import { FileGrid } from "./features/browse/FileGrid";
 import { Lightbox } from "./features/browse/Lightbox";
 import { StatusBar } from "./features/browse/StatusBar";
+import { DedupView } from "./features/dedup/DedupView";
 import { RootsPanel } from "./features/roots/RootsPanel";
 import { JobsPanel } from "./features/jobs/JobsPanel";
 import { SettingsDialog } from "./features/setup/SetupWizard";
@@ -36,6 +37,7 @@ export default function App() {
   const setupDone = useStore((s) => s.setupDone);
   const settingsLoaded = useStore((s) => s.settingsLoaded);
   const viewMode = useStore((s) => s.viewMode);
+  const appMode = useStore((s) => s.appMode);
   const [showSettings, setShowSettings] = useState(false);
   const debounceRef = useRef<number | undefined>(undefined);
 
@@ -70,6 +72,10 @@ export default function App() {
         // Scan xong → trích meta cho file mới (idempotent, đang chạy thì thôi)
         if (e.payload.kind === "scan") {
           api.startMetaScan().catch((err) => console.error("start_meta_scan failed", err));
+        }
+        // Quét hash xong → refresh danh sách nhóm trùng
+        if (e.payload.kind === "hash") {
+          void useStore.getState().loadDupData();
         }
       }),
       listen<{ jobId: number; error?: string }>("job://failed", (e) => {
@@ -119,15 +125,37 @@ export default function App() {
             </button>
           </div>
         </div>
+        {/* Mode: Browse / Dedup */}
+        <div className="flex gap-1 px-3 pb-2">
+          {(["browse", "dedup"] as const).map((m) => (
+            <button
+              key={m}
+              className={`flex-1 rounded px-2 py-1 text-xs font-medium ${
+                appMode === m
+                  ? "bg-neutral-700 text-neutral-100"
+                  : "bg-neutral-900 text-neutral-500 hover:text-neutral-300"
+              }`}
+              onClick={() => useStore.getState().setAppMode(m)}
+            >
+              {m === "browse" ? `🖼 ${t("mode.browse")}` : `♻ ${t("mode.dedup")}`}
+            </button>
+          ))}
+        </div>
         <RootsPanel />
         <div className="mt-auto">
           <JobsPanel />
         </div>
       </aside>
       <main className="flex min-w-0 flex-1 flex-col">
-        <FilterBar />
-        {viewMode === "grid" ? <FileGrid /> : <FileList />}
-        <StatusBar />
+        {appMode === "dedup" ? (
+          <DedupView />
+        ) : (
+          <>
+            <FilterBar />
+            {viewMode === "grid" ? <FileGrid /> : <FileList />}
+            <StatusBar />
+          </>
+        )}
       </main>
       <Lightbox />
       {settingsLoaded && !setupDone && <SettingsDialog firstRun />}

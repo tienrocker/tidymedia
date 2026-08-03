@@ -139,6 +139,75 @@ pub struct FileDetail {
     pub meta_state: Option<i64>,
 }
 
+/// File chờ hash (quick hoặc full) — M4 dedup.
+#[derive(Debug, Clone)]
+pub struct PendingHash {
+    pub file_id: i64,
+    pub path: String,
+    /// Snapshot lúc select — upsert guard theo cặp này.
+    pub mtime: i64,
+    pub size: i64,
+}
+
+/// Kết quả hash chờ ghi. `quick64`/`full` chỉ ghi khi Some — file không đọc
+/// được thì skip (job sau retry), như meta job.
+#[derive(Debug, Clone)]
+pub struct HashUpsert {
+    pub file_id: i64,
+    pub quick64: Option<i64>,
+    pub full: Option<Vec<u8>>,
+    pub src_mtime: i64,
+    pub src_size: i64,
+}
+
+/// 1 nhóm trùng exact cho list bên trái màn Dedup.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DupGroupRow {
+    pub id: i64,
+    pub count: i64,
+    pub size: i64,
+    /// (count-1) * size — bytes giải phóng được nếu giữ đúng 1 bản.
+    pub waste: i64,
+    /// Tối đa 3 (file_id, mtime) đầu tiên — UI ghép thumb URL.
+    pub samples: Vec<(i64, i64)>,
+}
+
+/// 1 bản trong nhóm trùng cho compare view.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DupMemberRow {
+    pub file_id: i64,
+    pub name: String,
+    pub dir: String,
+    pub size: i64,
+    pub mtime: i64,
+    pub status: i64,
+    pub is_live: bool,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub taken_at: Option<i64>,
+    pub camera: Option<String>,
+}
+
+/// Context verify trước khi xóa: mọi member của mọi group dính tới đợt xóa.
+#[derive(Debug, Clone)]
+pub struct DeleteContextRow {
+    pub group_id: i64,
+    pub file_id: i64,
+    pub path: String,
+    /// 0 = image, 1 = video — pair expansion CHỈ đi từ ảnh sang MOV, không
+    /// bao giờ chiều ngược (MOV.live_pair_id trỏ về ảnh gốc!).
+    pub kind: i64,
+    pub size: i64,
+    pub mtime: i64,
+    pub status: i64,
+    pub live_pair_id: Option<i64>,
+    pub full_hash: Option<Vec<u8>>,
+    pub hashed_size: Option<i64>,
+    pub hashed_mtime: Option<i64>,
+}
+
 /// Một file do scanner tìm thấy, chờ ghi vào index.
 #[derive(Debug, Clone)]
 pub struct ScanEntry {

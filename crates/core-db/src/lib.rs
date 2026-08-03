@@ -16,7 +16,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 pub use models::{
-    FileDetail, FileFilter, FileRow, JobRow, MediaSrc, MetaUpsert, PendingMeta, RootInfo, ScanEntry,
+    DeleteContextRow, DupGroupRow, DupMemberRow, FileDetail, FileFilter, FileRow, HashUpsert,
+    JobRow, MediaSrc, MetaUpsert, PendingHash, PendingMeta, RootInfo, ScanEntry,
 };
 pub use pool::ReadPool;
 pub use writer::WriterHandle;

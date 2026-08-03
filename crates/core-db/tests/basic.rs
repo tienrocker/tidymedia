@@ -234,6 +234,126 @@ fn live_photo_pairing_hides_mov_and_flags_image() {
 }
 
 #[test]
+fn dedup_hash_pipeline_and_groups() {
+    use core_db::HashUpsert;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(tmp.path()).unwrap();
+    db.writer.exec(|c| ops::upsert_root(c, "D:\\Dup")).unwrap();
+
+    // a1/a2/a3 cùng size 1000 (nghi trùng), b khác size, c cùng size 1000
+    // nhưng nội dung khác (quick sẽ khác)
+    let entries = vec![
+        entry("D:\\Dup", "a1.jpg", "jpg", 0, 1000, 10),
+        entry("D:\\Dup", "a2.jpg", "jpg", 0, 1000, 20),
+        entry("D:\\Dup\\Sub", "a3.jpg", "jpg", 0, 1000, 30),
+        entry("D:\\Dup", "b.jpg", "jpg", 0, 555, 10),
+        entry("D:\\Dup", "c.jpg", "jpg", 0, 1000, 40),
+    ];
+    db.writer
+        .exec(move |c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(c, 1, 1, &entries, &mut cache)
+        })
+        .unwrap();
+
+    // Tầng 1: chỉ file size 1000 (4 file) cần quick hash, b.jpg (size độc nhất) không
+    let pending = db
+        .pool
+        .with(|c| ops::select_pending_quick(c, 0, 100))
+        .unwrap();
+    assert_eq!(pending.len(), 4, "b.jpg size doc nhat khong can hash");
+
+    // Quick: a* giống nhau, c khác
+    let quick: Vec<HashUpsert> = pending
+        .iter()
+        .map(|p| HashUpsert {
+            file_id: p.file_id,
+            quick64: Some(if p.path.contains("\\c.jpg") { 999 } else { 111 }),
+            full: None,
+            src_mtime: p.mtime,
+            src_size: p.size,
+        })
+        .collect();
+    db.writer
+        .exec(move |c| ops::upsert_hash_batch(c, &quick))
+        .unwrap();
+
+    // Tầng 3: chỉ nhóm (1000, 111) = 3 file cần full hash; c (quick độc) không
+    let pending_full = db
+        .pool
+        .with(|c| ops::select_pending_full(c, 0, 100))
+        .unwrap();
+    assert_eq!(pending_full.len(), 3, "c.jpg quick doc nhat khong can full");
+
+    let full: Vec<HashUpsert> = pending_full
+        .iter()
+        .map(|p| HashUpsert {
+            file_id: p.file_id,
+            quick64: None, // giữ quick cũ qua COALESCE
+            full: Some(vec![0xAB; 32]),
+            src_mtime: p.mtime,
+            src_size: p.size,
+        })
+        .collect();
+    db.writer
+        .exec(move |c| ops::upsert_hash_batch(c, &full))
+        .unwrap();
+
+    let (groups, waste) = db.writer.exec(ops::rebuild_dup_groups).unwrap();
+    assert_eq!(groups, 1);
+    assert_eq!(waste, 2000, "3 ban x 1000 bytes -> giai phong duoc 2000");
+
+    let list = db.pool.with(ops::list_dup_groups).unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].count, 3);
+    assert!(!list[0].samples.is_empty());
+
+    let members = db.pool.with(|c| ops::get_dup_group(c, list[0].id)).unwrap();
+    assert_eq!(members.len(), 3);
+
+    // Delete context phủ CẢ nhóm khi chỉ đưa 1 id
+    let ctx = db
+        .pool
+        .with(|c| ops::get_delete_context(c, &[members[0].file_id]))
+        .unwrap();
+    assert_eq!(ctx.len(), 3);
+    assert!(ctx.iter().all(|r| r.full_hash.is_some()));
+
+    // Xóa 2 bản -> stats về 0 nhóm (nhóm còn 1 member bị loại khỏi list/stats)
+    db.writer
+        .exec({
+            let ids = vec![members[0].file_id, members[1].file_id];
+            move |c| ops::remove_deleted_files(c, &ids)
+        })
+        .unwrap();
+    let (g2, w2) = db.pool.with(ops::dedup_stats).unwrap();
+    assert_eq!((g2, w2), (0, 0));
+    let ids = db
+        .pool
+        .with(|c| query::query_ids(c, &FileFilter::default()))
+        .unwrap();
+    assert_eq!(ids.len(), 3, "con a3 + b + c trong index");
+
+    // Rescan cùng gen mtime mới cho a3 -> trigger xóa hash -> pending quick lại
+    let rescan = vec![entry("D:\\Dup\\Sub", "a3.jpg", "jpg", 0, 1000, 99)];
+    db.writer
+        .exec(move |c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(c, 1, 2, &rescan, &mut cache)
+        })
+        .unwrap();
+    let pending2 = db
+        .pool
+        .with(|c| ops::select_pending_quick(c, 0, 100))
+        .unwrap();
+    // a3 (hash bị trigger dọn) + c (chưa từng đủ nhóm full nhưng quick còn) —
+    // chỉ a3 thiếu quick vì c vẫn giữ hash hợp lệ
+    assert_eq!(pending2.len(), 1);
+    assert!(pending2[0].path.ends_with("a3.jpg"));
+}
+
+#[test]
 fn root_scope_is_case_insensitive_and_exact() {
     let tmp = tempfile::tempdir().unwrap();
     let db = Db::open(tmp.path()).unwrap();

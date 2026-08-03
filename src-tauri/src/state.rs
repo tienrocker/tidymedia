@@ -56,6 +56,11 @@ pub struct AppState {
     /// Gate serialize đoạn khởi động meta job (check-active → insert → register
     /// không atomic; StrictMode mount 2 lần / 2 scan xong sát nhau sẽ đua).
     pub meta_start_gate: Arc<std::sync::atomic::AtomicBool>,
+    /// Gate tương tự cho hash job (M4 dedup).
+    pub hash_start_gate: Arc<std::sync::atomic::AtomicBool>,
+    /// Serialize TOÀN BỘ delete_dup_files: 2 đợt xóa chạy song song có thể
+    /// verify chéo rồi xóa sạch cả nhóm (mỗi bên tưởng bên kia giữ bản sống).
+    pub delete_lock: Arc<std::sync::Mutex<()>>,
 }
 
 const THUMB_CACHE_CAP_BYTES: i64 = 2 * 1024 * 1024 * 1024;
@@ -136,6 +141,8 @@ pub fn init(app: &AppHandle) -> Result<()> {
         ffmpeg,
         ffprobe,
         meta_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        hash_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        delete_lock: Arc::new(std::sync::Mutex::new(())),
     });
 
     // Event pump: JobEvent → UI (tauri events) + jobs table + index://changed.

@@ -4,7 +4,10 @@ use anyhow::{anyhow, bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use unicode_normalization::UnicodeNormalization;
 
-use crate::models::{FileDetail, JobRow, MediaSrc, MetaUpsert, PendingMeta, RootInfo, ScanEntry};
+use crate::models::{
+    DeleteContextRow, DupGroupRow, DupMemberRow, FileDetail, HashUpsert, JobRow, MediaSrc,
+    MetaUpsert, PendingHash, PendingMeta, RootInfo, ScanEntry,
+};
 
 /// Bump khi đổi schema. Có migration tăng dần từ v2 trở đi (giữ index của
 /// user); version lạ/quá cũ → wipe & recreate (rebuild bằng rescan, ok pre-1.0).
@@ -659,6 +662,336 @@ pub fn get_file_detail(conn: &Connection, file_id: i64) -> Result<Option<FileDet
             },
         )
         .optional()?)
+}
+
+// ---------- dedup: hash pipeline + dup groups (M4) ----------
+
+/// Điều kiện "hash quick còn thiếu/stale" dùng chung cho count + select.
+/// Chỉ xét file present, size > 0, và size xuất hiện >= 2 lần (tầng 1: group
+/// theo size loại sạch phần lớn — file size độc nhất không bao giờ có bản trùng).
+const QUICK_PENDING_WHERE: &str = "f.status = 0 AND f.size > 0
+    AND f.size IN (SELECT size FROM files WHERE status = 0 AND size > 0
+                   GROUP BY size HAVING COUNT(*) >= 2)
+    AND (h.file_id IS NULL OR h.quick64 IS NULL
+         OR h.hashed_mtime != f.mtime OR h.hashed_size != f.size)";
+
+pub fn count_pending_quick(conn: &Connection) -> Result<i64> {
+    Ok(conn.query_row(
+        &format!(
+            "SELECT COUNT(*) FROM files f LEFT JOIN hashes h ON h.file_id = f.id
+             WHERE {QUICK_PENDING_WHERE}"
+        ),
+        [],
+        |r| r.get(0),
+    )?)
+}
+
+pub fn select_pending_quick(
+    conn: &Connection,
+    after_id: i64,
+    limit: i64,
+) -> Result<Vec<PendingHash>> {
+    let mut stmt = conn.prepare_cached(&format!(
+        "SELECT f.id, d.path, f.name, f.mtime, f.size
+         FROM files f
+         JOIN dirs d ON d.id = f.dir_id
+         LEFT JOIN hashes h ON h.file_id = f.id
+         WHERE {QUICK_PENDING_WHERE} AND f.id > ?1
+         ORDER BY f.id LIMIT ?2"
+    ))?;
+    let rows = stmt
+        .query_map(params![after_id, limit], map_pending_hash)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Full hash cần cho file nằm trong nhóm (size, quick64) có >= 2 thành viên
+/// mà chưa có full_hash hợp lệ.
+const FULL_PENDING_WHERE: &str = "f.status = 0
+    AND h.quick64 IS NOT NULL AND h.hashed_mtime = f.mtime AND h.hashed_size = f.size
+    AND h.full_hash IS NULL
+    AND (f.size, h.quick64) IN (
+        SELECT f2.size, h2.quick64 FROM files f2
+        JOIN hashes h2 ON h2.file_id = f2.id
+        WHERE f2.status = 0 AND h2.quick64 IS NOT NULL
+          AND h2.hashed_mtime = f2.mtime AND h2.hashed_size = f2.size
+        GROUP BY f2.size, h2.quick64 HAVING COUNT(*) >= 2)";
+
+pub fn count_pending_full(conn: &Connection) -> Result<i64> {
+    Ok(conn.query_row(
+        &format!(
+            "SELECT COUNT(*) FROM files f JOIN hashes h ON h.file_id = f.id
+             WHERE {FULL_PENDING_WHERE}"
+        ),
+        [],
+        |r| r.get(0),
+    )?)
+}
+
+pub fn select_pending_full(
+    conn: &Connection,
+    after_id: i64,
+    limit: i64,
+) -> Result<Vec<PendingHash>> {
+    let mut stmt = conn.prepare_cached(&format!(
+        "SELECT f.id, d.path, f.name, f.mtime, f.size
+         FROM files f
+         JOIN dirs d ON d.id = f.dir_id
+         JOIN hashes h ON h.file_id = f.id
+         WHERE {FULL_PENDING_WHERE} AND f.id > ?1
+         ORDER BY f.id LIMIT ?2"
+    ))?;
+    let rows = stmt
+        .query_map(params![after_id, limit], map_pending_hash)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+fn map_pending_hash(r: &rusqlite::Row<'_>) -> rusqlite::Result<PendingHash> {
+    let dir: String = r.get(1)?;
+    let name: String = r.get(2)?;
+    Ok(PendingHash {
+        file_id: r.get(0)?,
+        path: join_path(&dir, &name),
+        mtime: r.get(3)?,
+        size: r.get(4)?,
+    })
+}
+
+/// Ghi hash với guard id+mtime+size như meta (file đổi giữa chừng → bỏ).
+/// full_hash cũ được GIỮ khi chỉ update quick64 cho cùng phiên bản file.
+pub fn upsert_hash_batch(conn: &mut Connection, rows: &[HashUpsert]) -> Result<()> {
+    let tx = conn.transaction()?;
+    {
+        let mut ins = tx.prepare_cached(
+            "INSERT INTO hashes(file_id, quick64, full_hash, hashed_size, hashed_mtime)
+             SELECT ?1, ?2, ?3, ?5, ?4
+             WHERE EXISTS(SELECT 1 FROM files WHERE id = ?1 AND mtime = ?4 AND size = ?5)
+             ON CONFLICT(file_id) DO UPDATE SET
+               quick64 = COALESCE(excluded.quick64, hashes.quick64),
+               full_hash = CASE
+                 WHEN hashes.hashed_mtime = excluded.hashed_mtime
+                  AND hashes.hashed_size = excluded.hashed_size
+                 THEN COALESCE(excluded.full_hash, hashes.full_hash)
+                 ELSE excluded.full_hash END,
+               hashed_size = excluded.hashed_size,
+               hashed_mtime = excluded.hashed_mtime",
+        )?;
+        for h in rows {
+            ins.execute(params![
+                h.file_id,
+                h.quick64,
+                h.full,
+                h.src_mtime,
+                h.src_size
+            ])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Xây lại toàn bộ nhóm trùng exact từ full_hash (thay thế bộ cũ kind=0).
+/// Trả (số nhóm, tổng bytes lãng phí).
+pub fn rebuild_dup_groups(conn: &mut Connection) -> Result<(i64, i64)> {
+    let tx = conn.transaction()?;
+    tx.execute(
+        "DELETE FROM dup_members WHERE group_id IN (SELECT id FROM dup_groups WHERE kind = 0)",
+        [],
+    )?;
+    tx.execute("DELETE FROM dup_groups WHERE kind = 0", [])?;
+
+    let mut groups = 0i64;
+    let mut waste = 0i64;
+    {
+        // Hash hợp lệ = hashed_* khớp file hiện tại (trigger dọn khi file đổi,
+        // nhưng check thêm cho chắc)
+        let mut find = tx.prepare(
+            "SELECT h.full_hash, COUNT(*), MAX(f.size)
+             FROM files f JOIN hashes h ON h.file_id = f.id
+             WHERE f.status = 0 AND h.full_hash IS NOT NULL
+               AND h.hashed_mtime = f.mtime AND h.hashed_size = f.size
+             GROUP BY h.full_hash HAVING COUNT(*) >= 2",
+        )?;
+        let mut ins_group = tx.prepare("INSERT INTO dup_groups(kind, created_at) VALUES(0, ?1)")?;
+        let mut ins_members = tx.prepare(
+            "INSERT INTO dup_members(group_id, file_id, keep)
+             SELECT ?1, f.id, 0 FROM files f JOIN hashes h ON h.file_id = f.id
+             WHERE f.status = 0 AND h.full_hash = ?2
+               AND h.hashed_mtime = f.mtime AND h.hashed_size = f.size",
+        )?;
+
+        let found: Vec<(Vec<u8>, i64, i64)> = find
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<Result<_, _>>()?;
+        let now = now_ms();
+        for (fh, n, size) in found {
+            ins_group.execute(params![now])?;
+            let gid = tx.last_insert_rowid();
+            ins_members.execute(params![gid, fh])?;
+            groups += 1;
+            waste += (n - 1) * size;
+        }
+    }
+    tx.commit()?;
+    Ok((groups, waste))
+}
+
+/// List nhóm trùng, lãng phí nhiều nhất trước. Cap 10k nhóm (UI ảo hóa được
+/// nhưng IPC 1 phát 10k row ~ 1MB là trần hợp lý).
+pub fn list_dup_groups(conn: &Connection) -> Result<Vec<DupGroupRow>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT g.id, COUNT(*), MAX(f.size), (COUNT(*) - 1) * MAX(f.size),
+                substr(GROUP_CONCAT(f.id || ':' || f.mtime ORDER BY f.id), 1, 120)
+         FROM dup_groups g
+         JOIN dup_members m ON m.group_id = g.id
+         JOIN files f ON f.id = m.file_id
+         WHERE g.kind = 0 AND f.status = 0
+         GROUP BY g.id HAVING COUNT(*) >= 2
+         ORDER BY 4 DESC LIMIT 10000",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            let concat: String = r.get(4)?;
+            let samples = concat
+                .split(',')
+                .take(3)
+                .filter_map(|p| {
+                    let (id, mt) = p.split_once(':')?;
+                    Some((id.parse().ok()?, mt.parse().ok()?))
+                })
+                .collect();
+            Ok(DupGroupRow {
+                id: r.get(0)?,
+                count: r.get(1)?,
+                size: r.get(2)?,
+                waste: r.get(3)?,
+                samples,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+pub fn get_dup_group(conn: &Connection, group_id: i64) -> Result<Vec<DupMemberRow>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT f.id, f.name, d.path, f.size, f.mtime, f.status, f.live_pair_id,
+                mm.width, mm.height, mm.taken_at, mm.camera
+         FROM dup_members m
+         JOIN files f ON f.id = m.file_id
+         JOIN dirs d ON d.id = f.dir_id
+         LEFT JOIN media_meta mm ON mm.file_id = f.id
+         WHERE m.group_id = ?1
+         ORDER BY f.id",
+    )?;
+    let rows = stmt
+        .query_map(params![group_id], |r| {
+            Ok(DupMemberRow {
+                file_id: r.get(0)?,
+                name: r.get(1)?,
+                dir: r.get(2)?,
+                size: r.get(3)?,
+                mtime: r.get(4)?,
+                status: r.get(5)?,
+                is_live: r.get::<_, Option<i64>>(6)?.is_some(),
+                width: r.get(7)?,
+                height: r.get(8)?,
+                taken_at: r.get(9)?,
+                camera: r.get(10)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// (số nhóm, tổng bytes lãng phí) cho badge/status.
+pub fn dedup_stats(conn: &Connection) -> Result<(i64, i64)> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(waste), 0) FROM (
+           SELECT (COUNT(*) - 1) * MAX(f.size) AS waste
+           FROM dup_groups g
+           JOIN dup_members m ON m.group_id = g.id
+           JOIN files f ON f.id = m.file_id
+           WHERE g.kind = 0 AND f.status = 0
+           GROUP BY g.id HAVING COUNT(*) >= 2)",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?)
+}
+
+/// Mọi member của mọi group chứa bất kỳ file nào trong danh sách xóa —
+/// backend verify invariant trên context này, không tin UI.
+pub fn get_delete_context(conn: &Connection, file_ids: &[i64]) -> Result<Vec<DeleteContextRow>> {
+    use std::rc::Rc;
+    let values: Rc<Vec<rusqlite::types::Value>> = Rc::new(
+        file_ids
+            .iter()
+            .map(|&i| rusqlite::types::Value::Integer(i))
+            .collect(),
+    );
+    // Chỉ group exact (kind=0) — M7 thêm group perceptual thì 1 file có thể
+    // thuộc nhiều group với ngữ nghĩa khác nhau, không được trộn vào verify này.
+    let mut stmt = conn.prepare_cached(
+        "SELECT m.group_id, f.id, d.path, f.name, f.kind, f.size, f.mtime, f.status,
+                f.live_pair_id, h.full_hash, h.hashed_size, h.hashed_mtime
+         FROM dup_members m
+         JOIN dup_groups g ON g.id = m.group_id AND g.kind = 0
+         JOIN files f ON f.id = m.file_id
+         JOIN dirs d ON d.id = f.dir_id
+         LEFT JOIN hashes h ON h.file_id = f.id
+         WHERE m.group_id IN (
+           SELECT m2.group_id FROM dup_members m2
+           JOIN dup_groups g2 ON g2.id = m2.group_id AND g2.kind = 0
+           WHERE m2.file_id IN rarray(?1))",
+    )?;
+    let rows = stmt
+        .query_map([&values], |r| {
+            let dir: String = r.get(2)?;
+            let name: String = r.get(3)?;
+            Ok(DeleteContextRow {
+                group_id: r.get(0)?,
+                file_id: r.get(1)?,
+                path: join_path(&dir, &name),
+                kind: r.get(4)?,
+                size: r.get(5)?,
+                mtime: r.get(6)?,
+                status: r.get(7)?,
+                live_pair_id: r.get(8)?,
+                full_hash: r.get(9)?,
+                hashed_size: r.get(10)?,
+                hashed_mtime: r.get(11)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Xóa row các file đã vào Recycle Bin thành công (CASCADE dọn hashes/meta/
+/// dup_members) + gỡ live_pair_id đang trỏ vào file chết (MOV mồ côi phải
+/// hiện lại trong browse thay vì ẩn vĩnh viễn) + refresh count mọi root.
+pub fn remove_deleted_files(conn: &mut Connection, file_ids: &[i64]) -> Result<()> {
+    let tx = conn.transaction()?;
+    {
+        let mut unpair =
+            tx.prepare_cached("UPDATE files SET live_pair_id = NULL WHERE live_pair_id = ?1")?;
+        let mut del = tx.prepare_cached("DELETE FROM files WHERE id = ?1")?;
+        for id in file_ids {
+            unpair.execute(params![id])?;
+            del.execute(params![id])?;
+        }
+    }
+    tx.commit()?;
+    let roots: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT path FROM roots")?;
+        let r = stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        r
+    };
+    for p in roots {
+        refresh_root_count(conn, &p)?;
+    }
+    Ok(())
 }
 
 // ---------- excluded paths (user-defined) ----------

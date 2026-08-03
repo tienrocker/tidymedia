@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import {
   api,
+  DedupStats,
+  DupGroupRow,
+  DupMemberRow,
   FileFilter,
   FileRow,
   JobProgress,
@@ -9,6 +12,8 @@ import {
 } from "../lib/ipc";
 import { errText } from "../lib/errors";
 import { systemTzOffsetMinutes } from "../lib/time";
+import { fmtSize } from "../lib/format";
+import i18n from "../i18n";
 
 export const PAGE = 200;
 /** LRU cap: ~50 trang (10k row) quanh viewport — không giữ cả 1M row trong heap. */
@@ -26,6 +31,25 @@ interface ToastMsg {
 }
 
 export type ViewMode = "grid" | "list";
+export type AppMode = "browse" | "dedup";
+export type DedupRule = "res" | "oldest" | "newest";
+
+/** Rule tự đánh dấu: giữ bản tốt nhất, mark xóa phần còn lại. */
+export function ruleChecked(members: DupMemberRow[], rule: DedupRule): Set<number> {
+  if (members.length < 2) return new Set();
+  const score = (m: DupMemberRow): number => {
+    // File không còn present không bao giờ được chọn làm bản giữ
+    if (m.status !== 0) return Number.NEGATIVE_INFINITY;
+    if (rule === "res") return (m.width ?? 0) * (m.height ?? 0) * 1e6 + m.size;
+    const t = m.takenAt ?? m.mtime;
+    return rule === "oldest" ? -t : t;
+  };
+  let keep = members[0];
+  for (const m of members) {
+    if (score(m) > score(keep)) keep = m;
+  }
+  return new Set(members.filter((m) => m.fileId !== keep.fileId).map((m) => m.fileId));
+}
 
 function initialViewMode(): ViewMode {
   try {
@@ -57,6 +81,24 @@ interface AppStore {
   viewMode: ViewMode;
   /** Index (trong query hiện tại) của file đang mở lightbox; null = đóng. */
   lightboxIndex: number | null;
+
+  appMode: AppMode;
+  dupGroups: DupGroupRow[] | null;
+  dupStats: DedupStats | null;
+  activeGroupId: number | null;
+  groupMembers: DupMemberRow[];
+  /** groupId -> set fileId đánh dấu XÓA (ngữ nghĩa cố định, không đảo). */
+  dupChecked: Map<number, Set<number>>;
+  dedupRule: DedupRule;
+  dupDeleting: boolean;
+
+  setAppMode: (m: AppMode) => void;
+  loadDupData: () => Promise<void>;
+  openDupGroup: (id: number) => Promise<void>;
+  toggleDupChecked: (groupId: number, fileId: number) => void;
+  keepOnly: (groupId: number, fileId: number) => void;
+  setDedupRule: (r: DedupRule) => void;
+  deleteChecked: () => Promise<void>;
 
   setViewMode: (m: ViewMode) => void;
   openLightbox: (index: number) => void;
@@ -97,6 +139,128 @@ export const useStore = create<AppStore>((set, get) => ({
   toast: null,
   viewMode: initialViewMode(),
   lightboxIndex: null,
+
+  appMode: "browse",
+  dupGroups: null,
+  dupStats: null,
+  activeGroupId: null,
+  groupMembers: [],
+  dupChecked: new Map(),
+  dedupRule: "res",
+
+  setAppMode: (m) => {
+    set({ appMode: m });
+    if (m === "dedup" && get().dupGroups == null) void get().loadDupData();
+  },
+
+  loadDupData: async () => {
+    try {
+      const [groups, stats] = await Promise.all([api.listDupGroups(), api.dedupStats()]);
+      const cur = get().activeGroupId;
+      // PRUNE selection của group id không còn tồn tại — hash job rebuild làm
+      // group id đổi hết; giữ lại là user xóa ngầm file họ không còn thấy.
+      const valid = new Set(groups.map((g) => g.id));
+      const pruned = new Map(
+        [...get().dupChecked].filter(([gid]) => valid.has(gid)),
+      );
+      set({
+        dupGroups: groups,
+        dupStats: stats,
+        dupChecked: pruned,
+        // Nhóm đang mở biến mất sau đợt xóa/rescan → bỏ chọn
+        activeGroupId: cur != null && valid.has(cur) ? cur : null,
+      });
+    } catch (e) {
+      get().showToast(errText(e), true);
+    }
+  },
+
+  openDupGroup: async (id) => {
+    set({ activeGroupId: id });
+    try {
+      const members = await api.getDupGroup(id);
+      if (get().activeGroupId !== id) return; // đã chuyển nhóm khác
+      const checked = new Map(get().dupChecked);
+      if (!checked.has(id)) {
+        // Pre-check theo rule đang chọn — user override từng ô thoải mái
+        checked.set(id, ruleChecked(members, get().dedupRule));
+      }
+      set({ groupMembers: members, dupChecked: checked });
+    } catch (e) {
+      get().showToast(errText(e), true);
+    }
+  },
+
+  toggleDupChecked: (groupId, fileId) => {
+    const checked = new Map(get().dupChecked);
+    const set_ = new Set(checked.get(groupId) ?? []);
+    if (set_.has(fileId)) {
+      set_.delete(fileId);
+    } else {
+      // Guard cứng: không bao giờ cho check 100% member của nhóm
+      const total = get().groupMembers.length;
+      if (get().activeGroupId === groupId && set_.size >= total - 1) {
+        get().showToast(i18n.t("dedup.keepGuard"), true);
+        return;
+      }
+      set_.add(fileId);
+    }
+    checked.set(groupId, set_);
+    set({ dupChecked: checked });
+  },
+
+  keepOnly: (groupId, fileId) => {
+    const members = get().groupMembers;
+    if (get().activeGroupId !== groupId || members.length < 2) return;
+    const checked = new Map(get().dupChecked);
+    checked.set(
+      groupId,
+      new Set(members.filter((m) => m.fileId !== fileId).map((m) => m.fileId)),
+    );
+    set({ dupChecked: checked });
+  },
+
+  setDedupRule: (r) => {
+    set({ dedupRule: r });
+    // Áp lại cho nhóm đang mở (nhóm khác giữ lựa chọn tay của user)
+    const id = get().activeGroupId;
+    if (id != null) {
+      const checked = new Map(get().dupChecked);
+      checked.set(id, ruleChecked(get().groupMembers, r));
+      set({ dupChecked: checked });
+    }
+  },
+
+  dupDeleting: false,
+
+  deleteChecked: async () => {
+    if (get().dupDeleting) return; // chống double-click / double-Enter
+    const ids: number[] = [];
+    for (const s of get().dupChecked.values()) ids.push(...s);
+    if (ids.length === 0) return;
+    set({ dupDeleting: true });
+    let res;
+    try {
+      res = await api.deleteDupFiles(ids);
+    } finally {
+      set({ dupDeleting: false });
+    }
+    // Reset lựa chọn + reload mọi thứ dính tới file đã xóa
+    set({ dupChecked: new Map(), groupMembers: [], activeGroupId: null });
+    await get().loadDupData();
+    void get().runQuery();
+    void get().loadRoots();
+    const t = i18n.t("dedup.deleteResult", {
+      n: res.deleted,
+      size: fmtSize(res.freedBytes),
+    });
+    get().showToast(
+      res.skipped.length > 0
+        ? `${t} - ${i18n.t("dedup.skipped", { n: res.skipped.length })}`
+        : t,
+      res.skipped.length > 0,
+    );
+  },
 
   setViewMode: (m) => {
     try {

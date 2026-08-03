@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod dedup;
 mod protocols;
 mod state;
 
@@ -41,6 +42,11 @@ fn main() {
             commands::get_file_meta,
             commands::open_file,
             commands::reveal_file,
+            dedup::start_hash_scan,
+            dedup::list_dup_groups,
+            dedup::get_dup_group,
+            dedup::dedup_stats,
+            dedup::delete_dup_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tidymedia");

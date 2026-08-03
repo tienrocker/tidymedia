@@ -19,6 +19,34 @@
     "grid": "Thumbnail grid",
     "list": "Details list"
   },
+  "mode": {
+    "browse": "Browse",
+    "dedup": "Duplicates"
+  },
+  "dedup": {
+    "scan": "Scan for duplicates",
+    "scanning": "Scanning…",
+    "stats": "{{n}} groups · {{size}} wasted",
+    "empty": "No duplicates found. Hit \"Scan for duplicates\" after indexing.",
+    "pickGroup": "Pick a group on the left. Checked cards get deleted, the rest stay.",
+    "copies": "{{n}} copies",
+    "wasted": "{{size}} recoverable",
+    "markDelete": "Delete",
+    "marked": "Marked",
+    "bestRes": "sharpest",
+    "bestSize": "largest",
+    "oldest": "oldest",
+    "rule": "Auto-pick rule",
+    "ruleRes": "Keep highest resolution",
+    "ruleOldest": "Keep oldest",
+    "ruleNewest": "Keep newest",
+    "deleteBtn": "Delete {{n}} ({{size}})",
+    "confirm": "Move {{n}} files ({{size}}) to the Recycle Bin? At least one verified copy of each photo always stays.",
+    "deleteResult": "Moved {{n}} files to Recycle Bin ({{size}} freed)",
+    "skipped": "{{n}} skipped (changed on disk or no verified copy)",
+    "keepGuard": "At least one copy must stay in every group",
+    "keys": "Space / click: mark for deletion · 1-9: keep that copy · Arrows: move · Enter: next group · Wheel: synced zoom"
+  },
   "sort": {
     "newest": "Newest first",
     "oldest": "Oldest first",

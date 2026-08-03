@@ -37,6 +37,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 blake3 = { version = "1", features = ["rayon", "mmap"] }
+trash = "5"
 
 [profile.release]
 lto = "thin"

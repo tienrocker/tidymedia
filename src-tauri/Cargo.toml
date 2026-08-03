@@ -10,9 +10,11 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 core-db.workspace = true
+core-hash.workspace = true
 core-index.workspace = true
 core-jobs.workspace = true
 core-media.workspace = true
+trash.workspace = true
 rayon.workspace = true
 crossbeam-channel.workspace = true
 tokio.workspace = true

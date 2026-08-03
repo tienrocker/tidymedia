@@ -19,6 +19,34 @@
     "grid": "缩略图网格",
     "list": "详细列表"
   },
+  "mode": {
+    "browse": "浏览",
+    "dedup": "重复项"
+  },
+  "dedup": {
+    "scan": "扫描重复项",
+    "scanning": "扫描中…",
+    "stats": "{{n}} 组 · 浪费 {{size}}",
+    "empty": "暂无重复项。索引完成后点击\"扫描重复项\"。",
+    "pickGroup": "在左侧选择一组。勾选的副本将被删除，其余保留。",
+    "copies": "{{n}} 个副本",
+    "wasted": "可释放 {{size}}",
+    "markDelete": "删除",
+    "marked": "待删除",
+    "bestRes": "最清晰",
+    "bestSize": "最大",
+    "oldest": "最早",
+    "rule": "自动选择规则",
+    "ruleRes": "保留最高分辨率",
+    "ruleOldest": "保留最早的",
+    "ruleNewest": "保留最新的",
+    "deleteBtn": "删除 {{n}} 个（{{size}}）",
+    "confirm": "将 {{n}} 个文件（{{size}}）移入回收站？每张照片始终保留至少一个已校验副本。",
+    "deleteResult": "已将 {{n}} 个文件移入回收站（释放 {{size}}）",
+    "skipped": "{{n}} 个已跳过（磁盘上已更改或缺少已校验副本）",
+    "keepGuard": "每组必须至少保留一个副本",
+    "keys": "空格 / 点击：标记删除 · 1-9：保留该副本 · 方向键：切换 · 回车：下一组 · 滚轮：同步缩放"
+  },
   "sort": {
     "newest": "最新优先",
     "oldest": "最旧优先",

@@ -90,6 +90,39 @@ export interface Settings {
   tzOffsetMinutes: number | null;
 }
 
+export interface DupGroupRow {
+  id: number;
+  count: number;
+  size: number;
+  waste: number;
+  samples: [number, number][]; // [fileId, mtime] — ghép thumb URL
+}
+
+export interface DupMemberRow {
+  fileId: number;
+  name: string;
+  dir: string;
+  size: number;
+  mtime: number;
+  status: number;
+  isLive: boolean;
+  width: number | null;
+  height: number | null;
+  takenAt: number | null;
+  camera: string | null;
+}
+
+export interface DedupStats {
+  groups: number;
+  waste: number;
+}
+
+export interface DeleteResult {
+  deleted: number;
+  freedBytes: number;
+  skipped: { fileId: number; name: string; reason: string }[];
+}
+
 export const api = {
   addRoot: (path: string) => invoke<number>("add_root", { path }),
   listRoots: () => invoke<RootInfo[]>("list_roots"),
@@ -109,4 +142,10 @@ export const api = {
   getFileMeta: (fileId: number) => invoke<FileDetail | null>("get_file_meta", { fileId }),
   openFile: (fileId: number) => invoke<void>("open_file", { fileId }),
   revealFile: (fileId: number) => invoke<void>("reveal_file", { fileId }),
+  startHashScan: () => invoke<number | null>("start_hash_scan"),
+  listDupGroups: () => invoke<DupGroupRow[]>("list_dup_groups"),
+  getDupGroup: (groupId: number) => invoke<DupMemberRow[]>("get_dup_group", { groupId }),
+  dedupStats: () => invoke<DedupStats>("dedup_stats"),
+  deleteDupFiles: (fileIds: number[]) =>
+    invoke<DeleteResult>("delete_dup_files", { fileIds }),
 };
