@@ -1,0 +1,43 @@
+{
+  "app": { "name": "TidyMedia" },
+  "search": { "placeholder": "Tìm theo tên file…" },
+  "filter": {
+    "all": "Ảnh + Video",
+    "images": "Ảnh",
+    "videos": "Video",
+    "minMb": "≥ MB",
+    "maxMb": "≤ MB"
+  },
+  "sort": {
+    "newest": "Mới nhất",
+    "oldest": "Cũ nhất",
+    "nameAz": "Tên A→Z",
+    "largest": "Lớn nhất",
+    "smallest": "Nhỏ nhất"
+  },
+  "list": {
+    "name": "Tên",
+    "folder": "Thư mục",
+    "size": "Size",
+    "modified": "Ngày sửa"
+  },
+  "roots": {
+    "title": "Thư mục theo dõi",
+    "add": "+ Thêm",
+    "empty": "Chưa có gì. Bấm \"+ Thêm\" và chọn cả ổ (vd D:\\) hoặc thư mục.",
+    "files": "{{n}} file",
+    "rescan": "Quét lại",
+    "remove": "Bỏ khỏi index",
+    "removeConfirm": "Bỏ \"{{path}}\" khỏi index? (không đụng gì tới file trên đĩa)",
+    "pickTitle": "Chọn thư mục / ổ đĩa để index"
+  },
+  "jobs": {
+    "title": "Jobs",
+    "none": "Không có job nào đang chạy",
+    "stop": "dừng"
+  },
+  "status": {
+    "files": "{{n}} file",
+    "query": "query {{ms}} ms"
+  }
+}

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useTranslation } from "react-i18next";
 import { useStore } from "../../state/store";
 import { fmtDate, fmtSize } from "../../lib/format";
 
@@ -8,6 +9,7 @@ const GRID_COLS =
   "grid grid-cols-[28px_minmax(180px,2fr)_minmax(180px,3fr)_90px_130px] items-center gap-2 px-3";
 
 export function FileList() {
+  const { t } = useTranslation();
   const total = useStore((s) => s.total);
   const rows = useStore((s) => s.rows);
   const queryId = useStore((s) => s.queryId);
@@ -40,10 +42,10 @@ export function FileList() {
     <div className="min-h-0 flex-1">
       <div className={`${GRID_COLS} border-b border-neutral-800 py-1 text-xs font-semibold uppercase tracking-wide text-neutral-500`}>
         <span />
-        <span>Tên</span>
-        <span>Thư mục</span>
-        <span className="text-right">Size</span>
-        <span className="text-right">Ngày sửa</span>
+        <span>{t("list.name")}</span>
+        <span>{t("list.folder")}</span>
+        <span className="text-right">{t("list.size")}</span>
+        <span className="text-right">{t("list.modified")}</span>
       </div>
       <div ref={parentRef} className="h-[calc(100%-25px)] overflow-y-auto">
         <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>

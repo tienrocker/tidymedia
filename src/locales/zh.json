@@ -1,0 +1,43 @@
+{
+  "app": { "name": "TidyMedia" },
+  "search": { "placeholder": "按文件名搜索…" },
+  "filter": {
+    "all": "图片 + 视频",
+    "images": "图片",
+    "videos": "视频",
+    "minMb": "≥ MB",
+    "maxMb": "≤ MB"
+  },
+  "sort": {
+    "newest": "最新优先",
+    "oldest": "最旧优先",
+    "nameAz": "名称 A→Z",
+    "largest": "最大优先",
+    "smallest": "最小优先"
+  },
+  "list": {
+    "name": "名称",
+    "folder": "文件夹",
+    "size": "大小",
+    "modified": "修改时间"
+  },
+  "roots": {
+    "title": "监视的文件夹",
+    "add": "+ 添加",
+    "empty": "还没有内容。点击「+ 添加」选择整个磁盘（如 D:\\）或文件夹。",
+    "files": "{{n}} 个文件",
+    "rescan": "重新扫描",
+    "remove": "从索引中移除",
+    "removeConfirm": "从索引中移除「{{path}}」？（不会改动磁盘上的文件）",
+    "pickTitle": "选择要索引的文件夹 / 磁盘"
+  },
+  "jobs": {
+    "title": "任务",
+    "none": "没有正在运行的任务",
+    "stop": "停止"
+  },
+  "status": {
+    "files": "{{n}} 个文件",
+    "query": "查询 {{ms}} 毫秒"
+  }
+}

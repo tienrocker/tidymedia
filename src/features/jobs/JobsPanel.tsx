@@ -1,7 +1,9 @@
+import { useTranslation } from "react-i18next";
 import { useStore } from "../../state/store";
 import { fmtCount } from "../../lib/format";
 
 export function JobsPanel() {
+  const { t } = useTranslation();
   const active = useStore((s) => s.activeJobs);
   const recent = useStore((s) => s.recentJobs);
 
@@ -10,7 +12,7 @@ export function JobsPanel() {
   return (
     <div className="border-t border-neutral-800 px-2 py-2">
       <div className="px-1 pb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-        Jobs
+        {t("jobs.title")}
       </div>
       {active.size === 0 && (
         <div className="px-1 text-xs text-neutral-600">
@@ -18,7 +20,7 @@ export function JobsPanel() {
             ? `${lastFinished.kind} #${lastFinished.id}: ${lastFinished.state}${
                 lastFinished.message ? ` — ${lastFinished.message}` : ""
               }`
-            : "Không có job nào đang chạy"}
+            : t("jobs.none")}
         </div>
       )}
       {[...active.values()].map((j) => (
@@ -32,7 +34,7 @@ export function JobsPanel() {
             className="rounded px-1 text-xs text-red-400 hover:bg-neutral-800"
             onClick={() => useStore.getState().cancelJob(j.jobId)}
           >
-            dừng
+            {t("jobs.stop")}
           </button>
         </div>
       ))}

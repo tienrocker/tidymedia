@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { useTranslation } from "react-i18next";
+import { LANGS } from "./i18n";
 import { JobProgress } from "./lib/ipc";
 import { useStore } from "./state/store";
 import { FilterBar } from "./features/browse/FilterBar";
@@ -9,6 +11,7 @@ import { RootsPanel } from "./features/roots/RootsPanel";
 import { JobsPanel } from "./features/jobs/JobsPanel";
 
 export default function App() {
+  const { t, i18n } = useTranslation();
   const filter = useStore((s) => s.filter);
   const debounceRef = useRef<number | undefined>(undefined);
 
@@ -56,8 +59,21 @@ export default function App() {
   return (
     <div className="flex h-screen">
       <aside className="flex w-72 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950">
-        <div className="px-3 py-2 text-sm font-semibold tracking-wide text-neutral-400">
-          media-dedup
+        <div className="flex items-center justify-between px-3 py-2">
+          <span className="text-sm font-semibold tracking-wide text-neutral-400">
+            {t("app.name")}
+          </span>
+          <select
+            className="rounded border border-neutral-800 bg-neutral-900 px-1 py-0.5 text-xs text-neutral-400 outline-none"
+            value={i18n.resolvedLanguage ?? "en"}
+            onChange={(e) => void i18n.changeLanguage(e.target.value)}
+          >
+            {LANGS.map((l) => (
+              <option key={l} value={l}>
+                {l.toUpperCase()}
+              </option>
+            ))}
+          </select>
         </div>
         <RootsPanel />
         <div className="mt-auto">

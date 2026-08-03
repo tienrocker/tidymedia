@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useStore } from "../../state/store";
 
 const inputCls =
@@ -5,6 +6,7 @@ const inputCls =
   "placeholder-neutral-500 outline-none focus:border-neutral-500";
 
 export function FilterBar() {
+  const { t } = useTranslation();
   const filter = useStore((s) => s.filter);
   const setFilter = useStore((s) => s.setFilter);
 
@@ -12,7 +14,7 @@ export function FilterBar() {
     <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800 bg-neutral-950 px-3 py-2">
       <input
         className={`${inputCls} w-72`}
-        placeholder="Tìm theo tên file…"
+        placeholder={t("search.placeholder")}
         value={filter.text ?? ""}
         onChange={(e) => setFilter({ text: e.target.value || undefined })}
         autoFocus
@@ -24,13 +26,13 @@ export function FilterBar() {
           setFilter({ kind: e.target.value === "" ? undefined : Number(e.target.value) })
         }
       >
-        <option value="">Ảnh + Video</option>
-        <option value="0">Ảnh</option>
-        <option value="1">Video</option>
+        <option value="">{t("filter.all")}</option>
+        <option value="0">{t("filter.images")}</option>
+        <option value="1">{t("filter.videos")}</option>
       </select>
       <input
         className={`${inputCls} w-24`}
-        placeholder="≥ MB"
+        placeholder={t("filter.minMb")}
         inputMode="numeric"
         value={filter.sizeMin != null ? String(filter.sizeMin / (1024 * 1024)) : ""}
         onChange={(e) => {
@@ -40,7 +42,7 @@ export function FilterBar() {
       />
       <input
         className={`${inputCls} w-24`}
-        placeholder="≤ MB"
+        placeholder={t("filter.maxMb")}
         inputMode="numeric"
         value={filter.sizeMax != null ? String(filter.sizeMax / (1024 * 1024)) : ""}
         onChange={(e) => {
@@ -75,11 +77,11 @@ export function FilterBar() {
         value={filter.sort ?? "mtime_desc"}
         onChange={(e) => setFilter({ sort: e.target.value })}
       >
-        <option value="mtime_desc">Mới nhất</option>
-        <option value="mtime_asc">Cũ nhất</option>
-        <option value="name">Tên A→Z</option>
-        <option value="size_desc">Lớn nhất</option>
-        <option value="size_asc">Nhỏ nhất</option>
+        <option value="mtime_desc">{t("sort.newest")}</option>
+        <option value="mtime_asc">{t("sort.oldest")}</option>
+        <option value="name">{t("sort.nameAz")}</option>
+        <option value="size_desc">{t("sort.largest")}</option>
+        <option value="size_asc">{t("sort.smallest")}</option>
       </select>
     </div>
   );

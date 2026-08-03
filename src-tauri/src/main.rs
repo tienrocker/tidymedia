@@ -28,5 +28,5 @@ fn main() {
             commands::fetch_rows,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running media-dedup");
+        .expect("error while running tidymedia");
 }

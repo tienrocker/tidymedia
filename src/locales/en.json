@@ -1,0 +1,43 @@
+{
+  "app": { "name": "TidyMedia" },
+  "search": { "placeholder": "Search file names…" },
+  "filter": {
+    "all": "Images + Videos",
+    "images": "Images",
+    "videos": "Videos",
+    "minMb": "≥ MB",
+    "maxMb": "≤ MB"
+  },
+  "sort": {
+    "newest": "Newest first",
+    "oldest": "Oldest first",
+    "nameAz": "Name A→Z",
+    "largest": "Largest first",
+    "smallest": "Smallest first"
+  },
+  "list": {
+    "name": "Name",
+    "folder": "Folder",
+    "size": "Size",
+    "modified": "Modified"
+  },
+  "roots": {
+    "title": "Watched folders",
+    "add": "+ Add",
+    "empty": "Nothing yet. Click \"+ Add\" and pick a whole drive (e.g. D:\\) or a folder.",
+    "files": "{{n}} files",
+    "rescan": "Rescan",
+    "remove": "Remove from index",
+    "removeConfirm": "Remove \"{{path}}\" from the index? (files on disk are not touched)",
+    "pickTitle": "Pick a folder / drive to index"
+  },
+  "jobs": {
+    "title": "Jobs",
+    "none": "No running jobs",
+    "stop": "stop"
+  },
+  "status": {
+    "files": "{{n}} files",
+    "query": "query {{ms}} ms"
+  }
+}
