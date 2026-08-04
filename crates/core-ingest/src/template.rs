@@ -30,9 +30,9 @@ pub enum TemplateError {
     Empty,
     #[error("ERR_TPL_UNCLOSED")]
     Unclosed,
-    #[error("ERR_TPL_UNKNOWN_TOKEN:{0}")]
+    #[error("ERR_TPL_UNKNOWN_TOKEN|{0}")]
     UnknownToken(String),
-    #[error("ERR_TPL_BAD_CHAR:{0}")]
+    #[error("ERR_TPL_BAD_CHAR|{0}")]
     BadChar(char),
     #[error("ERR_TPL_ABSOLUTE")]
     Absolute,
@@ -182,7 +182,7 @@ fn sanitize_camera(s: &str) -> String {
 
 /// Dọn 1 component sau render: gộp separator chữ thừa do token rỗng ({camera}
 /// không có dữ liệu), cắt đầu/đuôi _-. và space (Windows cấm tên kết thúc
-/// bằng dot/space).
+/// bằng dot/space), né tên thiết bị Windows cấm.
 fn clean_component(s: &str) -> String {
     let mut out = String::new();
     for c in s.chars() {
@@ -191,8 +191,22 @@ fn clean_component(s: &str) -> String {
         }
         out.push(c);
     }
-    out.trim_matches(|c| c == '_' || c == '-' || c == ' ' || c == '.')
-        .to_string()
+    let out = out
+        .trim_matches(|c| c == '_' || c == '-' || c == ' ' || c == '.')
+        .to_string();
+    // CON/PRN/AUX/NUL/COM1-9/LPT1-9 (cả dạng "CON.jpg") là tên thiết bị —
+    // Windows từ chối tạo → thêm '_' đầu để mọi tên render ra đều tạo được
+    let stem = out.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit()
+            && stem.as_bytes()[3] != b'0');
+    if reserved {
+        format!("_{out}")
+    } else {
+        out
+    }
 }
 
 impl Template {
@@ -348,5 +362,17 @@ mod tests {
     fn trailing_dot_space_trimmed() {
         let t = parse_template("{YYYYMMDD}.", TemplateKind::File).unwrap();
         assert_eq!(t.render_file(&ctx(None), None), "20190614");
+    }
+
+    #[test]
+    fn reserved_device_names_defused() {
+        // CON/NUL/COM1... là tên thiết bị Windows — mọi component render ra
+        // phải né bằng prefix '_' để luôn tạo được trên fs
+        let t = parse_template("{camera}", TemplateKind::File).unwrap();
+        assert_eq!(t.render_file(&ctx(Some("CON")), None), "_CON");
+        assert_eq!(t.render_file(&ctx(Some("com1")), None), "_com1");
+        assert_eq!(t.render_file(&ctx(Some("Console")), None), "Console"); // không phải reserved
+        let d = parse_template("{camera}", TemplateKind::Dir).unwrap();
+        assert_eq!(d.render_dir(&ctx(Some("NUL"))), vec!["_NUL"]);
     }
 }

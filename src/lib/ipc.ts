@@ -123,6 +123,49 @@ export interface DeleteResult {
   skipped: { fileId: number; name: string; reason: string }[];
 }
 
+export interface OrgSettings {
+  dirTemplate: string;
+  fileTemplate: string;
+  sample: string;
+}
+
+export interface LibraryRootRow {
+  id: number;
+  volumeId: number;
+  letter: string | null;
+  path: string;
+  isPrimary: boolean;
+}
+
+export interface OrgPreviewRow {
+  fileId: number;
+  oldPath: string;
+  newPath: string | null;
+  action: string;
+}
+
+export interface OrgPreview {
+  total: number;
+  moves: number;
+  copies: number;
+  needsHash: number;
+  skipOrganized: number;
+  skipDuplicate: number;
+  skipCloud: number;
+  skipUncertain: number;
+  skipPairBlocked: number;
+  skipOther: number;
+  volumesMissingRoot: string[];
+  sample: OrgPreviewRow[];
+}
+
+export interface OrgBatchRow {
+  batchId: number;
+  finishedAt: number | null;
+  moved: number;
+  undone: number;
+}
+
 export const api = {
   addRoot: (path: string) => invoke<number>("add_root", { path }),
   listRoots: () => invoke<RootInfo[]>("list_roots"),
@@ -148,4 +191,16 @@ export const api = {
   dedupStats: () => invoke<DedupStats>("dedup_stats"),
   deleteDupFiles: (fileIds: number[]) =>
     invoke<DeleteResult>("delete_dup_files", { fileIds }),
+  getOrgSettings: () => invoke<OrgSettings>("get_org_settings"),
+  setOrgSettings: (dirTemplate: string, fileTemplate: string) =>
+    invoke<OrgSettings>("set_org_settings", { dirTemplate, fileTemplate }),
+  listLibraryRoots: () => invoke<LibraryRootRow[]>("list_library_roots"),
+  setLibraryRoot: (path: string) => invoke<number>("set_library_root", { path }),
+  removeLibraryRoot: (id: number) => invoke<void>("remove_library_root", { id }),
+  orgPreview: (includeUncertain: boolean) =>
+    invoke<OrgPreview>("org_preview", { includeUncertain }),
+  startOrganize: (includeUncertain: boolean) =>
+    invoke<number | null>("start_organize", { includeUncertain }),
+  listOrgBatches: () => invoke<OrgBatchRow[]>("list_org_batches"),
+  undoOrgBatch: (batchId: number) => invoke<number | null>("undo_org_batch", { batchId }),
 };

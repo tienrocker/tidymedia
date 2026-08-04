@@ -58,6 +58,8 @@ pub struct AppState {
     pub meta_start_gate: Arc<std::sync::atomic::AtomicBool>,
     /// Gate tương tự cho hash job (M4 dedup).
     pub hash_start_gate: Arc<std::sync::atomic::AtomicBool>,
+    /// Gate tương tự cho organize/undo job (M5).
+    pub org_start_gate: Arc<std::sync::atomic::AtomicBool>,
     /// Serialize TOÀN BỘ delete_dup_files: 2 đợt xóa chạy song song có thể
     /// verify chéo rồi xóa sạch cả nhóm (mỗi bên tưởng bên kia giữ bản sống).
     pub delete_lock: Arc<std::sync::Mutex<()>>,
@@ -142,6 +144,7 @@ pub fn init(app: &AppHandle) -> Result<()> {
         ffprobe,
         meta_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         hash_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        org_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         delete_lock: Arc::new(std::sync::Mutex::new(())),
     });
 

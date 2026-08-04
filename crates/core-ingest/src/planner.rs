@@ -115,7 +115,7 @@ pub fn plan_organize(
     dir_tpl: &Template,
     file_tpl: &Template,
     include_uncertain: bool,
-    target_state: &dyn Fn(&str) -> TargetState,
+    target_state: &dyn Fn(&str, &PlanItem) -> TargetState,
 ) -> Vec<PlanEntry> {
     use std::collections::HashMap;
     // path đích (UPPERCASE) -> hash_hex của file đã claim (để nhận SkipDuplicate nội bộ batch)
@@ -192,20 +192,33 @@ pub fn plan_organize(
                 .map(|p| join_target(lib_root, &segs, name, &p.ext));
             // đã nằm đúng chỗ (kể cả tên hash8/16 từ lần escalate trước)?
             if eq_ci(&it.path, &target) {
-                planned = Some(entry(PlanAction::SkipOrganized, None));
+                let mut e = entry(PlanAction::SkipOrganized, None);
+                // Ảnh đã đúng chỗ nhưng MOV của cặp CHƯA theo (đợt trước fail
+                // giữa 2 nửa cặp) → move nốt MOV, không thì cặp xé vĩnh viễn:
+                // ảnh mãi SkipOrganized còn MOV bị ẩn khỏi candidates.
+                if let (Some(p), Some(pt)) = (&it.pair, &pair_target) {
+                    if !eq_ci(&p.path, pt) {
+                        claimed.insert(pt.to_uppercase(), None);
+                        e.pair_move = Some((p.file_id, p.path.clone(), pt.clone()));
+                    }
+                }
+                planned = Some(e);
                 break;
             }
             let key = target.to_uppercase();
             let claimed_here = claimed.get(&key);
             let state = match claimed_here {
                 Some(h) => {
-                    if h.as_deref() == Some(hash_hex.as_str()) {
+                    // Hash rỗng (chưa hash, template không cần) KHÔNG bao giờ
+                    // được coi là cùng nội dung — 2 file chưa biết ruột mà trùng
+                    // tên phải escalate chứ không phải SkipDuplicate giả.
+                    if !hash_hex.is_empty() && h.as_deref() == Some(hash_hex.as_str()) {
                         TargetState::SameContent
                     } else {
                         TargetState::Occupied
                     }
                 }
-                None => target_state(&target),
+                None => target_state(&target, it),
             };
             match state {
                 TargetState::SameContent => {
@@ -222,7 +235,7 @@ pub fn plan_organize(
                     let pstate = if claimed.contains_key(&pkey) {
                         TargetState::Occupied
                     } else {
-                        target_state(pt)
+                        target_state(pt, it)
                     };
                     if pstate != TargetState::Free {
                         continue; // escalate cả cặp
@@ -285,7 +298,7 @@ mod tests {
         )
     }
 
-    fn all_free(_: &str) -> TargetState {
+    fn all_free(_: &str, _: &PlanItem) -> TargetState {
         TargetState::Free
     }
 
@@ -355,7 +368,7 @@ mod tests {
     fn same_content_at_target_is_duplicate() {
         let (d, f) = tpls();
         let items = [item(1, r"D:\mess\a.jpg", Some(H1))];
-        let state = |p: &str| {
+        let state = |p: &str, _: &PlanItem| {
             if p.ends_with("_aaaa.jpg") {
                 TargetState::SameContent
             } else {
@@ -370,7 +383,7 @@ mod tests {
     fn occupied_target_escalates_to_hash8() {
         let (d, f) = tpls();
         let items = [item(1, r"D:\mess\a.jpg", Some(H1))];
-        let state = |p: &str| {
+        let state = |p: &str, _: &PlanItem| {
             if p.ends_with("_aaaa.jpg") {
                 TargetState::Occupied
             } else {
@@ -434,7 +447,7 @@ mod tests {
             r"D:\L\2019\2019-06\20190614_153022_aaaa1111.jpg",
             Some(H1),
         )];
-        let state = |p: &str| {
+        let state = |p: &str, _: &PlanItem| {
             if p.ends_with("_aaaa.jpg") {
                 TargetState::Occupied
             } else {
@@ -493,7 +506,7 @@ mod tests {
             status: 0,
         });
         // stem hash4 trống cho ảnh nhưng .mov bị chiếm -> cả cặp lên hash8
-        let state = |p: &str| {
+        let state = |p: &str, _: &PlanItem| {
             if p.ends_with("_aaaa.mov") {
                 TargetState::Occupied
             } else {
@@ -508,6 +521,55 @@ mod tests {
             .ends_with("_aaaa1111.heic"));
         let (_, _, pnew) = plan[0].pair_move.clone().unwrap();
         assert!(pnew.ends_with("_aaaa1111.mov"));
+    }
+
+    #[test]
+    fn split_pair_gets_fixup_move_when_image_already_organized() {
+        // P1 review: đợt trước ảnh move xong mà MOV fail giữa chừng → ảnh
+        // SkipOrganized nhưng planner phải phát lệnh move nốt MOV
+        let (d, f) = tpls();
+        let mut it = item(1, r"D:\L\2019\2019-06\20190614_153022_aaaa.heic", Some(H1));
+        it.ext = "heic".into();
+        it.pair = Some(PairInfo {
+            file_id: 2,
+            path: r"D:\mess\IMG_1.mov".into(),
+            ext: "mov".into(),
+            status: 0,
+        });
+        let plan = plan_organize(&[it], r"D:\L", &d, &f, false, &all_free);
+        assert_eq!(plan[0].action, PlanAction::SkipOrganized);
+        let (pid, _, pnew) = plan[0].pair_move.clone().expect("phai co lenh fixup MOV");
+        assert_eq!(pid, 2);
+        assert_eq!(pnew, r"D:\L\2019\2019-06\20190614_153022_aaaa.mov");
+        // Cặp đã nằm cạnh nhau đủ đôi → không fixup gì nữa
+        let mut ok = item(1, r"D:\L\2019\2019-06\20190614_153022_aaaa.heic", Some(H1));
+        ok.ext = "heic".into();
+        ok.pair = Some(PairInfo {
+            file_id: 2,
+            path: r"D:\L\2019\2019-06\20190614_153022_aaaa.mov".into(),
+            ext: "mov".into(),
+            status: 0,
+        });
+        let plan = plan_organize(&[ok], r"D:\L", &d, &f, false, &all_free);
+        assert_eq!(plan[0].action, PlanAction::SkipOrganized);
+        assert!(plan[0].pair_move.is_none());
+    }
+
+    #[test]
+    fn unhashed_files_never_fake_skip_duplicate() {
+        // P1 review: template không hash, 2 file CHƯA hash trùng tên render —
+        // không được phán "trùng nội dung", phải escalate suffix đếm
+        let d = parse_template(DEFAULT_DIR_TEMPLATE, TemplateKind::Dir).unwrap();
+        let f = parse_template("{YYYYMMDD}_{hhmmss}", TemplateKind::File).unwrap();
+        let items = [item(1, r"D:\x\a.jpg", None), item(2, r"D:\y\b.jpg", None)];
+        let plan = plan_organize(&items, r"D:\L", &d, &f, false, &all_free);
+        assert_eq!(plan[0].action, PlanAction::Rename);
+        assert_eq!(
+            plan[1].action,
+            PlanAction::Rename,
+            "khong duoc SkipDuplicate gia"
+        );
+        assert!(plan[1].new_path.as_deref().unwrap().ends_with("_2.jpg"));
     }
 
     #[test]

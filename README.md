@@ -20,16 +20,19 @@ Index an entire drive, search as you type, and untangle 15 years of scattered ph
 Photos and videos pile up for years - iPhone syncs through a dozen different apps, cameras, chat apps - until your drives are full of duplicates and colliding names (`IMG_1234.JPG` from three different phones). TidyMedia treats **content as identity**, never file names, and is built around three pillars:
 
 1. **Browse & search a whole drive, instantly** - index-first architecture; the UI never touches the filesystem while you browse.
-2. **Deduplicate safely** - tiered hashing (size → xxh3 → full BLAKE3) + perceptual matching, side-by-side review, Recycle Bin only. *(in progress - M4)*
-3. **Consolidate** - move everything into a library folder *you* choose, laid out by a date structure you can customize (default `YYYY\YYYY-MM`), with collision-proof date-based names and a full undo journal. *(in progress - M5)*
+2. **Deduplicate safely** - tiered hashing (size → xxh3 → full BLAKE3), side-by-side review with synchronized zoom, Recycle Bin only. *(perceptual similarity lands in M7)*
+3. **Consolidate** - move everything into a library folder *you* choose, laid out by a naming template you control (default `YYYY\YYYY-MM`), with collision-proof date-based names, a mandatory dry-run, and per-batch undo.
 
 ## ✨ Highlights
 
 - ⚡ **Fast for real** - 218,000 files on a real drive indexed in **under 10 seconds**; search answers in **20-40 ms** *while the scan is still running*.
 - 🔎 **Search that forgives** - substring, accent-insensitive (`anh tet` finds `Ảnh Tết`), filters for kind / size / date / resolution.
 - 🖼️ **Thumbnail grid & lightbox** - fully virtualized grid that scrolls smoothly through a million items, WebP thumbnail cache (2 GB LRU), cursor-anchored zoom & pan, EXIF info panel (taken date, camera, dimensions). HEIC/AVIF via ffmpeg.
+- 🎬 **Video, first-class** - keyframe thumbnails, duration/codec filters, in-app playback with instant seek, Live Photos (HEIC+MOV) paired as one item everywhere.
+- ♻️ **Dedup you can trust** - groups sorted by wasted bytes, 2-4-up compare with **synchronized zoom** (inspect the same pixels on every copy), keyboard-first review, auto-select rules you can override per file. Every deletion is re-verified on disk at the last millisecond and goes to the Recycle Bin.
+- 🗂️ **Organize on your terms** - any folder can be your library (one per drive, any name), folder layout and file names are **templates** (`{YYYY}\{YYYY}-{MM}`, `{YYYYMMDD}_{hhmmss}_{hash4}`, `{camera}`…), dry-run is mandatory, same-drive moves are atomic renames, and every batch is journaled and undoable.
 - 🌥️ **Cloud-safe** - OneDrive/iCloud placeholders are indexed but **never hydrated**: TidyMedia will not silently pull gigabytes down from the cloud.
-- 🕐 **Timezone-aware** - you pick your timezone on first run; date filters and (soon) library file names respect it, not whatever the OS guesses.
+- 🕐 **Timezone-aware** - you pick your timezone on first run; date filters and library file names respect it, not whatever the OS guesses.
 - 🌍 **English · Tiếng Việt · 中文** out of the box.
 - 📦 **Tiny native app** - Tauri 2 + Rust, no Electron. NSIS installer, MSI, and a portable ZIP that keeps its data next to the exe.
 
@@ -58,10 +61,10 @@ Five invariants every destructive code path must pass - not guidelines, hard rul
 |---|---|---|
 | M1 | Whole-drive index, instant search, virtualized browse | ✅ |
 | M2 | Thumbnail grid, lightbox + EXIF, HEIC, metadata jobs | ✅ |
-| M3 | Video: keyframe thumbs, in-app playback, Live Photo pairing, bundled ffmpeg | 🔜 |
-| M4 | Exact dedup: tiered hashing, 2-4-up compare UI, keyboard-first review | ⏳ |
-| M5 | Organize: user-chosen library folder, configurable date layout, atomic moves, undo journal | ⏳ |
-| M6 | iPhone / SD import via WPD/MTP, incremental "already imported" | ⏳ |
+| M3 | Video: keyframe thumbs, in-app playback, Live Photo pairing, bundled ffmpeg | ✅ |
+| M4 | Exact dedup: tiered hashing, 2-4-up compare UI, keyboard-first review | ✅ |
+| M5 | Organize: user-chosen library folder, template naming, atomic moves, undo journal | ✅ |
+| M6 | iPhone / SD import via WPD/MTP, incremental "already imported" | 🔜 |
 | M7 | Perceptual similarity, tags, albums, storage analytics | ⏳ |
 | M8 | NTFS MFT/USN fast scan - full drive rescan in seconds | ⏳ |
 

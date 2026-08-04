@@ -7,6 +7,7 @@
 
 mod models;
 pub mod ops;
+pub mod org;
 mod pool;
 pub mod query;
 mod writer;
@@ -17,7 +18,8 @@ use anyhow::Result;
 
 pub use models::{
     DeleteContextRow, DupGroupRow, DupMemberRow, FileDetail, FileFilter, FileRow, HashUpsert,
-    JobRow, MediaSrc, MetaUpsert, PendingHash, PendingMeta, RootInfo, ScanEntry,
+    JobRow, LibraryRootRow, MediaSrc, MetaUpsert, OrgBatchRow, OrgCandidateRow, OrgOpRow,
+    OrgPairRow, PendingHash, PendingMeta, RootInfo, ScanEntry,
 };
 pub use pool::ReadPool;
 pub use writer::WriterHandle;

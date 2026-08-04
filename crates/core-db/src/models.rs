@@ -208,6 +208,66 @@ pub struct DeleteContextRow {
     pub hashed_mtime: Option<i64>,
 }
 
+/// Library root: thư mục ĐÍCH organize do user tự chỉ định, tối đa 1/volume.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryRootRow {
+    pub id: i64,
+    pub volume_id: i64,
+    /// "D" — chữ cái ổ của volume
+    pub letter: Option<String>,
+    pub path: String,
+    pub is_primary: bool,
+}
+
+/// Ứng viên organize (1 file, MOV của Live Photo gắn ở `pair` chứ không là row riêng).
+#[derive(Debug, Clone)]
+pub struct OrgCandidateRow {
+    pub file_id: i64,
+    pub path: String,
+    pub ext: String,
+    pub kind: i64,
+    pub size: i64,
+    pub mtime: i64,
+    pub status: i64,
+    pub taken_at: Option<i64>,
+    pub date_source: Option<i64>,
+    pub camera: Option<String>,
+    pub full_hash: Option<Vec<u8>>,
+    pub hashed_size: Option<i64>,
+    pub hashed_mtime: Option<i64>,
+    pub pair: Option<OrgPairRow>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OrgPairRow {
+    pub file_id: i64,
+    pub path: String,
+    pub ext: String,
+    pub status: i64,
+}
+
+/// 1 dòng journal org_ops (write-ahead: insert trước khi đụng fs).
+#[derive(Debug, Clone)]
+pub struct OrgOpRow {
+    pub id: i64,
+    pub batch_id: i64,
+    pub file_id: i64,
+    pub old_path: String,
+    pub new_path: String,
+}
+
+/// Batch organize đã chạy (batch_id = job id) — cho UI undo.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgBatchRow {
+    pub batch_id: i64,
+    pub finished_at: Option<i64>,
+    /// số op đã done và CHƯA undo
+    pub moved: i64,
+    pub undone: i64,
+}
+
 /// Một file do scanner tìm thấy, chờ ghi vào index.
 #[derive(Debug, Clone)]
 pub struct ScanEntry {

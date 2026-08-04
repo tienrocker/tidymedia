@@ -31,7 +31,7 @@ where
 
 /// Canonical hóa root TRƯỚC khi vào DB: giải alias (case, subst, mapped drive,
 /// symlink) bằng fs::canonicalize; UNC bị từ chối (M1 chỉ hỗ trợ ổ local).
-fn canonicalize_root(path: &str) -> CmdResult<String> {
+pub(crate) fn canonicalize_root(path: &str) -> CmdResult<String> {
     let p = Path::new(path);
     if !p.is_dir() {
         return Err(format!("ERR_NOT_DIR|{path}"));

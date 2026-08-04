@@ -20,16 +20,19 @@ Index cả ổ cứng, gõ là ra kết quả, dọn 15 năm ảnh vứt lung tu
 Ảnh và video tích tụ qua năm tháng - sync iPhone qua cả chục app khác nhau, máy ảnh, app chat - đến lúc ổ cứng đầy bản trùng lặp và tên file đụng nhau (`IMG_1234.JPG` từ ba đời điện thoại). TidyMedia coi **nội dung là danh tính**, không bao giờ tin tên file, và xây quanh ba trụ:
 
 1. **Duyệt & tìm kiếm cả ổ đĩa, tức thì** - kiến trúc index-first; UI không bao giờ đụng filesystem khi duyệt.
-2. **Dedup an toàn** - hash phân tầng (size → xxh3 → BLAKE3 đầy đủ) + so trùng perceptual, UI so ảnh cạnh nhau, chỉ xóa vào Thùng rác. *(đang làm - M4)*
-3. **Gom thư viện** - dồn tất cả về thư mục do chính bạn chọn, cấu trúc theo ngày tùy chỉnh được (mặc định `YYYY\YYYY-MM`), tên file theo ngày chụp chống đụng độ, kèm nhật ký undo đầy đủ. *(đang làm - M5)*
+2. **Dedup an toàn** - hash phân tầng (size → xxh3 → BLAKE3 đầy đủ), UI so ảnh cạnh nhau với zoom đồng bộ, chỉ xóa vào Thùng rác. *(so trùng perceptual sẽ tới ở M7)*
+3. **Gom thư viện** - dồn tất cả về thư mục do chính bạn chọn, cấu trúc + tên file là template tùy chỉnh được (mặc định `YYYY\YYYY-MM`), tên theo ngày chụp chống đụng độ, dry-run bắt buộc, undo được từng đợt.
 
 ## ✨ Điểm nổi bật
 
 - ⚡ **Nhanh thật sự** - 218.000 file trên ổ cứng thật index trong **chưa tới 10 giây**; tìm kiếm trả lời trong **20-40 ms** *ngay trong lúc đang scan*.
 - 🔎 **Tìm kiếm dễ tính** - substring, không phân biệt dấu (`anh tet` ra `Ảnh Tết`), lọc theo loại / dung lượng / ngày / độ phân giải.
 - 🖼️ **Lưới thumbnail & lightbox** - grid ảo hóa hoàn toàn, cuộn mượt qua cả triệu item, cache thumbnail WebP (LRU 2 GB), zoom/pan quanh con trỏ, panel EXIF (ngày chụp, máy ảnh, kích thước). HEIC/AVIF qua ffmpeg.
+- 🎬 **Video hạng nhất** - thumbnail keyframe, lọc theo thời lượng/codec, phát ngay trong app seek tức thì, Live Photo (HEIC+MOV) là một đơn vị ở mọi nơi.
+- ♻️ **Dedup đáng tin** - nhóm sort theo dung lượng lãng phí, so 2-4 bản cạnh nhau với **zoom đồng bộ** (soi cùng một vùng pixel trên mọi bản), review thuần bàn phím, rule tự chọn bản giữ override được từng ô. Mọi lệnh xóa re-verify trên đĩa ở mili-giây cuối và vào Thùng rác.
+- 🗂️ **Gom kho theo ý bạn** - thư mục nào cũng làm kho được (mỗi ổ một cái, tên tùy ý), cấu trúc thư mục + tên file là **template** (`{YYYY}\{YYYY}-{MM}`, `{YYYYMMDD}_{hhmmss}_{hash4}`, `{camera}`…), dry-run bắt buộc, move cùng ổ là rename atomic, mọi đợt đều ghi sổ và undo được.
 - 🌥️ **An toàn với cloud** - placeholder OneDrive/iCloud được index nhưng **không bao giờ bị hydrate**: app không âm thầm kéo hàng GB từ cloud về.
-- 🕐 **Đúng múi giờ** - chọn múi giờ ngay lần chạy đầu; filter ngày và (sắp tới) tên file thư viện theo đúng múi giờ đó.
+- 🕐 **Đúng múi giờ** - chọn múi giờ ngay lần chạy đầu; filter ngày và tên file thư viện theo đúng múi giờ đó.
 - 🌍 **English · Tiếng Việt · 中文** sẵn trong app.
 - 📦 **App native gọn nhẹ** - Tauri 2 + Rust, không Electron. Installer NSIS, MSI, và bản portable ZIP lưu data ngay cạnh exe.
 
@@ -58,10 +61,10 @@ Năm bất biến mà mọi đường code phá hủy đều phải qua - luật
 |---|---|---|
 | M1 | Index cả ổ, tìm kiếm tức thì, duyệt ảo hóa | ✅ |
 | M2 | Lưới thumbnail, lightbox + EXIF, HEIC, job metadata | ✅ |
-| M3 | Video: thumb keyframe, phát trong app, ghép cặp Live Photo, bundle ffmpeg | 🔜 |
-| M4 | Dedup exact: hash phân tầng, UI so 2-4 ảnh cạnh nhau, review bằng bàn phím | ⏳ |
-| M5 | Gom thư viện: thư mục đích tự chọn, format ngày tùy chỉnh, move atomic, nhật ký undo | ⏳ |
-| M6 | Import iPhone / SD qua WPD/MTP, nhớ "đã import" incremental | ⏳ |
+| M3 | Video: thumb keyframe, phát trong app, ghép cặp Live Photo, bundle ffmpeg | ✅ |
+| M4 | Dedup exact: hash phân tầng, UI so 2-4 ảnh cạnh nhau, review bằng bàn phím | ✅ |
+| M5 | Gom thư viện: thư mục đích tự chọn, đặt tên theo template, move atomic, nhật ký undo | ✅ |
+| M6 | Import iPhone / SD qua WPD/MTP, nhớ "đã import" incremental | 🔜 |
 | M7 | So trùng perceptual, tag, album, phân tích dung lượng | ⏳ |
 | M8 | Scan nhanh NTFS MFT/USN - rescan cả ổ trong vài giây | ⏳ |
 

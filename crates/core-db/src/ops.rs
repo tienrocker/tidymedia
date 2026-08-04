@@ -90,7 +90,7 @@ pub fn ensure_schema(conn: &mut Connection) -> Result<()> {
     Ok(())
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -126,7 +126,7 @@ pub fn normalize_for_search(s: &str) -> String {
         .to_lowercase()
 }
 
-fn drive_letter(path: &str) -> Option<char> {
+pub(crate) fn drive_letter(path: &str) -> Option<char> {
     let mut ch = path.chars();
     let letter = ch.next()?;
     if letter.is_ascii_alphabetic() && ch.next() == Some(':') {

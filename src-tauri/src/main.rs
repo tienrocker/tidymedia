@@ -2,6 +2,7 @@
 
 mod commands;
 mod dedup;
+mod organize;
 mod protocols;
 mod state;
 
@@ -47,6 +48,15 @@ fn main() {
             dedup::get_dup_group,
             dedup::dedup_stats,
             dedup::delete_dup_files,
+            organize::get_org_settings,
+            organize::set_org_settings,
+            organize::list_library_roots,
+            organize::set_library_root,
+            organize::remove_library_root,
+            organize::org_preview,
+            organize::start_organize,
+            organize::list_org_batches,
+            organize::undo_org_batch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tidymedia");

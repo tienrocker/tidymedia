@@ -205,7 +205,7 @@ fn hash_one_full(p: &PendingHash) -> Option<HashUpsert> {
     })
 }
 
-fn unix_ms(t: Option<std::time::SystemTime>) -> i64 {
+pub(crate) fn unix_ms(t: Option<std::time::SystemTime>) -> i64 {
     t.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
@@ -435,7 +435,8 @@ pub async fn delete_dup_files(
     let lock = state.delete_lock.clone();
     blocking(move || {
         use std::collections::{HashMap, HashSet};
-        let _serialize = lock.lock().unwrap();
+        // Poison từ panic đợt trước không được khóa chết mọi delete sau này
+        let _serialize = lock.lock().unwrap_or_else(|p| p.into_inner());
 
         let del_set: HashSet<i64> = file_ids.iter().copied().collect();
         if del_set.is_empty() {
@@ -615,7 +616,7 @@ fn trash_one(
 /// folder → từ chối oan. Đúng cách: hỏi hệ điều hành loại drive + filesystem.
 /// Chỉ cho DRIVE_FIXED + NTFS/ReFS — ổ removable từ chối (hướng an toàn:
 /// thà bắt user tự xóa còn hơn hard-delete ngầm).
-fn volume_supports_recycle(drive: char) -> bool {
+pub(crate) fn volume_supports_recycle(drive: char) -> bool {
     use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetVolumeInformationW};
     /// winbase.h: DRIVE_FIXED = 3 (giá trị ABI cố định)
     const DRIVE_FIXED: u32 = 3;
@@ -651,7 +652,7 @@ fn volume_supports_recycle(drive: char) -> bool {
 }
 
 /// fs còn đúng y snapshot DB không (size + mtime + không phải placeholder).
-fn fs_matches(path: &str, size: i64, mtime: i64) -> bool {
+pub(crate) fn fs_matches(path: &str, size: i64, mtime: i64) -> bool {
     match std::fs::metadata(path) {
         Ok(md) => {
             !core_media::is_cloud_placeholder(&md)

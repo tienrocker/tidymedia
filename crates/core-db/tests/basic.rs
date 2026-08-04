@@ -384,3 +384,110 @@ fn root_scope_is_case_insensitive_and_exact() {
         "scope phai gom root (khac case) + subtree, khong gom sibling"
     );
 }
+
+#[test]
+fn org_library_roots_journal_and_relocate() {
+    use core_db::org;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(tmp.path()).unwrap();
+    db.writer.exec(|c| ops::upsert_root(c, "D:\\Mess")).unwrap();
+
+    // 1) library root: dat, doi path (cung volume = update), primary tu dong
+    db.writer
+        .exec(|c| org::set_library_root(c, "d:\\MyLib"))
+        .unwrap();
+    db.writer
+        .exec(|c| org::set_library_root(c, "E:\\Media"))
+        .unwrap();
+    let roots = db.pool.with(org::list_library_roots).unwrap();
+    assert_eq!(roots.len(), 2);
+    let d_root = roots.iter().find(|r| r.path.starts_with('D')).unwrap();
+    assert_eq!(d_root.path, "D:\\MyLib");
+    assert!(d_root.is_primary, "root dau tien la primary");
+    db.writer
+        .exec(|c| org::set_library_root(c, "D:\\MyLib2"))
+        .unwrap();
+    let roots = db.pool.with(org::list_library_roots).unwrap();
+    assert_eq!(roots.len(), 2, "moi volume toi da 1 root - goi lai la DOI");
+    assert!(roots.iter().any(|r| r.path == "D:\\MyLib2"));
+
+    // 2) candidates: anh + MOV pair gap thanh 1
+    let entries = vec![
+        entry("D:\\Mess", "IMG_1.heic", "heic", 0, 100, 1),
+        entry("D:\\Mess", "IMG_1.mov", "mov", 1, 900, 1),
+        entry("D:\\Mess", "solo.mp4", "mp4", 1, 500, 2),
+    ];
+    db.writer
+        .exec(move |c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(c, 1, 5, &entries, &mut cache)
+        })
+        .unwrap();
+    db.writer
+        .exec(|c| ops::pair_live_photos(c, "D:\\Mess"))
+        .unwrap();
+    let cands = db
+        .pool
+        .with(|c| org::select_org_candidates(c, 1, 0, 100))
+        .unwrap();
+    assert_eq!(cands.len(), 2, "MOV co pair phai an, di theo anh");
+    let img = cands.iter().find(|x| x.ext == "heic").unwrap();
+    let pair = img.pair.as_ref().expect("anh Live phai keo theo MOV");
+    assert_eq!(pair.ext, "mov");
+    assert_eq!(pair.path, "D:\\Mess\\IMG_1.mov");
+
+    // 3) journal write-ahead + relocate + undo bookkeeping
+    let img_id = img.file_id;
+    let jid = db
+        .writer
+        .exec(|c| ops::insert_job(c, "organize", None))
+        .unwrap();
+    let op = db
+        .writer
+        .exec(move |c| {
+            org::insert_org_op(c, jid, img_id, "D:\\Mess\\IMG_1.heic", "D:\\MyLib2\\x.heic")
+        })
+        .unwrap();
+    assert_eq!(db.pool.with(org::pending_org_ops).unwrap().len(), 1);
+    db.writer
+        .exec(move |c| org::update_file_location(c, img_id, "D:\\MyLib2\\2019\\x.heic"))
+        .unwrap();
+    db.writer
+        .exec(move |c| org::mark_org_op_done(c, op))
+        .unwrap();
+    assert!(db.pool.with(org::pending_org_ops).unwrap().is_empty());
+
+    // path moi phan anh trong candidates lan sau + original_name giu ten cu
+    let cands = db
+        .pool
+        .with(|c| org::select_org_candidates(c, 1, 0, 100))
+        .unwrap();
+    let moved = cands.iter().find(|x| x.file_id == img_id).unwrap();
+    assert_eq!(moved.path, "D:\\MyLib2\\2019\\x.heic");
+    let orig: Option<String> = db
+        .pool
+        .with(|c| -> anyhow::Result<Option<String>> {
+            Ok(c.query_row(
+                "SELECT original_name FROM files WHERE id = ?1",
+                [img_id],
+                |r| r.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(orig.as_deref(), Some("IMG_1.heic"));
+
+    let batches = db.pool.with(org::list_org_batches).unwrap();
+    assert_eq!(batches.len(), 1);
+    assert_eq!((batches[0].moved, batches[0].undone), (1, 0));
+    let undo_ops = db
+        .pool
+        .with(|c| org::ops_of_batch_for_undo(c, jid))
+        .unwrap();
+    assert_eq!(undo_ops.len(), 1);
+    db.writer
+        .exec(move |c| org::mark_org_op_undone(c, op))
+        .unwrap();
+    let batches = db.pool.with(org::list_org_batches).unwrap();
+    assert_eq!((batches[0].moved, batches[0].undone), (0, 1));
+}

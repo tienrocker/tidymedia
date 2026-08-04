@@ -10,6 +10,12 @@ import {
   JobRow,
   RootInfo,
 } from "../lib/ipc";
+import {
+  LibraryRootRow,
+  OrgBatchRow,
+  OrgPreview,
+  OrgSettings,
+} from "../lib/ipc";
 import { errText } from "../lib/errors";
 import { systemTzOffsetMinutes } from "../lib/time";
 import { fmtSize } from "../lib/format";
@@ -33,7 +39,7 @@ interface ToastMsg {
 }
 
 export type ViewMode = "grid" | "list";
-export type AppMode = "browse" | "dedup";
+export type AppMode = "browse" | "dedup" | "organize";
 export type DedupRule = "res" | "oldest" | "newest";
 
 /** Rule tự đánh dấu: giữ bản tốt nhất, mark xóa phần còn lại. */
@@ -101,6 +107,23 @@ interface AppStore {
   dedupRule: DedupRule;
   dupDeleting: boolean;
 
+  orgSettings: OrgSettings | null;
+  libRoots: LibraryRootRow[];
+  orgPreview: OrgPreview | null;
+  orgBatches: OrgBatchRow[];
+  /** preview đang chạy / vừa bấm organize (disable nút) */
+  orgBusy: boolean;
+  orgIncludeUncertain: boolean;
+
+  loadOrgData: () => Promise<void>;
+  saveOrgSettings: (dirTemplate: string, fileTemplate: string) => Promise<void>;
+  addLibraryRoot: (path: string) => Promise<void>;
+  removeLibraryRoot: (id: number) => Promise<void>;
+  setOrgIncludeUncertain: (v: boolean) => void;
+  runOrgPreview: () => Promise<void>;
+  startOrganize: () => Promise<void>;
+  undoOrgBatch: (batchId: number) => Promise<void>;
+
   setAppMode: (m: AppMode) => void;
   loadDupData: () => Promise<void>;
   openDupGroup: (id: number) => Promise<void>;
@@ -158,9 +181,101 @@ export const useStore = create<AppStore>((set, get) => ({
   dupChecked: new Map(),
   dedupRule: "res",
 
+  orgSettings: null,
+  libRoots: [],
+  orgPreview: null,
+  orgBatches: [],
+  orgBusy: false,
+  orgIncludeUncertain: false,
+
+  loadOrgData: async () => {
+    try {
+      const [settings, roots, batches] = await Promise.all([
+        api.getOrgSettings(),
+        api.listLibraryRoots(),
+        api.listOrgBatches(),
+      ]);
+      set({ orgSettings: settings, libRoots: roots, orgBatches: batches });
+    } catch (e) {
+      get().showToast(errText(e), true);
+    }
+  },
+
+  saveOrgSettings: async (dirTemplate, fileTemplate) => {
+    const settings = await api.setOrgSettings(dirTemplate, fileTemplate);
+    // Template đổi → preview cũ nói dối về đích mới
+    set({ orgSettings: settings, orgPreview: null });
+    get().showToast(i18n.t("org.settingsSaved"), false);
+  },
+
+  addLibraryRoot: async (path) => {
+    await api.setLibraryRoot(path);
+    set({ libRoots: await api.listLibraryRoots(), orgPreview: null });
+  },
+
+  removeLibraryRoot: async (id) => {
+    await api.removeLibraryRoot(id);
+    set({ libRoots: await api.listLibraryRoots(), orgPreview: null });
+  },
+
+  setOrgIncludeUncertain: (v) => {
+    // Đổi phạm vi → preview cũ hết giá trị, bắt chạy lại trước khi execute
+    set({ orgIncludeUncertain: v, orgPreview: null });
+  },
+
+  runOrgPreview: async () => {
+    if (get().orgBusy) return;
+    set({ orgBusy: true, orgPreview: null });
+    try {
+      const p = await api.orgPreview(get().orgIncludeUncertain);
+      set({ orgPreview: p });
+    } catch (e) {
+      get().showToast(errText(e), true);
+    } finally {
+      set({ orgBusy: false });
+    }
+  },
+
+  startOrganize: async () => {
+    if (get().orgBusy || get().orgPreview == null) return; // dry-run bắt buộc
+    set({ orgBusy: true });
+    try {
+      const jobId = await api.startOrganize(get().orgIncludeUncertain);
+      if (jobId != null) {
+        get().onJobProgress({
+          jobId,
+          kind: "organize",
+          done: 0,
+          total: null,
+          message: null,
+        });
+      }
+      set({ orgPreview: null });
+    } catch (e) {
+      get().showToast(errText(e), true);
+    } finally {
+      set({ orgBusy: false });
+    }
+  },
+
+  undoOrgBatch: async (batchId) => {
+    if (get().orgBusy) return;
+    const jobId = await api.undoOrgBatch(batchId);
+    if (jobId != null) {
+      get().onJobProgress({
+        jobId,
+        kind: "org_undo",
+        done: 0,
+        total: null,
+        message: null,
+      });
+    }
+  },
+
   setAppMode: (m) => {
     set({ appMode: m });
     if (m === "dedup" && get().dupGroups == null) void get().loadDupData();
+    if (m === "organize" && get().orgSettings == null) void get().loadOrgData();
   },
 
   loadDupData: async () => {

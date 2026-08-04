@@ -11,6 +11,7 @@ import { FileGrid } from "./features/browse/FileGrid";
 import { Lightbox } from "./features/browse/Lightbox";
 import { StatusBar } from "./features/browse/StatusBar";
 import { DedupView } from "./features/dedup/DedupView";
+import { OrganizeView } from "./features/organize/OrganizeView";
 import { RootsPanel } from "./features/roots/RootsPanel";
 import { JobsPanel } from "./features/jobs/JobsPanel";
 import { SettingsDialog } from "./features/setup/SetupWizard";
@@ -77,6 +78,14 @@ export default function App() {
         if (e.payload.kind === "hash") {
           void useStore.getState().loadDupData();
         }
+        // Organize/undo xong → path đổi hàng loạt: refresh browse + batches
+        if (e.payload.kind === "organize" || e.payload.kind === "org_undo") {
+          void useStore.getState().runQuery();
+          void useStore.getState().loadOrgData();
+          if (e.payload.message) {
+            useStore.getState().showToast(e.payload.message, false);
+          }
+        }
       }),
       listen<{ jobId: number; error?: string }>("job://failed", (e) => {
         useStore.getState().onJobEnd(e.payload.jobId);
@@ -125,9 +134,15 @@ export default function App() {
             </button>
           </div>
         </div>
-        {/* Mode: Browse / Dedup */}
+        {/* Mode: Browse / Dedup / Organize */}
         <div className="flex gap-1 px-3 pb-2">
-          {(["browse", "dedup"] as const).map((m) => (
+          {(
+            [
+              ["browse", "🖼"],
+              ["dedup", "♻"],
+              ["organize", "🗂"],
+            ] as const
+          ).map(([m, icon]) => (
             <button
               key={m}
               className={`flex-1 rounded px-2 py-1 text-xs font-medium ${
@@ -137,7 +152,7 @@ export default function App() {
               }`}
               onClick={() => useStore.getState().setAppMode(m)}
             >
-              {m === "browse" ? `🖼 ${t("mode.browse")}` : `♻ ${t("mode.dedup")}`}
+              {icon} {t(`mode.${m}`)}
             </button>
           ))}
         </div>
@@ -149,6 +164,8 @@ export default function App() {
       <main className="flex min-w-0 flex-1 flex-col">
         {appMode === "dedup" ? (
           <DedupView />
+        ) : appMode === "organize" ? (
+          <OrganizeView />
         ) : (
           <>
             <FilterBar />
