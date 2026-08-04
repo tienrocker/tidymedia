@@ -164,20 +164,20 @@ impl<'a> RenderCtx<'a> {
     }
 }
 
-/// Giữ chữ số + chữ cái (mọi bảng chữ) + space/-/_ , bỏ còn lại; gộp space thừa.
+/// Slug hóa tên camera: giữ chữ số + chữ cái (mọi bảng chữ) + '-', mọi
+/// khoảng trắng/ký tự khác thành '_' (gộp liền nhau) — "Apple iPhone 12"
+/// -> "Apple_iPhone_12", không bao giờ có space trong tên file.
 fn sanitize_camera(s: &str) -> String {
     let mut out = String::new();
-    let mut last_space = true;
     for c in s.chars() {
-        if c.is_alphanumeric() || c == '-' || c == '_' {
+        if c.is_alphanumeric() || c == '-' {
             out.push(c);
-            last_space = false;
-        } else if (c == ' ' || c.is_whitespace()) && !last_space {
-            out.push(' ');
-            last_space = true;
+        } else if !out.is_empty() && !out.ends_with('_') {
+            // space, '/', ':', '*'... đều thành đúng 1 dấu '_'
+            out.push('_');
         }
     }
-    out.trim().to_string()
+    out.trim_matches('_').to_string()
 }
 
 /// Dọn 1 component sau render: gộp separator chữ thừa do token rỗng ({camera}
@@ -295,7 +295,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             t.render_file(&ctx(Some("Canon EOS R5")), None),
-            "2019.06.14 153022 abcdef12 Canon EOS R5"
+            "2019.06.14 153022 abcdef12 Canon_EOS_R5"
         );
     }
 
@@ -304,11 +304,11 @@ mod tests {
         let t = parse_template("{YYYYMMDD}_{camera}_{hash4}", TemplateKind::File).unwrap();
         // camera rỗng -> không còn __ đôi
         assert_eq!(t.render_file(&ctx(None), None), "20190614_abcd");
-        // camera bẩn: ký tự cấm bị lọc
+        // camera bẩn: ký tự cấm/space đều thành slug '_'
         let t2 = parse_template("{camera}", TemplateKind::File).unwrap();
         assert_eq!(
             t2.render_file(&ctx(Some("  Apple/iPhone: 12* Pro  ")), None),
-            "AppleiPhone 12 Pro"
+            "Apple_iPhone_12_Pro"
         );
     }
 
