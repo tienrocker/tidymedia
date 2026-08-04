@@ -574,6 +574,10 @@ dependencies = [
 [[package]]
 name = "core-ingest"
 version = "0.1.1"
+dependencies = [
+ "regex",
+ "thiserror 2.0.19",
+]
 
 [[package]]
 name = "core-jobs"
@@ -4301,6 +4305,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "trash",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
