@@ -7,6 +7,26 @@
 
 use crate::template::{RenderCtx, Template};
 
+pub trait ClaimStore {
+    type Error;
+
+    fn get_claim(&mut self, path_key: &str) -> Result<Option<Option<String>>, Self::Error>;
+    fn insert_claim(&mut self, path_key: String, hash: Option<String>) -> Result<(), Self::Error>;
+}
+
+impl ClaimStore for std::collections::HashMap<String, Option<String>> {
+    type Error = std::convert::Infallible;
+
+    fn get_claim(&mut self, path_key: &str) -> Result<Option<Option<String>>, Self::Error> {
+        Ok(self.get(path_key).cloned())
+    }
+
+    fn insert_claim(&mut self, path_key: String, hash: Option<String>) -> Result<(), Self::Error> {
+        self.insert(path_key, hash);
+        Ok(())
+    }
+}
+
 /// Trạng thái đường dẫn đích (executor trả lời từ fs)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetState {
@@ -17,13 +37,13 @@ pub enum TargetState {
     Occupied,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PlanAction {
     /// cùng volume: fs::rename atomic
     Rename,
     /// khác volume: copy -> flush -> verify BLAKE3 -> trash nguồn
     CopyVerify,
-    /// thiếu full hash (cần cho tên hoặc cho verify) - executor hash rồi re-plan
+    /// thiếu full hash (cần cho tên hoặc verify) - explicit hash job rồi preview lại
     NeedsHash,
     SkipCloud,
     SkipMissing,
@@ -46,6 +66,10 @@ pub struct PairInfo {
     /// ext lowercase không dot (thường "mov")
     pub ext: String,
     pub status: i64,
+    /// Snapshot index dùng để từ chối MOV bị thay ngoài app trước/sau preview.
+    pub size: i64,
+    pub mtime: i64,
+    pub hash_hex: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -65,12 +89,12 @@ pub struct PlanItem {
     pub pair: Option<PairInfo>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PlanEntry {
     pub file_id: i64,
     pub action: PlanAction,
     pub old_path: String,
-    /// Some với Rename/CopyVerify (NeedsHash: đường dự kiến với hash = "????")
+    /// Some với Rename/CopyVerify; NeedsHash không hứa path khi chưa biết fingerprint
     pub new_path: Option<String>,
     /// MOV của cặp Live Photo: (file_id, old_path, new_path)
     pub pair_move: Option<(i64, String, String)>,
@@ -117,9 +141,33 @@ pub fn plan_organize(
     include_uncertain: bool,
     target_state: &dyn Fn(&str, &PlanItem) -> TargetState,
 ) -> Vec<PlanEntry> {
-    use std::collections::HashMap;
+    let mut claimed = std::collections::HashMap::new();
+    match plan_organize_incremental(
+        items,
+        lib_root,
+        dir_tpl,
+        file_tpl,
+        include_uncertain,
+        target_state,
+        &mut claimed,
+    ) {
+        Ok(plan) => plan,
+        Err(never) => match never {},
+    }
+}
+
+/// Giống `plan_organize`, nhưng giữ claim set do caller cấp để có thể stream
+/// nhiều page mà không cấp trùng destination ở ranh giới page.
+pub fn plan_organize_incremental<C: ClaimStore + ?Sized>(
+    items: &[PlanItem],
+    lib_root: &str,
+    dir_tpl: &Template,
+    file_tpl: &Template,
+    include_uncertain: bool,
+    target_state: &dyn Fn(&str, &PlanItem) -> TargetState,
+    claimed: &mut C,
+) -> Result<Vec<PlanEntry>, C::Error> {
     // path đích (UPPERCASE) -> hash_hex của file đã claim (để nhận SkipDuplicate nội bộ batch)
-    let mut claimed: HashMap<String, Option<String>> = HashMap::new();
     let mut out = Vec::with_capacity(items.len());
     let lib_drive = drive_of(lib_root);
 
@@ -151,19 +199,18 @@ pub fn plan_organize(
         }
         let same_vol = drive_of(&it.path) == lib_drive && lib_drive.is_some();
         // hash cần cho: token {hashN} trong tên, và verify khi copy xuyên volume
-        let needs_hash = it.hash_hex.is_none() && (file_tpl.has_hash || !same_vol);
+        let pair_needs_hash = it
+            .pair
+            .as_ref()
+            .is_some_and(|pair| drive_of(&pair.path) != lib_drive && pair.hash_hex.is_none());
+        let needs_hash =
+            (it.hash_hex.is_none() && (file_tpl.has_hash || !same_vol)) || pair_needs_hash;
         let hash_hex = it.hash_hex.clone().unwrap_or_default();
         let ctx = RenderCtx::from_taken(it.taken_ms, &hash_hex, it.camera.as_deref());
         let segs = dir_tpl.render_dir(&ctx);
         if needs_hash {
             // đường dự kiến chỉ để hiển thị dry-run
-            let tentative = {
-                let ctx =
-                    RenderCtx::from_taken(it.taken_ms, "????????????????", it.camera.as_deref());
-                let name = file_tpl.render_file(&ctx, None);
-                join_target(lib_root, &dir_tpl.render_dir(&ctx), &name, &it.ext)
-            };
-            out.push(entry(PlanAction::NeedsHash, Some(tentative)));
+            out.push(entry(PlanAction::NeedsHash, None));
             continue;
         }
 
@@ -192,13 +239,16 @@ pub fn plan_organize(
                 .map(|p| join_target(lib_root, &segs, name, &p.ext));
             // đã nằm đúng chỗ (kể cả tên hash8/16 từ lần escalate trước)?
             if eq_ci(&it.path, &target) {
+                // Claim cả file đã nằm đúng kho. Điều này làm các candidate đến sau
+                // nhận ra cùng content mà không phải đọc lại file trong Preview.
+                claimed.insert_claim(target.to_uppercase(), it.hash_hex.clone())?;
                 let mut e = entry(PlanAction::SkipOrganized, None);
                 // Ảnh đã đúng chỗ nhưng MOV của cặp CHƯA theo (đợt trước fail
                 // giữa 2 nửa cặp) → move nốt MOV, không thì cặp xé vĩnh viễn:
                 // ảnh mãi SkipOrganized còn MOV bị ẩn khỏi candidates.
                 if let (Some(p), Some(pt)) = (&it.pair, &pair_target) {
                     if !eq_ci(&p.path, pt) {
-                        claimed.insert(pt.to_uppercase(), None);
+                        claimed.insert_claim(pt.to_uppercase(), None)?;
                         e.pair_move = Some((p.file_id, p.path.clone(), pt.clone()));
                     }
                 }
@@ -206,7 +256,7 @@ pub fn plan_organize(
                 break;
             }
             let key = target.to_uppercase();
-            let claimed_here = claimed.get(&key);
+            let claimed_here = claimed.get_claim(&key)?;
             let state = match claimed_here {
                 Some(h) => {
                     // Hash rỗng (chưa hash, template không cần) KHÔNG bao giờ
@@ -232,7 +282,7 @@ pub fn plan_organize(
             if let (Some(p), Some(pt)) = (&it.pair, &pair_target) {
                 if !eq_ci(&p.path, pt) {
                     let pkey = pt.to_uppercase();
-                    let pstate = if claimed.contains_key(&pkey) {
+                    let pstate = if claimed.get_claim(&pkey)?.is_some() {
                         TargetState::Occupied
                     } else {
                         target_state(pt, it)
@@ -247,10 +297,10 @@ pub fn plan_organize(
             } else {
                 PlanAction::CopyVerify
             };
-            claimed.insert(key, Some(hash_hex.clone()));
+            claimed.insert_claim(key, Some(hash_hex.clone()))?;
             let mut e = entry(action, Some(target));
             if let (Some(p), Some(pt)) = (&it.pair, pair_target) {
-                claimed.insert(pt.to_uppercase(), None);
+                claimed.insert_claim(pt.to_uppercase(), None)?;
                 e.pair_move = Some((p.file_id, p.path.clone(), pt));
             }
             planned = Some(e);
@@ -258,7 +308,7 @@ pub fn plan_organize(
         }
         out.push(planned.unwrap_or_else(|| entry(PlanAction::SkipCollision, None)));
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -353,7 +403,7 @@ mod tests {
         let items = [item(1, r"D:\a.jpg", None)];
         let plan = plan_organize(&items, r"D:\L", &d, &f, false, &all_free);
         assert_eq!(plan[0].action, PlanAction::NeedsHash);
-        assert!(plan[0].new_path.as_deref().unwrap().contains("????"));
+        assert!(plan[0].new_path.is_none());
         // template không hash + cùng volume -> không cần hash
         let f2 = parse_template("{YYYYMMDD}_{hhmmss}", TemplateKind::File).unwrap();
         let plan = plan_organize(&items, r"D:\L", &d, &f2, false, &all_free);
@@ -468,6 +518,9 @@ mod tests {
             path: r"D:\mess\IMG_1.mov".into(),
             ext: "mov".into(),
             status: 0,
+            size: 10,
+            mtime: 1,
+            hash_hex: None,
         });
         let plan = plan_organize(&[it], r"D:\L", &d, &f, false, &all_free);
         assert_eq!(plan[0].action, PlanAction::Rename);
@@ -489,6 +542,9 @@ mod tests {
             path: r"D:\mess\IMG_1.mov".into(),
             ext: "mov".into(),
             status: 2,
+            size: 10,
+            mtime: 1,
+            hash_hex: None,
         });
         let plan = plan_organize(&[it], r"D:\L", &d, &f, false, &all_free);
         assert_eq!(plan[0].action, PlanAction::SkipPairBlocked);
@@ -504,6 +560,9 @@ mod tests {
             path: r"D:\mess\IMG_1.mov".into(),
             ext: "mov".into(),
             status: 0,
+            size: 10,
+            mtime: 1,
+            hash_hex: None,
         });
         // stem hash4 trống cho ảnh nhưng .mov bị chiếm -> cả cặp lên hash8
         let state = |p: &str, _: &PlanItem| {
@@ -535,6 +594,9 @@ mod tests {
             path: r"D:\mess\IMG_1.mov".into(),
             ext: "mov".into(),
             status: 0,
+            size: 10,
+            mtime: 1,
+            hash_hex: None,
         });
         let plan = plan_organize(&[it], r"D:\L", &d, &f, false, &all_free);
         assert_eq!(plan[0].action, PlanAction::SkipOrganized);
@@ -549,6 +611,9 @@ mod tests {
             path: r"D:\L\2019\2019-06\20190614_153022_aaaa.mov".into(),
             ext: "mov".into(),
             status: 0,
+            size: 10,
+            mtime: 1,
+            hash_hex: None,
         });
         let plan = plan_organize(&[ok], r"D:\L", &d, &f, false, &all_free);
         assert_eq!(plan[0].action, PlanAction::SkipOrganized);

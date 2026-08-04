@@ -134,6 +134,24 @@ impl JobManager {
             .map(|(id, _)| *id)
     }
 
+    /// Snapshot jobs owned by this process. Used when frontend listeners attach
+    /// after an early startup job (notably crash recovery) has already registered.
+    pub fn active_jobs(&self) -> Vec<JobProgress> {
+        let map = self.active.lock().unwrap();
+        let mut rows: Vec<_> = map
+            .iter()
+            .map(|(job_id, info)| JobProgress {
+                job_id: *job_id,
+                kind: info.kind.clone(),
+                done: 0,
+                total: None,
+                message: None,
+            })
+            .collect();
+        rows.sort_by_key(|row| row.job_id);
+        rows
+    }
+
     /// Gắn cờ hủy mọi scan của root; trả về danh sách job id bị hủy.
     pub fn cancel_scans_for_root(&self, root_id: i64) -> Vec<i64> {
         let map = self.active.lock().unwrap();
@@ -190,5 +208,25 @@ impl Throttle {
                 true
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_snapshot_contains_only_jobs_owned_by_this_manager() {
+        let jobs = JobManager::new();
+        jobs.register(9, "recovery", None);
+        jobs.register(3, "scan", Some(1));
+        let snapshot = jobs.active_jobs();
+        assert_eq!(
+            snapshot.iter().map(|j| j.job_id).collect::<Vec<_>>(),
+            [3, 9]
+        );
+        assert_eq!(snapshot[1].kind, "recovery");
+        jobs.unregister(9);
+        assert_eq!(jobs.active_jobs().len(), 1);
     }
 }

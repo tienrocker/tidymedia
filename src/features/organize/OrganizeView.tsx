@@ -112,6 +112,10 @@ function TemplateSettings() {
   const liveError = live != null && "error" in live ? live.error : null;
   const liveSample =
     live != null && "sample" in live ? live.sample : settings?.sample;
+  // Không có token hash trong tên thì planner không bao giờ được phép kết luận
+  // "cùng nội dung" (2 file chưa biết ruột mà trùng tên phải tách ra, không đè).
+  // Hệ quả: gom lần 2 từ cùng nguồn sẽ ra bản _2 thay vì báo trùng.
+  const noHashToken = !/\{hash(4|8|16)\}/.test(fileVal);
 
   return (
     <Section title={t("org.template")}>
@@ -142,6 +146,11 @@ function TemplateSettings() {
           </code>
         </div>
         <div className="text-xs text-neutral-500">{t("org.tokensHint")}</div>
+        {noHashToken && (
+          <div className="rounded border border-amber-900 bg-amber-950/40 px-2 py-1.5 text-xs text-amber-300">
+            {t("org.noHashTokenHint")}
+          </div>
+        )}
         {liveError != null ? (
           <div className="rounded border border-red-900 bg-red-950/60 px-2 py-1.5 text-sm text-red-300">
             {liveError}
@@ -190,11 +199,19 @@ function PreviewAndRun() {
   const { t } = useTranslation();
   const preview = useStore((s) => s.orgPreview);
   const busy = useStore((s) => s.orgBusy);
+  const previewing = useStore((s) => s.orgPreviewing);
   const includeUncertain = useStore((s) => s.orgIncludeUncertain);
   const libRoots = useStore((s) => s.libRoots);
   const activeJobs = useStore((s) => s.activeJobs);
   const running = [...activeJobs.values()].some(
-    (j) => j.kind === "organize" || j.kind === "org_undo",
+    (j) =>
+      j.kind === "organize" ||
+      j.kind === "org_undo" ||
+      j.kind === "org_hash" ||
+      j.kind === "hash" ||
+      j.kind === "scan" ||
+      j.kind === "meta" ||
+      j.kind === "recovery",
   );
 
   const actionable = (preview?.moves ?? 0) + (preview?.copies ?? 0);
@@ -219,6 +236,14 @@ function PreviewAndRun() {
         >
           {busy ? t("org.previewing") : t("org.preview")}
         </button>
+        {previewing && (
+          <button
+            className="rounded bg-red-950 px-3 py-1 text-sm text-red-300 hover:bg-red-900"
+            onClick={() => runSafe(() => useStore.getState().cancelOrgPreview())}
+          >
+            {t("org.cancelPreview")}
+          </button>
+        )}
         <button
           className="rounded bg-emerald-700 px-3 py-1 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
           disabled={busy || running || preview == null || actionable === 0}
@@ -235,6 +260,21 @@ function PreviewAndRun() {
         >
           {t("org.execute", { n: preview ? fmtCount(actionable) : "?" })}
         </button>
+        {preview != null && preview.needsHash > 0 && (
+          <button
+            className="rounded bg-amber-800 px-3 py-1 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+            disabled={busy || running}
+            onClick={() => {
+              if (
+                window.confirm(t("org.hashConfirm"))
+              ) {
+                runSafe(() => useStore.getState().startOrgHashScan());
+              }
+            }}
+          >
+            {t("org.prepareHashes")}
+          </button>
+        )}
         {running && (
           <span className="text-sm text-amber-400">{t("org.running")}</span>
         )}
@@ -290,11 +330,14 @@ function PreviewAndRun() {
                     }`}
                     title={row.newPath ?? ""}
                   >
-                    → {row.newPath}
+                    {row.action === "NEEDS_HASH"
+                      ? t("org.hashRequired")
+                      : `→ ${row.newPath ?? ""}`}
                   </div>
                 </div>
               ))}
-              {preview.sample.length < preview.moves + preview.copies && (
+              {preview.sample.length <
+                preview.moves + preview.copies + preview.needsHash && (
                 <div className="px-2 py-1 text-xs text-neutral-500">
                   {t("org.sampleCapped", { n: fmtCount(preview.sample.length) })}
                 </div>
@@ -311,10 +354,17 @@ function PreviewAndRun() {
 function Batches() {
   const { t } = useTranslation();
   const batches = useStore((s) => s.orgBatches);
-  const tz = useStore((s) => s.tzOffsetMinutes);
+  const tz = useStore((s) => s.timezone);
+  const tzOffset = useStore((s) => s.tzOffsetMinutes);
   const activeJobs = useStore((s) => s.activeJobs);
   const running = [...activeJobs.values()].some(
-    (j) => j.kind === "organize" || j.kind === "org_undo",
+    (j) =>
+      j.kind === "organize" ||
+      j.kind === "org_undo" ||
+      j.kind === "hash" ||
+      j.kind === "org_hash" ||
+      j.kind === "scan" ||
+      j.kind === "recovery",
   );
 
   const visible = batches.filter((b) => b.moved > 0);
@@ -336,7 +386,7 @@ function Batches() {
               )}
             </span>
             <span className="text-xs text-neutral-500">
-              {b.finishedAt != null ? fmtDateTime(b.finishedAt, tz) : ""}
+              {b.finishedAt != null ? fmtDateTime(b.finishedAt, tz, tzOffset) : ""}
             </span>
             <button
               className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"

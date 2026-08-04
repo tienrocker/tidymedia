@@ -13,3 +13,5 @@ fast_image_resize = { version = "5", features = ["image"] }
 webp = "0.3"
 kamadak-exif = "0.6"
 imagesize = "0.13"
+chrono.workspace = true
+chrono-tz.workspace = true

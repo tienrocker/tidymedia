@@ -17,7 +17,11 @@ import {
   OrgSettings,
 } from "../lib/ipc";
 import { errText } from "../lib/errors";
-import { systemTzOffsetMinutes } from "../lib/time";
+import {
+  systemTimeZone,
+  systemTzOffsetMinutes,
+  timezoneOffsetMinutesOrFallback,
+} from "../lib/time";
 import { fmtSize } from "../lib/format";
 import i18n from "../i18n";
 
@@ -29,6 +33,7 @@ const MAX_CACHED_PAGES = 50;
 let lastRange: [number, number] = [0, 0];
 let querySeq = 0;
 let toastSeq = 0;
+let orgPreviewCancelRequested = false;
 /** Job id đã nhận terminal event - chặn placeholder đến muộn hồi sinh job ma. */
 const endedJobIds = new Set<number>();
 
@@ -83,6 +88,7 @@ interface AppStore {
   activeJobs: Map<number, JobProgress>;
   recentJobs: JobRow[];
   tzOffsetMinutes: number;
+  timezone: string;
   setupDone: boolean;
   settingsLoaded: boolean;
   toast: ToastMsg | null;
@@ -113,6 +119,7 @@ interface AppStore {
   orgBatches: OrgBatchRow[];
   /** preview đang chạy / vừa bấm organize (disable nút) */
   orgBusy: boolean;
+  orgPreviewing: boolean;
   orgIncludeUncertain: boolean;
 
   loadOrgData: () => Promise<void>;
@@ -121,6 +128,8 @@ interface AppStore {
   removeLibraryRoot: (id: number) => Promise<void>;
   setOrgIncludeUncertain: (v: boolean) => void;
   runOrgPreview: () => Promise<void>;
+  cancelOrgPreview: () => Promise<void>;
+  startOrgHashScan: () => Promise<void>;
   startOrganize: () => Promise<void>;
   undoOrgBatch: (batchId: number) => Promise<void>;
 
@@ -148,7 +157,7 @@ interface AppStore {
   onJobProgress: (p: JobProgress) => void;
   onJobEnd: (jobId: number) => void;
   loadSettings: () => Promise<void>;
-  saveSettings: (tzOffsetMinutes: number) => Promise<void>;
+  saveSettings: (timezone: string) => Promise<void>;
   showToast: (text: string, error?: boolean) => void;
 }
 
@@ -166,6 +175,7 @@ export const useStore = create<AppStore>((set, get) => ({
   activeJobs: new Map(),
   recentJobs: [],
   tzOffsetMinutes: systemTzOffsetMinutes(),
+  timezone: systemTimeZone(),
   setupDone: true, // đừng nháy wizard trước khi load xong settings
   settingsLoaded: false,
   toast: null,
@@ -186,6 +196,7 @@ export const useStore = create<AppStore>((set, get) => ({
   orgPreview: null,
   orgBatches: [],
   orgBusy: false,
+  orgPreviewing: false,
   orgIncludeUncertain: false,
 
   loadOrgData: async () => {
@@ -225,12 +236,56 @@ export const useStore = create<AppStore>((set, get) => ({
 
   runOrgPreview: async () => {
     if (get().orgBusy) return;
-    set({ orgBusy: true, orgPreview: null });
+    orgPreviewCancelRequested = false;
+    set({ orgBusy: true, orgPreviewing: true });
     try {
       const p = await api.orgPreview(get().orgIncludeUncertain);
       set({ orgPreview: p });
     } catch (e) {
-      get().showToast(errText(e), true);
+      const error = String(e);
+      const rejectedBeforeInvalidation =
+        error.includes("ERR_INDEX_BUSY") ||
+        error.includes("ERR_ORG_BUSY") ||
+        error.includes("ERR_RECOVERY_BUSY");
+      if (!rejectedBeforeInvalidation) {
+        // Once backend preflight accepted the new preview, the old ticket is gone.
+        set({ orgPreview: null });
+      }
+      if (
+        error.includes("ERR_ORG_PREVIEW_CANCELLED") &&
+        !orgPreviewCancelRequested
+      ) {
+        get().showToast(i18n.t("org.previewInvalidated"), false);
+      } else if (!error.includes("ERR_ORG_PREVIEW_CANCELLED")) {
+        get().showToast(errText(e), true);
+      }
+    } finally {
+      orgPreviewCancelRequested = false;
+      set({ orgBusy: false, orgPreviewing: false });
+    }
+  },
+
+  cancelOrgPreview: async () => {
+    if (!get().orgPreviewing) return;
+    orgPreviewCancelRequested = true;
+    await api.cancelOrgPreview();
+  },
+
+  startOrgHashScan: async () => {
+    if (get().orgBusy) return;
+    set({ orgBusy: true });
+    try {
+      const jobId = await api.startOrgHashScan(get().orgIncludeUncertain);
+      if (jobId != null) {
+        get().onJobProgress({
+          jobId,
+          kind: "org_hash",
+          done: 0,
+          total: null,
+          message: null,
+        });
+        set({ orgPreview: null });
+      }
     } finally {
       set({ orgBusy: false });
     }
@@ -240,7 +295,12 @@ export const useStore = create<AppStore>((set, get) => ({
     if (get().orgBusy || get().orgPreview == null) return; // dry-run bắt buộc
     set({ orgBusy: true });
     try {
-      const jobId = await api.startOrganize(get().orgIncludeUncertain);
+      const preview = get().orgPreview;
+      if (preview == null) return;
+      const jobId = await api.startOrganize(
+        get().orgIncludeUncertain,
+        preview.previewId,
+      );
       if (jobId != null) {
         get().onJobProgress({
           jobId,
@@ -252,6 +312,9 @@ export const useStore = create<AppStore>((set, get) => ({
       }
       set({ orgPreview: null });
     } catch (e) {
+      if (String(e).includes("ERR_ORG_PREVIEW_STALE")) {
+        set({ orgPreview: null });
+      }
       get().showToast(errText(e), true);
     } finally {
       set({ orgBusy: false });
@@ -522,13 +585,26 @@ export const useStore = create<AppStore>((set, get) => ({
 
   refreshJobs: async () => {
     try {
-      set({ recentJobs: await api.listJobs() });
+      const [recentJobs, activeSnapshot] = await Promise.all([
+        api.listJobs(),
+        api.listActiveJobs(),
+      ]);
+      const activeJobs = new Map(get().activeJobs);
+      // Startup recovery may register before Tauri event listeners attach. Hydrate
+      // running rows from DB so it is still visible/cancellable in the Jobs panel.
+      for (const job of activeSnapshot) {
+        if (!endedJobIds.has(job.jobId) && !activeJobs.has(job.jobId)) {
+          activeJobs.set(job.jobId, job);
+        }
+      }
+      set({ recentJobs, activeJobs });
     } catch (e) {
       console.error("list_jobs failed", e);
     }
   },
 
   addRootAndScan: async (path) => {
+    set({ orgPreview: null });
     const rootId = await api.addRoot(path);
     await get().loadRoots();
     const jobId = await api.startScan(rootId);
@@ -537,12 +613,14 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   removeRoot: async (id) => {
+    set({ orgPreview: null });
     await api.removeRoot(id);
     await get().loadRoots();
     await get().runQuery();
   },
 
   scanRoot: async (id) => {
+    set({ orgPreview: null });
     const jobId = await api.startScan(id);
     get().onJobProgress({ jobId, kind: "scan", done: 0, total: null, message: null });
   },
@@ -578,6 +656,7 @@ export const useStore = create<AppStore>((set, get) => ({
       set({
         setupDone: s.setupDone,
         tzOffsetMinutes: s.tzOffsetMinutes ?? systemTzOffsetMinutes(),
+        timezone: s.timezone ?? systemTimeZone(),
         settingsLoaded: true,
       });
     } catch (e) {
@@ -586,9 +665,16 @@ export const useStore = create<AppStore>((set, get) => ({
     }
   },
 
-  saveSettings: async (tzOffsetMinutes) => {
-    await api.setSettings(tzOffsetMinutes, true);
-    set({ tzOffsetMinutes, setupDone: true });
+  saveSettings: async (timezone) => {
+    const tzOffsetMinutes = timezoneOffsetMinutesOrFallback(
+      timezone,
+      Date.now(),
+      get().tzOffsetMinutes,
+    );
+    await api.setSettings(timezone, tzOffsetMinutes, true);
+    set({ timezone, tzOffsetMinutes, setupDone: true, orgPreview: null });
+    // Video meta UTC đã encode theo zone cũ được backend invalidate khi đổi setting.
+    void api.startMetaScan().catch((e) => get().showToast(errText(e), true));
   },
 
   showToast: (text, error = true) => {

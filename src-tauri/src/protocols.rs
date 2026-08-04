@@ -158,22 +158,17 @@ fn video_range_response(
     if len == 0 {
         return status(404);
     }
-    let range = request
-        .headers()
-        .get("range")
-        .and_then(|v| v.to_str().ok())
-        .and_then(parse_range);
-    let (start, want_end) = match range {
-        Some((s, e)) => (s, e.unwrap_or(len - 1)),
+    let range_header = request.headers().get("range");
+    let (start, want_end) = match range_header {
         None => (0, VIDEO_FIRST_CHUNK.saturating_sub(1)),
+        Some(value) => match value.to_str().ok().and_then(parse_range) {
+            Some(ByteRange::From(s, e)) => (s, e.unwrap_or(len - 1)),
+            Some(ByteRange::Suffix(n)) if n > 0 => (len.saturating_sub(n), len - 1),
+            _ => return range_not_satisfiable(len),
+        },
     };
     if start >= len {
-        return Response::builder()
-            .status(416)
-            .header("Content-Range", format!("bytes */{len}"))
-            .header("Access-Control-Allow-Origin", "*")
-            .body(Vec::new())
-            .unwrap();
+        return range_not_satisfiable(len);
     }
     let end = want_end.min(len - 1).min(start + VIDEO_CHUNK - 1);
 
@@ -200,25 +195,43 @@ fn video_range_response(
         .unwrap()
 }
 
-/// "bytes=100-200" → (100, Some(200)); "bytes=100-" → (100, None).
-/// Suffix range "bytes=-500" và multi-range không hỗ trợ → None (trả từ đầu).
-fn parse_range(h: &str) -> Option<(u64, Option<u64>)> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ByteRange {
+    From(u64, Option<u64>),
+    Suffix(u64),
+}
+
+/// "bytes=100-200" / "bytes=100-" / suffix "bytes=-500".
+/// Multi-range chưa hỗ trợ và được trả 416, không được giả làm no-range.
+fn parse_range(h: &str) -> Option<ByteRange> {
     let spec = h.trim().strip_prefix("bytes=")?;
     if spec.contains(',') {
         return None;
     }
     let (start, end) = spec.split_once('-')?;
+    if start.trim().is_empty() {
+        return end.trim().parse().ok().map(ByteRange::Suffix);
+    }
     let start: u64 = start.trim().parse().ok()?;
     let end = end.trim();
     if end.is_empty() {
-        Some((start, None))
+        Some(ByteRange::From(start, None))
     } else {
         let e: u64 = end.parse().ok()?;
         if e < start {
             return None;
         }
-        Some((start, Some(e)))
+        Some(ByteRange::From(start, Some(e)))
     }
+}
+
+fn range_not_satisfiable(len: u64) -> Response<Vec<u8>> {
+    Response::builder()
+        .status(416)
+        .header("Content-Range", format!("bytes */{len}"))
+        .header("Access-Control-Allow-Origin", "*")
+        .body(Vec::new())
+        .unwrap()
 }
 
 fn lookup(db: &core_db::Db, id: i64) -> Option<MediaSrc> {
@@ -282,15 +295,56 @@ fn status(code: u16) -> Response<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_range;
+    use super::{parse_range, video_range_response, ByteRange};
+    use tauri::http::Request;
 
     #[test]
     fn range_header_parses() {
-        assert_eq!(parse_range("bytes=0-499"), Some((0, Some(499))));
-        assert_eq!(parse_range("bytes=500-"), Some((500, None)));
-        assert_eq!(parse_range("bytes=-500"), None); // suffix: khong ho tro
+        assert_eq!(
+            parse_range("bytes=0-499"),
+            Some(ByteRange::From(0, Some(499)))
+        );
+        assert_eq!(parse_range("bytes=500-"), Some(ByteRange::From(500, None)));
+        assert_eq!(parse_range("bytes=-500"), Some(ByteRange::Suffix(500)));
         assert_eq!(parse_range("bytes=0-1,5-9"), None); // multi: khong ho tro
         assert_eq!(parse_range("bytes=9-5"), None); // nguoc: bo
         assert_eq!(parse_range("chunks=0-1"), None);
+    }
+
+    #[test]
+    fn suffix_range_returns_file_tail_and_invalid_range_is_416() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("clip.mp4");
+        std::fs::write(&path, b"0123456789").unwrap();
+
+        let suffix = Request::builder()
+            .uri("media://localhost/1")
+            .header("range", "bytes=-4")
+            .body(Vec::new())
+            .unwrap();
+        let response = video_range_response(path.to_str().unwrap(), 10, "video/mp4", &suffix);
+        assert_eq!(response.status(), 206);
+        assert_eq!(response.headers()["content-range"], "bytes 6-9/10");
+        assert_eq!(response.body(), b"6789");
+
+        let invalid = Request::builder()
+            .uri("media://localhost/1")
+            .header("range", "bytes=9-5")
+            .body(Vec::new())
+            .unwrap();
+        let response = video_range_response(path.to_str().unwrap(), 10, "video/mp4", &invalid);
+        assert_eq!(response.status(), 416);
+        assert_eq!(response.headers()["content-range"], "bytes */10");
+
+        let non_utf8 = Request::builder()
+            .uri("media://localhost/1")
+            .header(
+                "range",
+                tauri::http::HeaderValue::from_bytes(&[0xff]).unwrap(),
+            )
+            .body(Vec::new())
+            .unwrap();
+        let response = video_range_response(path.to_str().unwrap(), 10, "video/mp4", &non_utf8);
+        assert_eq!(response.status(), 416);
     }
 }

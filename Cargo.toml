@@ -39,6 +39,8 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 regex = "1"
 blake3 = { version = "1", features = ["rayon", "mmap"] }
 trash = "5"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono-tz = "0.10"
 
 [profile.release]
 lto = "thin"

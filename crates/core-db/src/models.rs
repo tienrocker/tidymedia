@@ -245,6 +245,11 @@ pub struct OrgPairRow {
     pub path: String,
     pub ext: String,
     pub status: i64,
+    pub size: i64,
+    pub mtime: i64,
+    pub full_hash: Option<Vec<u8>>,
+    pub hashed_size: Option<i64>,
+    pub hashed_mtime: Option<i64>,
 }
 
 /// 1 dòng journal org_ops (write-ahead: insert trước khi đụng fs).

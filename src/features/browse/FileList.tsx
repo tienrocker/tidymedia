@@ -15,7 +15,8 @@ export function FileList() {
   const rows = useStore((s) => s.rows);
   const queryId = useStore((s) => s.queryId);
   const filterEpoch = useStore((s) => s.filterEpoch);
-  const tz = useStore((s) => s.tzOffsetMinutes);
+  const tz = useStore((s) => s.timezone);
+  const tzOffset = useStore((s) => s.tzOffsetMinutes);
   const parentRef = useRef<HTMLDivElement>(null);
 
   const virtualizer = useVirtualizer({
@@ -84,7 +85,7 @@ export function FileList() {
                       {fmtSize(row.size)}
                     </span>
                     <span className="text-right tabular-nums text-neutral-400">
-                      {fmtDateTime(row.mtime, tz)}
+                      {fmtDateTime(row.mtime, tz, tzOffset)}
                     </span>
                   </>
                 ) : (

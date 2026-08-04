@@ -29,26 +29,55 @@ const FULL_BATCH: i64 = 16;
 /// Quét trùng lặp: quick hash → full hash → rebuild nhóm. Idempotent như meta.
 #[tauri::command]
 pub async fn start_hash_scan(state: State<'_, AppState>) -> CmdResult<Option<i64>> {
+    if state.recovery_active.load(Ordering::Acquire) {
+        return Err("ERR_RECOVERY_BUSY|".into());
+    }
     let gate = state.hash_start_gate.clone();
     if gate
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
-        return Ok(state.jobs.active_job_of_kind("hash"));
+        if let Some(id) = state.jobs.active_job_of_kind("hash") {
+            return Ok(Some(id));
+        }
+        return Err("ERR_INDEX_BUSY|organize hash preparation is active".into());
     }
     let guard = GateGuard(gate);
     if let Some(id) = state.jobs.active_job_of_kind("hash") {
         return Ok(Some(id));
     }
+    if state.jobs.active_job_of_kind("org_hash").is_some() {
+        return Err("ERR_INDEX_BUSY|organize hash preparation is active".into());
+    }
     let db = state.db.clone();
     let jobs = state.jobs.clone();
+    let op_gate = state.index_op_gate.clone();
+    let preview = state.org_preview.clone();
+    let preview_cancel = state.org_preview_cancel.clone();
     blocking(move || {
         let _gate = guard;
+        let _op = op_gate.lock().unwrap_or_else(|p| p.into_inner());
+        if jobs.active_job_of_kind("scan").is_some() {
+            return Err("ERR_INDEX_BUSY|scan is active".into());
+        }
+        if jobs.active_job_of_kind("organize").is_some()
+            || jobs.active_job_of_kind("org_undo").is_some()
+        {
+            return Err("ERR_INDEX_BUSY|organize/undo is active".into());
+        }
         let job_id = db
             .writer
             .exec(|c| core_db::ops::insert_job(c, "hash", None))
             .map_err(err)?;
         let cancel = jobs.register(job_id, "hash", None);
+        if let Some(active_preview) = preview_cancel
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+        {
+            active_preview.store(true, Ordering::Relaxed);
+        }
+        *preview.lock().unwrap_or_else(|p| p.into_inner()) = None;
         let events = jobs.sender();
         let writer_cleanup = db.writer.clone();
 
@@ -362,18 +391,25 @@ fn plan_delete(
     (plans, skipped)
 }
 
-/// Tuple: `(pair_id, owner_image_id, path, size, mtime)`
-type PairPlan = (i64, i64, String, i64, i64);
+#[derive(Clone)]
+struct PairPlan {
+    victim: DeleteContextRow,
+    owner_image_id: i64,
+    /// MOV còn sống đã được BLAKE3-verify là cùng nội dung với `victim`.
+    survivor: DeleteContextRow,
+}
 
 /// Live-pair expansion THUẦN. Luật cứng:
 /// - CHỈ đi từ ảnh (kind=0) sang MOV — live_pair_id 2 chiều, đi từ MOV sẽ
 ///   trỏ ngược về ẢNH GỐC và xóa nhầm nó (P0 của review).
 /// - Pair là keeper/member sống của bất kỳ nhóm nào trong context → KHÔNG đụng.
-/// - Pair phải là video (kind=1) và đang present.
+/// - Cả victim MOV lẫn survivor MOV phải present, hash snapshot còn hợp lệ,
+///   BLAKE3 bằng nhau và filesystem còn khớp ngay lúc lập plan.
 fn plan_pairs(
     plans: &[GroupPlan],
     keeper_ids: &std::collections::HashSet<i64>,
-    lookup: &dyn Fn(i64) -> Option<(String, i64, i64, i64, i64)>, // (path, size, mtime, status, kind)
+    lookup: &dyn Fn(i64) -> Option<DeleteContextRow>,
+    fs_ok: &dyn Fn(&DeleteContextRow) -> bool,
 ) -> Vec<PairPlan> {
     use std::collections::HashSet;
     let planned: HashSet<i64> = plans
@@ -382,6 +418,17 @@ fn plan_pairs(
         .collect();
     let mut out: Vec<PairPlan> = Vec::new();
     for g in plans {
+        // Không có survivor ảnh kèm MOV thì MOV victim là nội dung độc nhất về
+        // mặt compound item: giữ lại, remove_deleted_files sẽ tự unpair nó.
+        let Some(survivor_pair_id) = g.survivor.live_pair_id else {
+            continue;
+        };
+        if planned.contains(&survivor_pair_id) {
+            continue;
+        }
+        let Some(survivor_pair) = lookup(survivor_pair_id) else {
+            continue;
+        };
         for v in &g.victims {
             if v.kind != 0 {
                 continue;
@@ -389,14 +436,32 @@ fn plan_pairs(
             let Some(pid) = v.live_pair_id else { continue };
             if keeper_ids.contains(&pid)
                 || planned.contains(&pid)
-                || out.iter().any(|(id, ..)| *id == pid)
+                || out.iter().any(|p| p.victim.file_id == pid)
             {
                 continue;
             }
-            if let Some((path, size, mtime, status, kind)) = lookup(pid) {
-                if status == 0 && kind == 1 {
-                    out.push((pid, v.file_id, path, size, mtime));
-                }
+            let Some(victim_pair) = lookup(pid) else {
+                continue;
+            };
+            let hashes_match =
+                victim_pair.full_hash.is_some() && victim_pair.full_hash == survivor_pair.full_hash;
+            let snapshot_valid = |p: &DeleteContextRow| {
+                p.status == 0
+                    && p.kind == 1
+                    && p.hashed_size == Some(p.size)
+                    && p.hashed_mtime == Some(p.mtime)
+                    && fs_ok(p)
+            };
+            if pid != survivor_pair_id
+                && hashes_match
+                && snapshot_valid(&victim_pair)
+                && snapshot_valid(&survivor_pair)
+            {
+                out.push(PairPlan {
+                    victim: victim_pair,
+                    owner_image_id: v.file_id,
+                    survivor: survivor_pair.clone(),
+                });
             }
         }
     }
@@ -412,12 +477,14 @@ fn plan_pairs(
 fn filter_pairs_for_trash(
     pairs: &[PairPlan],
     deleted: &std::collections::HashSet<i64>,
-    image_refs: &dyn Fn(i64) -> Vec<i64>, // id mọi ảnh (kind=0) có live_pair_id = pid
+    image_refs: &dyn Fn(i64) -> Option<Vec<i64>>, // None = lookup lỗi → fail closed
 ) -> Vec<PairPlan> {
     pairs
         .iter()
-        .filter(|(pid, owner, ..)| {
-            deleted.contains(owner) && image_refs(*pid).iter().all(|img| deleted.contains(img))
+        .filter(|p| {
+            deleted.contains(&p.owner_image_id)
+                && image_refs(p.victim.file_id)
+                    .is_some_and(|refs| refs.iter().all(|img| deleted.contains(img)))
         })
         .cloned()
         .collect()
@@ -431,10 +498,34 @@ pub async fn delete_dup_files(
     state: State<'_, AppState>,
     file_ids: Vec<i64>,
 ) -> CmdResult<DeleteResult> {
+    if state
+        .recovery_active
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        return Err("ERR_RECOVERY_BUSY|".into());
+    }
+    // Share the hash-start gate with both hash commands. Holding it through the
+    // destructive operation closes the check/register race where a hash job could
+    // otherwise start immediately after the active-job check below.
+    let gate = state.hash_start_gate.clone();
+    if gate
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err("ERR_INDEX_BUSY|hash/delete operation is active".into());
+    }
+    let guard = GateGuard(gate);
+    if state.jobs.active_job_of_kind("hash").is_some()
+        || state.jobs.active_job_of_kind("org_hash").is_some()
+    {
+        return Err("ERR_INDEX_BUSY|hash job is active".into());
+    }
+    crate::organize::invalidate_org_preview(&state);
     let db = state.db.clone();
     let lock = state.delete_lock.clone();
     blocking(move || {
         use std::collections::{HashMap, HashSet};
+        let _hash_gate = guard;
         // Poison từ panic đợt trước không được khóa chết mọi delete sau này
         let _serialize = lock.lock().unwrap_or_else(|p| p.into_inner());
 
@@ -477,13 +568,48 @@ pub async fn delete_dup_files(
             .map(|r| r.file_id)
             .filter(|id| !victim_ids.contains(id))
             .collect();
-        let pairs = plan_pairs(&plans, &keeper_ids, &|pid| {
-            db.pool
-                .with(|c| core_db::ops::get_media_src(c, pid))
-                .ok()
-                .flatten()
-                .map(|s| (s.path, s.size, s.mtime, s.status, s.kind))
-        });
+        // `plan_pairs` is intentionally pure, so carry a lookup failure out-of-band and
+        // abort before journaling/trashing anything. A database failure must never be
+        // interpreted as "this Live Photo has no paired video".
+        let pair_lookup_error = std::cell::RefCell::new(None::<String>);
+        let pairs = plan_pairs(
+            &plans,
+            &keeper_ids,
+            &|pid| {
+                if pair_lookup_error.borrow().is_some() {
+                    return None;
+                }
+                match db
+                    .pool
+                    .with(|c| core_db::ops::get_delete_file_context(c, pid))
+                {
+                    Ok(row) => row,
+                    Err(e) => {
+                        *pair_lookup_error.borrow_mut() = Some(err(e));
+                        None
+                    }
+                }
+            },
+            &fs_ok,
+        );
+        if let Some(e) = pair_lookup_error.into_inner() {
+            return Err(e);
+        }
+
+        // Đọc toàn bộ references TRƯỚC lệnh trash đầu tiên. Destructive path
+        // phải fail-closed: lỗi DB không bao giờ được diễn giải thành "0 ảnh
+        // đang tham chiếu" rồi cho phép xóa MOV.
+        let mut pair_refs: HashMap<i64, Vec<i64>> = HashMap::new();
+        for pair in &pairs {
+            let pid = pair.victim.file_id;
+            if let std::collections::hash_map::Entry::Vacant(slot) = pair_refs.entry(pid) {
+                let refs = db
+                    .pool
+                    .with(|c| core_db::ops::image_refs_of_pair(c, pid))
+                    .map_err(err)?;
+                slot.insert(refs);
+            }
+        }
 
         if plans.is_empty() && pairs.is_empty() {
             return Ok(DeleteResult {
@@ -498,7 +624,7 @@ pub async fn delete_dup_files(
         let intent: Vec<String> = plans
             .iter()
             .flat_map(|g| g.victims.iter().map(|v| v.path.clone()))
-            .chain(pairs.iter().map(|(_, _, p, ..)| p.clone()))
+            .chain(pairs.iter().map(|p| p.victim.path.clone()))
             .collect();
         let journal = serde_json::to_string(&intent).unwrap_or_default();
         let jid = db
@@ -540,20 +666,32 @@ pub async fn delete_dup_files(
         // Pair chỉ trash khi ảnh chủ THỰC SỰ đã xóa và không còn ảnh sống nào
         // khác trỏ vào MOV (HEIC + JPG cùng stem share 1 MOV).
         let deleted_set: HashSet<i64> = deleted_ids.iter().copied().collect();
-        let pairs_final = filter_pairs_for_trash(&pairs, &deleted_set, &|pid| {
-            db.pool
-                .with(|c| core_db::ops::image_refs_of_pair(c, pid))
-                .unwrap_or_default()
-        });
-        for (pid, _, path, size, mtime) in &pairs_final {
-            match trash_one(path, *size, *mtime, &mut recycle_cache) {
+        let pairs_final =
+            filter_pairs_for_trash(&pairs, &deleted_set, &|pid| pair_refs.get(&pid).cloned());
+        for p in &pairs_final {
+            // Survivor MOV re-check sát lệnh trash giống survivor ảnh. Hash đã
+            // được đối chiếu trong plan; size+mtime đảm bảo đúng snapshot hash.
+            if !fs_matches(&p.survivor.path, p.survivor.size, p.survivor.mtime) {
+                skipped.push(SkippedFile {
+                    file_id: p.victim.file_id,
+                    name: file_name(&p.victim.path),
+                    reason: "SURVIVOR_CHANGED".into(),
+                });
+                continue;
+            }
+            match trash_one(
+                &p.victim.path,
+                p.victim.size,
+                p.victim.mtime,
+                &mut recycle_cache,
+            ) {
                 Ok(()) => {
-                    deleted_ids.push(*pid);
-                    freed += size;
+                    deleted_ids.push(p.victim.file_id);
+                    freed += p.victim.size;
                 }
                 Err(reason) => skipped.push(SkippedFile {
-                    file_id: *pid,
-                    name: file_name(path),
+                    file_id: p.victim.file_id,
+                    name: file_name(&p.victim.path),
                     reason: reason.into(),
                 }),
             }
@@ -738,19 +876,39 @@ mod tests {
     }
 
     #[test]
-    fn pair_followed_only_from_image() {
-        // Nhóm ảnh: xóa ảnh 10 (pair MOV 100) giữ ảnh 11 → pair 100 đi cùng
+    fn unique_pair_is_preserved_without_survivor_pair() {
+        // Ảnh trùng nhưng keeper không có MOV: MOV 100 là nội dung độc nhất,
+        // tuyệt đối không được kéo theo ảnh victim.
         let ctx = vec![row(1, 10, 0, Some(100), 1), row(1, 11, 0, None, 1)];
         let del: HashSet<i64> = [10].into();
         let (plans, _) = plan_delete(&ctx, &del, &ok_all);
         let keeper_ids: HashSet<i64> = [11].into();
-        let lookup = |pid: i64| {
-            assert_eq!(pid, 100);
-            Some(("D:\\t\\f100".to_string(), 50, 1, 0, 1)) // status 0, kind 1
-        };
-        let pairs = plan_pairs(&plans, &keeper_ids, &lookup);
+        let lookup = |_: i64| panic!("keeper khong co pair thi khong duoc lookup MOV victim");
+        let pairs = plan_pairs(&plans, &keeper_ids, &lookup, &ok_all);
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn pair_followed_only_with_verified_matching_survivor_pair() {
+        let ctx = vec![row(1, 10, 0, Some(100), 1), row(1, 11, 0, Some(101), 1)];
+        let del: HashSet<i64> = [10].into();
+        let (plans, _) = plan_delete(&ctx, &del, &ok_all);
+        let keeper_ids: HashSet<i64> = [11].into();
+        let lookup = |id: i64| Some(row(0, id, 1, None, 7));
+        let pairs = plan_pairs(&plans, &keeper_ids, &lookup, &ok_all);
         assert_eq!(pairs.len(), 1);
-        assert_eq!(pairs[0].0, 100);
+        assert_eq!(pairs[0].victim.file_id, 100);
+        assert_eq!(pairs[0].survivor.file_id, 101);
+    }
+
+    #[test]
+    fn pair_with_different_hash_is_preserved() {
+        let ctx = vec![row(1, 10, 0, Some(100), 1), row(1, 11, 0, Some(101), 1)];
+        let del: HashSet<i64> = [10].into();
+        let (plans, _) = plan_delete(&ctx, &del, &ok_all);
+        let keeper_ids: HashSet<i64> = [11].into();
+        let lookup = |id: i64| Some(row(0, id, 1, None, if id == 100 { 7 } else { 8 }));
+        assert!(plan_pairs(&plans, &keeper_ids, &lookup, &ok_all).is_empty());
     }
 
     #[test]
@@ -762,10 +920,9 @@ mod tests {
         let (plans, _) = plan_delete(&ctx, &del, &ok_all);
         assert_eq!(ids(&plans), vec![20]);
         let keeper_ids: HashSet<i64> = [21].into();
-        let lookup = |_: i64| -> Option<(String, i64, i64, i64, i64)> {
-            panic!("khong duoc lookup pair tu MOV victim")
-        };
-        let pairs = plan_pairs(&plans, &keeper_ids, &lookup);
+        let lookup =
+            |_: i64| -> Option<DeleteContextRow> { panic!("khong duoc lookup pair tu MOV victim") };
+        let pairs = plan_pairs(&plans, &keeper_ids, &lookup, &ok_all);
         assert!(pairs.is_empty());
     }
 
@@ -789,22 +946,20 @@ mod tests {
             .filter(|id| !victim_ids.contains(id))
             .collect();
         assert!(keeper_ids.contains(&100));
-        let lookup = |_: i64| -> Option<(String, i64, i64, i64, i64)> {
-            panic!("100 la keeper, cam lookup")
-        };
-        let pairs = plan_pairs(&plans, &keeper_ids, &lookup);
+        let lookup = |_: i64| -> Option<DeleteContextRow> { panic!("100 la keeper, cam lookup") };
+        let pairs = plan_pairs(&plans, &keeper_ids, &lookup, &ok_all);
         assert!(pairs.is_empty(), "keeper cua nhom khac khong duoc trash");
     }
 
     #[test]
     fn pair_lookup_rejects_non_video() {
         // Phòng thủ kép: kể cả dữ liệu pair bậy (trỏ vào ảnh), lookup kind!=1 → bỏ
-        let ctx = vec![row(1, 10, 0, Some(300), 1), row(1, 11, 0, None, 1)];
+        let ctx = vec![row(1, 10, 0, Some(300), 1), row(1, 11, 0, Some(301), 1)];
         let del: HashSet<i64> = [10].into();
         let (plans, _) = plan_delete(&ctx, &del, &ok_all);
         let keeper_ids: HashSet<i64> = [11].into();
-        let lookup = |_: i64| Some(("D:\\t\\f300".to_string(), 50, 1, 0, 0)); // kind 0!
-        let pairs = plan_pairs(&plans, &keeper_ids, &lookup);
+        let lookup = |id: i64| Some(row(0, id, 0, None, 1)); // kind 0!
+        let pairs = plan_pairs(&plans, &keeper_ids, &lookup, &ok_all);
         assert!(pairs.is_empty());
     }
 
@@ -812,9 +967,13 @@ mod tests {
     fn pair_not_trashed_when_owner_was_skipped() {
         // P1 review: victim ảnh 10 bị skip lúc thực thi (vd SURVIVOR_CHANGED)
         // → MOV 100 của nó KHÔNG được trash (xé cặp Live Photo còn sống).
-        let pairs: Vec<PairPlan> = vec![(100, 10, "D:\\t\\f100".into(), 50, 1)];
+        let pairs = vec![PairPlan {
+            victim: row(0, 100, 1, None, 7),
+            owner_image_id: 10,
+            survivor: row(0, 101, 1, None, 7),
+        }];
         let deleted: HashSet<i64> = HashSet::new(); // 10 không xóa được
-        let refs = |_: i64| vec![10];
+        let refs = |_: i64| Some(vec![10]);
         assert!(filter_pairs_for_trash(&pairs, &deleted, &refs).is_empty());
         // owner xóa thật → pair đi cùng
         let deleted: HashSet<i64> = [10].into();
@@ -825,12 +984,27 @@ mod tests {
     fn shared_mov_protected_while_other_image_alive() {
         // P1 review: HEIC (20) + JPG (10) cùng stem đều pair về MOV 100.
         // Xóa JPG 10 → MOV phải Ở LẠI vì HEIC 20 còn sống vẫn trỏ vào nó.
-        let pairs: Vec<PairPlan> = vec![(100, 10, "D:\\t\\f100".into(), 50, 1)];
+        let pairs = vec![PairPlan {
+            victim: row(0, 100, 1, None, 7),
+            owner_image_id: 10,
+            survivor: row(0, 101, 1, None, 7),
+        }];
         let deleted: HashSet<i64> = [10].into();
-        let refs = |_: i64| vec![10, 20]; // 20 còn sống
+        let refs = |_: i64| Some(vec![10, 20]); // 20 còn sống
         assert!(filter_pairs_for_trash(&pairs, &deleted, &refs).is_empty());
         // cả 2 ảnh cùng bị xóa trong đợt này → MOV mới được đi
         let deleted: HashSet<i64> = [10, 20].into();
         assert_eq!(filter_pairs_for_trash(&pairs, &deleted, &refs).len(), 1);
+    }
+
+    #[test]
+    fn pair_reference_lookup_error_is_fail_closed() {
+        let pairs = vec![PairPlan {
+            victim: row(0, 100, 1, None, 7),
+            owner_image_id: 10,
+            survivor: row(0, 101, 1, None, 7),
+        }];
+        let deleted: HashSet<i64> = [10].into();
+        assert!(filter_pairs_for_trash(&pairs, &deleted, &|_| None).is_empty());
     }
 }

@@ -1,4 +1,4 @@
--- TidyMedia index schema v5
+-- TidyMedia index schema v6
 -- All timestamps are unix epoch milliseconds unless noted.
 -- v2: dirs.path_key (case-insensitive scoping), files.name_norm (accent-insensitive
 -- search), AUTOINCREMENT (chống rowid reuse), roots.file_count cache, files.status
@@ -7,6 +7,7 @@
 -- v4: index files_live_pair — reverse lookup cặp Live Photo (HEIC <-> MOV).
 -- v5: files_fts_au thêm WHEN (rescan không rewrite cả FTS index khi tên không
 -- đổi), org_ops.undone_at (undo theo batch của M5 organize).
+-- v6: terminal recovery diagnostics cho org_ops, tránh retry/hash vô hạn mỗi startup.
 -- media_meta.taken_at: EXIF không có timezone → lưu wall-clock camera encode như
 -- epoch ms khung UTC; hiển thị/organize đọc với tz=0 là ra đúng giờ camera.
 
@@ -206,7 +207,9 @@ CREATE TABLE org_ops(
   old_path TEXT NOT NULL,
   new_path TEXT NOT NULL,
   done_at INTEGER,
-  undone_at INTEGER
+  undone_at INTEGER,
+  recovery_error TEXT,
+  recovery_attempted_at INTEGER
 );
 CREATE INDEX org_ops_batch ON org_ops(batch_id);
 

@@ -11,7 +11,7 @@ use crate::models::{
 
 /// Bump khi đổi schema. Có migration tăng dần từ v2 trở đi (giữ index của
 /// user); version lạ/quá cũ → wipe & recreate (rebuild bằng rescan, ok pre-1.0).
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 /// Migration tăng dần: MIGRATIONS[i] đưa schema từ version (i+2) lên (i+3).
 /// DDL PHẢI giống hệt schema.sql (fresh install đi thẳng schema.sql).
@@ -36,6 +36,10 @@ const MIGRATIONS: &[&str] = &[
        INSERT INTO files_fts(rowid, name_norm) VALUES (new.id, new.name_norm);
      END;
      ALTER TABLE org_ops ADD COLUMN undone_at INTEGER;",
+    // v5 -> v6: ambiguous crash-recovery intents are retained for diagnosis, but marked so
+    // startup does not hash/stat the same unresolved files forever.
+    "ALTER TABLE org_ops ADD COLUMN recovery_error TEXT;
+     ALTER TABLE org_ops ADD COLUMN recovery_attempted_at INTEGER;",
 ];
 const OLDEST_MIGRATABLE: i64 = 2;
 
@@ -271,6 +275,20 @@ pub fn refresh_root_count(conn: &Connection, root_path: &str) -> Result<i64> {
     Ok(n)
 }
 
+pub fn refresh_all_root_counts(conn: &Connection) -> Result<()> {
+    let roots: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT path FROM roots")?;
+        let rows = stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    for path in roots {
+        refresh_root_count(conn, &path)?;
+    }
+    Ok(())
+}
+
 /// Xóa index của root theo chunk 10k/transaction — không giữ writer hàng chục giây,
 /// không phình WAL. Caller (command) phải hủy scan đang chạy TRƯỚC khi gọi.
 pub fn remove_root_chunked(conn: &mut Connection, root_id: i64) -> Result<()> {
@@ -368,21 +386,56 @@ pub fn upsert_scan_batch(
 
 /// Đánh dấu missing những file dưới `root_path` không thấy trong generation này.
 pub fn reconcile_scan(conn: &mut Connection, root_path: &str, gen: i64) -> Result<usize> {
+    let marked = reconcile_scan_excluding(conn, root_path, gen, &[])?;
+    finish_root_scan(conn, root_path)?;
+    Ok(marked)
+}
+
+/// Reconcile một scan hoàn tất nhưng có một số subtree đọc lỗi. File dưới các
+/// scope này giữ nguyên status/generation cũ thay vì bị kết luận `missing` oan.
+/// Caller phải bỏ reconcile toàn bộ nếu walker có lỗi không xác định được path.
+pub fn reconcile_scan_excluding(
+    conn: &mut Connection,
+    root_path: &str,
+    gen: i64,
+    unreadable_scopes: &[String],
+) -> Result<usize> {
+    use rusqlite::params_from_iter;
+    use rusqlite::types::Value;
+
     let (eq, start, end) = path_range(root_path);
-    let n = conn.execute(
-        &format!(
-            "UPDATE files SET status = 1
-             WHERE seen_gen < ?4 AND status IN (0, 2) AND dir_id IN
-               (SELECT d.id FROM dirs d WHERE {ROOT_SCOPE})"
-        ),
-        params![eq, start, end, gen],
-    )?;
+    let mut scope_sql = String::from("(d.path_key = ? OR (d.path_key >= ? AND d.path_key < ?))");
+    let mut values = vec![
+        Value::Integer(gen),
+        Value::Text(eq),
+        Value::Text(start),
+        Value::Text(end),
+    ];
+    for scope in unreadable_scopes {
+        let (x_eq, x_start, x_end) = path_range(scope);
+        scope_sql.push_str(" AND NOT (d.path_key = ? OR (d.path_key >= ? AND d.path_key < ?))");
+        values.push(Value::Text(x_eq));
+        values.push(Value::Text(x_start));
+        values.push(Value::Text(x_end));
+    }
+    let sql = format!(
+        "UPDATE files SET status = 1
+         WHERE seen_gen < ? AND status IN (0, 2) AND dir_id IN
+           (SELECT d.id FROM dirs d WHERE {scope_sql})"
+    );
+    let n = conn.execute(&sql, params_from_iter(values.iter()))?;
+    Ok(n)
+}
+
+/// Bookkeeping for every successfully completed scan, including conservative scans where
+/// reconcile had to be skipped because an error could not be scoped safely.
+pub fn finish_root_scan(conn: &Connection, root_path: &str) -> Result<()> {
     conn.execute(
         "UPDATE roots SET last_scan_at = ?1, scan_state = 'done' WHERE path = ?2",
         params![now_ms(), root_path],
     )?;
     refresh_root_count(conn, root_path)?;
-    Ok(n)
+    Ok(())
 }
 
 /// Generation đơn điệu tăng, độc lập với jobs.id (jobs có thể bị prune sau này).
@@ -805,11 +858,33 @@ pub fn upsert_hash_batch(conn: &mut Connection, rows: &[HashUpsert]) -> Result<(
 /// Trả (số nhóm, tổng bytes lãng phí).
 pub fn rebuild_dup_groups(conn: &mut Connection) -> Result<(i64, i64)> {
     let tx = conn.transaction()?;
+    // Preserve group ids for hashes that still form the same exact group. UI state is
+    // keyed by group id; deleting/reinserting every row made an unrelated organize-hash
+    // preparation close the group the user was inspecting.
+    let mut existing_by_hash: HashMap<Vec<u8>, i64> = {
+        let mut stmt = tx.prepare(
+            "SELECT g.id, h.full_hash
+             FROM dup_groups g
+             JOIN dup_members m ON m.group_id = g.id
+             JOIN hashes h ON h.file_id = m.file_id
+             WHERE g.kind = 0 AND h.full_hash IS NOT NULL
+             GROUP BY g.id
+             HAVING COUNT(DISTINCT h.full_hash) = 1
+             ORDER BY g.id",
+        )?;
+        let rows: Vec<(i64, Vec<u8>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        let mut map = HashMap::new();
+        for (id, hash) in rows {
+            map.entry(hash).or_insert(id);
+        }
+        map
+    };
     tx.execute(
         "DELETE FROM dup_members WHERE group_id IN (SELECT id FROM dup_groups WHERE kind = 0)",
         [],
     )?;
-    tx.execute("DELETE FROM dup_groups WHERE kind = 0", [])?;
 
     let mut groups = 0i64;
     let mut waste = 0i64;
@@ -836,13 +911,24 @@ pub fn rebuild_dup_groups(conn: &mut Connection) -> Result<(i64, i64)> {
             .collect::<Result<_, _>>()?;
         let now = now_ms();
         for (fh, n, size) in found {
-            ins_group.execute(params![now])?;
-            let gid = tx.last_insert_rowid();
+            let gid = if let Some(existing) = existing_by_hash.remove(&fh) {
+                existing
+            } else {
+                ins_group.execute(params![now])?;
+                tx.last_insert_rowid()
+            };
             ins_members.execute(params![gid, fh])?;
             groups += 1;
             waste += (n - 1) * size;
         }
     }
+    tx.execute(
+        "DELETE FROM dup_groups
+         WHERE kind = 0 AND NOT EXISTS(
+           SELECT 1 FROM dup_members m WHERE m.group_id = dup_groups.id
+         )",
+        [],
+    )?;
     tx.commit()?;
     Ok((groups, waste))
 }
@@ -976,6 +1062,44 @@ pub fn get_delete_context(conn: &Connection, file_ids: &[i64]) -> Result<Vec<Del
     Ok(rows)
 }
 
+/// Context verify của đúng một file, dùng cho nửa MOV của Live Photo. Khác
+/// `get_delete_context`, lookup này không yêu cầu file phải nằm trong dup group:
+/// executor cần chứng minh riêng MOV victim và MOV survivor trùng BLAKE3 trước
+/// khi cho MOV đi theo ảnh.
+pub fn get_delete_file_context(
+    conn: &Connection,
+    file_id: i64,
+) -> Result<Option<DeleteContextRow>> {
+    Ok(conn
+        .query_row(
+            "SELECT f.id, d.path, f.name, f.kind, f.size, f.mtime, f.status,
+                    f.live_pair_id, h.full_hash, h.hashed_size, h.hashed_mtime
+             FROM files f
+             JOIN dirs d ON d.id = f.dir_id
+             LEFT JOIN hashes h ON h.file_id = f.id
+             WHERE f.id = ?1",
+            params![file_id],
+            |r| {
+                let dir: String = r.get(1)?;
+                let name: String = r.get(2)?;
+                Ok(DeleteContextRow {
+                    group_id: 0,
+                    file_id: r.get(0)?,
+                    path: join_path(&dir, &name),
+                    kind: r.get(3)?,
+                    size: r.get(4)?,
+                    mtime: r.get(5)?,
+                    status: r.get(6)?,
+                    live_pair_id: r.get(7)?,
+                    full_hash: r.get(8)?,
+                    hashed_size: r.get(9)?,
+                    hashed_mtime: r.get(10)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
 /// Id mọi ẢNH (kind=0) đang trỏ live_pair_id vào file này. Dùng ngay trước
 /// khi trash 1 pair MOV: còn ảnh sống nào khác ngoài victim đã xóa → MOV
 /// không được đụng (HEIC + JPG export cùng stem share chung 1 MOV).
@@ -1003,17 +1127,7 @@ pub fn remove_deleted_files(conn: &mut Connection, file_ids: &[i64]) -> Result<(
         }
     }
     tx.commit()?;
-    let roots: Vec<String> = {
-        let mut stmt = conn.prepare("SELECT path FROM roots")?;
-        let r = stmt
-            .query_map([], |r| r.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        r
-    };
-    for p in roots {
-        refresh_root_count(conn, &p)?;
-    }
-    Ok(())
+    refresh_all_root_counts(conn)
 }
 
 // ---------- excluded paths (user-defined) ----------

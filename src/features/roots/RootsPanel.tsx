@@ -32,7 +32,8 @@ export function RootsPanel() {
         </span>
         <button
           onClick={onAdd}
-          className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
+          disabled={scanning}
+          className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-30"
         >
           {t("roots.add")}
         </button>
@@ -63,7 +64,8 @@ export function RootsPanel() {
           </button>
           <button
             title={t("roots.remove")}
-            className="hidden rounded px-1 text-xs text-red-400 hover:bg-neutral-800 group-hover:block"
+            disabled={scanning}
+            className="hidden rounded px-1 text-xs text-red-400 hover:bg-neutral-800 disabled:opacity-30 group-hover:block"
             onClick={() => onRemove(r.id, r.path)}
           >
             ✕

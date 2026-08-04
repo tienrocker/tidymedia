@@ -90,7 +90,9 @@ const CANDIDATE_WHERE: &str = "f.volume_id = ?1 AND f.id > ?2
 /// Ứng viên organize trên 1 volume, keyset theo f.id. Lấy CẢ file đang nằm
 /// trong library root — planner tự trả SkipOrganized (idempotent, và file
 /// user tự quăng vào root vẫn được xếp chỗ đúng). MOV có pair bị ẩn (đi theo
-/// ảnh qua cột `pair`), status=1 missing loại từ SQL.
+/// ảnh canonical mà MOV trỏ ngược qua cột `pair`), status=1 missing loại từ SQL.
+/// Nếu HEIC + JPG cùng trỏ một MOV, chỉ canonical owner được phép move MOV;
+/// ảnh còn lại vẫn organize độc lập và giữ link logic tới cùng MOV.
 pub fn select_org_candidates(
     conn: &Connection,
     volume_id: i64,
@@ -101,13 +103,16 @@ pub fn select_org_candidates(
         "SELECT f.id, d.path, f.name, f.ext, f.kind, f.size, f.mtime, f.status,
                 m.taken_at, m.date_source, m.camera,
                 h.full_hash, h.hashed_size, h.hashed_mtime,
-                pv.id, pd.path, pv.name, pv.ext, pv.status
+                pv.id, pd.path, pv.name, pv.ext, pv.status, pv.size, pv.mtime,
+                ph.full_hash, ph.hashed_size, ph.hashed_mtime
          FROM files f
          JOIN dirs d ON d.id = f.dir_id
          LEFT JOIN media_meta m ON m.file_id = f.id
          LEFT JOIN hashes h ON h.file_id = f.id
          LEFT JOIN files pv ON pv.id = f.live_pair_id AND f.kind = 0 AND pv.kind = 1
+                           AND pv.live_pair_id = f.id
          LEFT JOIN dirs pd ON pd.id = pv.dir_id
+         LEFT JOIN hashes ph ON ph.file_id = pv.id
          WHERE {CANDIDATE_WHERE}
          ORDER BY f.id LIMIT ?3"
     );
@@ -126,6 +131,11 @@ pub fn select_org_candidates(
                     path: join_path(&pdir, &pname),
                     ext: r.get::<_, Option<String>>(17)?.unwrap_or_default(),
                     status: r.get::<_, Option<i64>>(18)?.unwrap_or(1),
+                    size: r.get::<_, Option<i64>>(19)?.unwrap_or(-1),
+                    mtime: r.get::<_, Option<i64>>(20)?.unwrap_or(-1),
+                    full_hash: r.get(21)?,
+                    hashed_size: r.get(22)?,
+                    hashed_mtime: r.get(23)?,
                 }),
                 _ => None,
             };
@@ -153,6 +163,50 @@ pub fn select_org_candidates(
 pub fn count_org_candidates(conn: &Connection, volume_id: i64) -> Result<i64> {
     let sql = format!("SELECT COUNT(*) FROM files f WHERE {CANDIDATE_WHERE}");
     Ok(conn.query_row(&sql, params![volume_id, 0i64], |r| r.get(0))?)
+}
+
+/// Cached full hash of an indexed file plus the index snapshot it was hashed against.
+/// The caller must still confirm the snapshot matches the file on disk: a valid hash only
+/// proves index and hash agree with each other, not that either matches current content.
+pub struct CachedHash {
+    pub full_hash: Vec<u8>,
+    pub size: i64,
+    pub mtime: i64,
+}
+
+/// Return the still-valid cached full hash for an indexed file at `path`.
+/// Organize Preview uses this only after filesystem metadata says the target exists;
+/// no file content is read here.
+pub fn valid_full_hash_at_path(conn: &Connection, path: &str) -> Result<Option<CachedHash>> {
+    let normalized = normalize_path(path);
+    let target = std::path::Path::new(&normalized);
+    let Some(parent) = target.parent() else {
+        return Ok(None);
+    };
+    let Some(name) = target.file_name().and_then(|n| n.to_str()) else {
+        return Ok(None);
+    };
+    let parent_key = normalize_path(&parent.to_string_lossy()).to_uppercase();
+    conn.query_row(
+        "SELECT h.full_hash, f.size, f.mtime
+         FROM files f
+         JOIN dirs d ON d.id = f.dir_id
+         JOIN hashes h ON h.file_id = f.id
+         WHERE d.path_key = ?1 AND f.name = ?2 AND f.status = 0
+           AND h.full_hash IS NOT NULL
+           AND h.hashed_size = f.size AND h.hashed_mtime = f.mtime
+         LIMIT 1",
+        params![parent_key, name],
+        |r| {
+            Ok(CachedHash {
+                full_hash: r.get(0)?,
+                size: r.get(1)?,
+                mtime: r.get(2)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
 }
 
 // ---------- journal (write-ahead) ----------
@@ -191,12 +245,35 @@ pub fn delete_org_op(conn: &Connection, op_id: i64) -> Result<()> {
 pub fn pending_org_ops(conn: &Connection) -> Result<Vec<OrgOpRow>> {
     let mut st = conn.prepare_cached(
         "SELECT id, batch_id, file_id, old_path, new_path
-         FROM org_ops WHERE done_at IS NULL ORDER BY id",
+         FROM org_ops
+         WHERE done_at IS NULL AND recovery_attempted_at IS NULL
+         ORDER BY id",
     )?;
     let rows = st
         .query_map([], map_org_op)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+pub fn mark_org_op_recovery_failed(conn: &Connection, op_id: i64, reason: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE org_ops
+         SET recovery_error = ?2, recovery_attempted_at = ?3
+         WHERE id = ?1 AND done_at IS NULL",
+        params![op_id, reason, now_ms()],
+    )?;
+    Ok(())
+}
+
+pub fn org_op_recovery_error(conn: &Connection, op_id: i64) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT recovery_error FROM org_ops WHERE id = ?1",
+            params![op_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten())
 }
 
 fn map_org_op(r: &rusqlite::Row) -> rusqlite::Result<OrgOpRow> {
@@ -263,6 +340,34 @@ pub fn file_size_mtime(conn: &Connection, file_id: i64) -> Result<Option<(i64, i
         .optional()?)
 }
 
+/// Snapshot xác minh cho crash recovery. Hash chỉ hợp lệ khi hashed_* còn
+/// khớp file row; caller luôn phải check size+mtime filesystem trước.
+pub struct FileVerifyContext {
+    pub size: i64,
+    pub mtime: i64,
+    pub full_hash: Option<Vec<u8>>,
+}
+
+pub fn file_verify_context(conn: &Connection, file_id: i64) -> Result<Option<FileVerifyContext>> {
+    Ok(conn
+        .query_row(
+            "SELECT f.size, f.mtime,
+                    CASE WHEN h.hashed_size = f.size AND h.hashed_mtime = f.mtime
+                         THEN h.full_hash ELSE NULL END
+             FROM files f LEFT JOIN hashes h ON h.file_id = f.id
+             WHERE f.id = ?1",
+            params![file_id],
+            |r| {
+                Ok(FileVerifyContext {
+                    size: r.get(0)?,
+                    mtime: r.get(1)?,
+                    full_hash: r.get(2)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
 // ---------- cập nhật index sau move ----------
 
 /// Cập nhật vị trí file trong index sau khi fs move THÀNH CÔNG — giữ nguyên
@@ -310,12 +415,15 @@ pub fn update_file_location(conn: &mut Connection, file_id: i64, new_path: &str)
         params![dir_id, name, file_id],
     )?;
     let name_norm = normalize_for_search(name);
-    tx.execute(
+    let updated = tx.execute(
         "UPDATE files SET dir_id = ?2, volume_id = ?3, name = ?4, name_norm = ?5,
                 original_name = COALESCE(original_name, name), frn = NULL
          WHERE id = ?1",
         params![file_id, dir_id, volume_id, name, name_norm],
     )?;
+    if updated != 1 {
+        bail!("ERR_FILE_GONE|file id {file_id} disappeared during organize");
+    }
     tx.commit()?;
     Ok(())
 }

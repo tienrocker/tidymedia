@@ -103,6 +103,7 @@ function MemberCard({
   focused,
   best,
   tz,
+  tzOffset,
 }: {
   m: DupMemberRow;
   groupId: number;
@@ -110,7 +111,8 @@ function MemberCard({
   onZoom: (z: Zoom) => void;
   focused: boolean;
   best: { res: number; size: number; oldest: number };
-  tz: number;
+  tz: string;
+  tzOffset: number;
 }) {
   const { t } = useTranslation();
   const checked = useStore((s) => s.dupChecked.get(groupId)?.has(m.fileId) ?? false);
@@ -216,7 +218,7 @@ function MemberCard({
           <Best show={m.size === best.size} label={t("dedup.bestSize")} />
         </div>
         <div className="text-neutral-400">
-          {fmtDateTime(when, m.takenAt != null ? 0 : tz)}
+          {fmtDateTime(when, m.takenAt != null ? 0 : tz, tzOffset)}
           <Best show={when === best.oldest} label={t("dedup.oldest")} />
         </div>
         <div className="truncate text-neutral-600" title={m.dir}>
@@ -237,7 +239,8 @@ function GroupCompare() {
   const { t } = useTranslation();
   const groupId = useStore((s) => s.activeGroupId);
   const members = useStore((s) => s.groupMembers);
-  const tz = useStore((s) => s.tzOffsetMinutes);
+  const tz = useStore((s) => s.timezone);
+  const tzOffset = useStore((s) => s.tzOffsetMinutes);
   const [zoom, setZoom] = useState<Zoom>(ZOOM_RESET);
   const [focusIdx, setFocusIdx] = useState(0);
 
@@ -333,6 +336,7 @@ function GroupCompare() {
               focused={i === focusIdx}
               best={best}
               tz={tz}
+              tzOffset={tzOffset}
             />
           ))}
         </div>
@@ -353,6 +357,9 @@ export function DedupView() {
   const deleting = useStore((s) => s.dupDeleting);
   const activeJobs = useStore((s) => s.activeJobs);
   const hashJob = [...activeJobs.values()].find((j) => j.kind === "hash");
+  const anyHashJob = [...activeJobs.values()].some(
+    (j) => j.kind === "hash" || j.kind === "org_hash",
+  );
 
   let totalChecked = 0;
   for (const s of checked.values()) totalChecked += s.size;
@@ -371,7 +378,7 @@ export function DedupView() {
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800 bg-neutral-950 px-3 py-2">
         <button
           className="rounded border border-neutral-600 bg-neutral-800 px-3 py-1 text-sm text-neutral-100 hover:bg-neutral-700 disabled:opacity-50"
-          disabled={hashJob != null}
+          disabled={anyHashJob}
           onClick={() =>
             runSafe(async () => {
               await api.startHashScan();
@@ -402,7 +409,7 @@ export function DedupView() {
           </select>
           <button
             className="rounded border border-red-800 bg-red-950 px-3 py-1 text-sm text-red-200 hover:bg-red-900 disabled:opacity-40"
-            disabled={totalChecked === 0 || deleting}
+            disabled={totalChecked === 0 || deleting || anyHashJob}
             onClick={() => {
               if (
                 window.confirm(

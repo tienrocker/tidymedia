@@ -4,7 +4,7 @@ use std::process::Command;
 use serde_json::Value;
 
 use crate::ffmpeg::run_with_timeout;
-use crate::meta::days_from_civil;
+use crate::meta::{civil_from_days, days_from_civil};
 
 /// Metadata video từ ffprobe. `taken_at` theo cùng quy ước EXIF: wall-clock
 /// encode như epoch ms khung UTC.
@@ -28,6 +28,30 @@ pub struct VideoMeta {
 /// Probe 1 file video. Không Err với file hỏng — trả `ok=false` để job ghi
 /// meta_state=2 và không chọn lại. Err chỉ khi không chạy được ffprobe.
 pub fn probe_video(ffprobe: &Path, input: &Path, tz_offset_min: i64) -> VideoMeta {
+    probe_video_with_offset(ffprobe, input, &|_| tz_offset_min)
+}
+
+/// Production path: IANA timezone + fallback offset cho dữ liệu cũ. Offset
+/// được resolve tại timestamp của video nên đúng qua DST.
+pub fn probe_video_in_timezone(
+    ffprobe: &Path,
+    input: &Path,
+    timezone: Option<&str>,
+    fallback_offset_min: i64,
+) -> VideoMeta {
+    probe_video_with_offset(ffprobe, input, &|ms| {
+        timezone
+            .and_then(|name| timezone_offset_minutes(name, ms))
+            .map(i64::from)
+            .unwrap_or(fallback_offset_min)
+    })
+}
+
+fn probe_video_with_offset(
+    ffprobe: &Path,
+    input: &Path,
+    offset_at: &dyn Fn(i64) -> i64,
+) -> VideoMeta {
     let mut cmd = Command::new(ffprobe);
     cmd.args([
         "-v",
@@ -39,7 +63,9 @@ pub fn probe_video(ffprobe: &Path, input: &Path, tz_offset_min: i64) -> VideoMet
     ])
     .arg(input);
     match run_with_timeout(cmd, "ffprobe") {
-        Ok((stdout, _)) => parse_probe_json(&String::from_utf8_lossy(&stdout), tz_offset_min),
+        Ok((stdout, _)) => {
+            parse_probe_json_with_offset(&String::from_utf8_lossy(&stdout), offset_at)
+        }
         Err(e) => {
             tracing::debug!(path = %input.display(), "ffprobe failed: {e:#}");
             VideoMeta::default()
@@ -48,7 +74,12 @@ pub fn probe_video(ffprobe: &Path, input: &Path, tz_offset_min: i64) -> VideoMet
 }
 
 /// Tách riêng để test không cần ffprobe thật.
+#[cfg(test)]
 pub(crate) fn parse_probe_json(json: &str, tz_offset_min: i64) -> VideoMeta {
+    parse_probe_json_with_offset(json, &|_| tz_offset_min)
+}
+
+fn parse_probe_json_with_offset(json: &str, offset_at: &dyn Fn(i64) -> i64) -> VideoMeta {
     let mut m = VideoMeta::default();
     let Ok(root) = serde_json::from_str::<Value>(json) else {
         return m;
@@ -112,7 +143,7 @@ pub(crate) fn parse_probe_json(json: &str, tz_offset_min: i64) -> VideoMeta {
         if has_offset {
             ms
         } else {
-            ms + tz_offset_min * 60_000
+            ms + offset_at(ms) * 60_000
         }
     };
     if let Some(parsed) = qt.and_then(parse_iso_datetime) {
@@ -124,6 +155,18 @@ pub(crate) fn parse_probe_json(json: &str, tz_offset_min: i64) -> VideoMeta {
         m.date_source = Some(1);
     }
     m
+}
+
+fn timezone_offset_minutes(timezone: &str, epoch_ms: i64) -> Option<i32> {
+    use chrono::{Offset, TimeZone};
+    let tz: chrono_tz::Tz = timezone.parse().ok()?;
+    let utc = chrono::Utc.timestamp_millis_opt(epoch_ms).single()?;
+    Some(
+        tz.offset_from_utc_datetime(&utc.naive_utc())
+            .fix()
+            .local_minus_utc()
+            / 60,
+    )
 }
 
 fn sanity(ms: i64) -> Option<i64> {
@@ -174,8 +217,11 @@ pub(crate) fn parse_iso_datetime(s: &str) -> Option<(i64, bool)> {
     {
         return None;
     }
-    let mut ms =
-        (days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second) * 1000;
+    let days = days_from_civil(year, month, day);
+    if civil_from_days(days) != (year, month, day) {
+        return None;
+    }
+    let mut ms = (days * 86_400 + hour * 3600 + minute * 60 + second) * 1000;
 
     // Phần còn lại: ".ffffff" rồi "Z" / "+HH:MM" / "+HHMM" / rỗng
     let mut rest = &s[19..];
@@ -217,6 +263,9 @@ mod tests {
         );
         assert_eq!(parse_iso_datetime("not a date"), None);
         assert_eq!(parse_iso_datetime(""), None);
+        assert_eq!(parse_iso_datetime("2019-02-30T12:00:00Z"), None);
+        assert_eq!(parse_iso_datetime("2021-04-31T12:00:00Z"), None);
+        assert!(parse_iso_datetime("2020-02-29T12:00:00Z").is_some());
     }
 
     #[test]
@@ -263,5 +312,16 @@ mod tests {
     fn probe_json_garbage_is_not_ok() {
         assert!(!parse_probe_json("not json", 0).ok);
         assert!(!parse_probe_json(r#"{"streams":[],"format":{}}"#, 0).ok);
+    }
+
+    #[test]
+    fn iana_timezone_offset_tracks_dst() {
+        // 2024-01-15 / 2024-07-15 12:00:00 UTC.
+        let jan = 1_705_320_000_000;
+        let jul = 1_721_044_800_000;
+        assert_eq!(timezone_offset_minutes("America/New_York", jan), Some(-300));
+        assert_eq!(timezone_offset_minutes("America/New_York", jul), Some(-240));
+        assert_eq!(timezone_offset_minutes("Asia/Ho_Chi_Minh", jan), Some(420));
+        assert_eq!(timezone_offset_minutes("Asia/Ho_Chi_Minh", jul), Some(420));
     }
 }

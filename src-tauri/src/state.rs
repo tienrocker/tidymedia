@@ -60,6 +60,18 @@ pub struct AppState {
     pub hash_start_gate: Arc<std::sync::atomic::AtomicBool>,
     /// Gate tương tự cho organize/undo job (M5).
     pub org_start_gate: Arc<std::sync::atomic::AtomicBool>,
+    /// Serialize các bước chuyển trạng thái giữa scan, watched-root mutation
+    /// và organize/undo. Chỉ giữ lúc check/register hoặc lúc xóa root, không
+    /// giữ suốt scan/organize job.
+    pub index_op_gate: Arc<Mutex<()>>,
+    /// Dry-run organize gần nhất, gồm chính plan sẽ được execute. Không query/
+    /// re-plan sau khi user confirm nên phạm vi consent không thể tự nở ra.
+    pub(crate) org_preview: Arc<Mutex<Option<crate::organize::OrgPreviewTicket>>>,
+    /// Preview có thể full-hash thư viện lớn; cho UI hủy giữa từng file.
+    pub(crate) org_preview_cancel: Arc<Mutex<Option<core_jobs::CancelFlag>>>,
+    pub org_preview_seq: Arc<std::sync::atomic::AtomicU64>,
+    /// True while startup crash recovery runs on its background thread.
+    pub recovery_active: Arc<std::sync::atomic::AtomicBool>,
     /// Serialize TOÀN BỘ delete_dup_files: 2 đợt xóa chạy song song có thể
     /// verify chéo rồi xóa sạch cả nhóm (mỗi bên tưởng bên kia giữ bản sống).
     pub delete_lock: Arc<std::sync::Mutex<()>>,
@@ -88,6 +100,9 @@ pub fn init(app: &AppHandle) -> Result<()> {
     let data_dir = resolve_data_dir(app)?;
     tracing::info!(dir = %data_dir.display(), "opening index db");
     let db = Arc::new(Db::open(&data_dir)?);
+
+    // Hard process kills bypass tempfile Drop, so sweep only old files with our exact names.
+    crate::organize::cleanup_stale_preview_files(&data_dir);
 
     let jobs = Arc::new(JobManager::new());
     let events_rx = jobs.receiver();
@@ -134,9 +149,12 @@ pub fn init(app: &AppHandle) -> Result<()> {
         None => tracing::info!("ffprobe not found — video meta để chờ"),
     }
 
+    let index_op_gate = Arc::new(Mutex::new(()));
+    let delete_lock = Arc::new(std::sync::Mutex::new(()));
+    let recovery_active = Arc::new(std::sync::atomic::AtomicBool::new(true));
     app.manage(AppState {
-        db,
-        jobs,
+        db: db.clone(),
+        jobs: jobs.clone(),
         queries: Arc::new(Mutex::new(QueryCache::new())),
         thumbs,
         thumb_pool,
@@ -145,8 +163,106 @@ pub fn init(app: &AppHandle) -> Result<()> {
         meta_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         hash_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         org_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        delete_lock: Arc::new(std::sync::Mutex::new(())),
+        index_op_gate: index_op_gate.clone(),
+        org_preview: Arc::new(Mutex::new(None)),
+        org_preview_cancel: Arc::new(Mutex::new(None)),
+        org_preview_seq: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        recovery_active: recovery_active.clone(),
+        delete_lock: delete_lock.clone(),
     });
+
+    // Recovery is best-effort and never prevents the window from opening. Mutating commands
+    // reject while the flag is set, so the background task cannot race scan/delete/organize.
+    let recovery_db = db.clone();
+    let recovery_jobs = jobs.clone();
+    std::thread::Builder::new()
+        .name("organize-recovery".into())
+        .spawn(move || {
+            struct RecoveryFlag(std::sync::Arc<std::sync::atomic::AtomicBool>);
+            impl Drop for RecoveryFlag {
+                fn drop(&mut self) {
+                    self.0.store(false, std::sync::atomic::Ordering::Release);
+                }
+            }
+            // Declared first so it drops last. `recovery_active` cannot become false
+            // while either lock is still held (NEW-4 lock-order window).
+            let _done = RecoveryFlag(recovery_active);
+            let pending_count = match recovery_db.pool.with(core_db::org::pending_org_ops) {
+                Ok(pending) => pending.len() as u64,
+                Err(e) => {
+                    tracing::error!(
+                        error = %format!("{e:#}"),
+                        "could not inspect pending organize recovery; app will continue"
+                    );
+                    return;
+                }
+            };
+            if pending_count == 0 {
+                return;
+            }
+            let job_id = match recovery_db
+                .writer
+                .exec(|c| core_db::ops::insert_job(c, "recovery", None))
+            {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::error!(
+                        error = %format!("{e:#}"),
+                        "could not create recovery job; app will continue"
+                    );
+                    return;
+                }
+            };
+            let cancel = recovery_jobs.register(job_id, "recovery", None);
+            let events = recovery_jobs.sender();
+            let result = {
+                // Canonical nested order everywhere that needs both locks:
+                // index_op_gate -> delete_lock.
+                let _index = index_op_gate.lock().unwrap_or_else(|p| p.into_inner());
+                let _filesystem = delete_lock.lock().unwrap_or_else(|p| p.into_inner());
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut report = |done, total| {
+                        let _ =
+                            events.send(core_jobs::JobEvent::Progress(core_jobs::JobProgress {
+                                job_id,
+                                kind: "recovery".into(),
+                                done,
+                                total: Some(total),
+                                message: Some("recover".into()),
+                            }));
+                    };
+                    crate::organize::recover_pending_ops(
+                        &recovery_db,
+                        Some(&cancel),
+                        Some(&mut report),
+                    )
+                }))
+            };
+            let final_event = match result {
+                Err(_) => JobEvent::Failed {
+                    job_id,
+                    kind: "recovery".into(),
+                    error: "ERR_INTERNAL|organize recovery panicked".into(),
+                },
+                Ok(Ok(())) if cancel.load(std::sync::atomic::Ordering::Relaxed) => {
+                    JobEvent::Cancelled {
+                        job_id,
+                        kind: "recovery".into(),
+                    }
+                }
+                Ok(Ok(())) => JobEvent::Done {
+                    job_id,
+                    kind: "recovery".into(),
+                    message: Some(format!("recovered {pending_count} operations")),
+                },
+                Ok(Err(e)) => JobEvent::Failed {
+                    job_id,
+                    kind: "recovery".into(),
+                    error: format!("{e:#}"),
+                },
+            };
+            let _ = events.send(final_event);
+        })?;
 
     // Event pump: JobEvent → UI (tauri events) + jobs table + index://changed.
     // index://changed khi đang scan giãn 2.5s — UI re-query cả list, không được spam.
@@ -155,7 +271,23 @@ pub fn init(app: &AppHandle) -> Result<()> {
         .name("job-event-pump".into())
         .spawn(move || {
             let mut last_changed: Option<Instant> = None;
+            let invalidate_preview = |handle: &AppHandle| {
+                let state = handle.state::<AppState>();
+                if let Some(cancel) = state
+                    .org_preview_cancel
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .as_ref()
+                {
+                    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                *state
+                    .org_preview
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner()) = None;
+            };
             let emit_changed = |handle: &AppHandle, last: &mut Option<Instant>| {
+                invalidate_preview(handle);
                 let due = !last.is_some_and(|t| t.elapsed() < Duration::from_millis(2500));
                 if due {
                     *last = Some(Instant::now());
@@ -188,6 +320,7 @@ pub fn init(app: &AppHandle) -> Result<()> {
                         kind,
                         message,
                     } => {
+                        invalidate_preview(&handle);
                         writer.exec_async({
                             let message = message.clone();
                             move |c| {
@@ -207,6 +340,7 @@ pub fn init(app: &AppHandle) -> Result<()> {
                         let _ = handle.emit("index://changed", ());
                     }
                     JobEvent::Failed { job_id, kind, error } => {
+                        invalidate_preview(&handle);
                         writer.exec_async({
                             let error = error.clone();
                             move |c| core_db::ops::finish_job(c, job_id, "failed", Some(&error))
@@ -216,8 +350,10 @@ pub fn init(app: &AppHandle) -> Result<()> {
                             "job://failed",
                             &serde_json::json!({ "jobId": job_id, "kind": kind, "error": error }),
                         );
+                        let _ = handle.emit("index://changed", ());
                     }
                     JobEvent::Cancelled { job_id, kind } => {
+                        invalidate_preview(&handle);
                         writer.exec_async(move |c| {
                             core_db::ops::finish_job(c, job_id, "cancelled", None)
                         });

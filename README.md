@@ -31,6 +31,7 @@ Photos and videos pile up for years - iPhone syncs through a dozen different app
 - 🎬 **Video, first-class** - keyframe thumbnails, duration/codec filters, in-app playback with instant seek, Live Photos (HEIC+MOV) paired as one item everywhere.
 - ♻️ **Dedup you can trust** - groups sorted by wasted bytes, 2-4-up compare with **synchronized zoom** (inspect the same pixels on every copy), keyboard-first review, auto-select rules you can override per file. Every deletion is re-verified on disk at the last millisecond and goes to the Recycle Bin.
 - 🗂️ **Organize on your terms** - any folder can be your library (one per drive, any name), folder layout and file names are **templates** (`{YYYY}\{YYYY}-{MM}`, `{YYYYMMDD}_{hhmmss}_{hash4}`, `{camera}`…), dry-run is mandatory, same-drive moves are atomic renames, and every batch is journaled and undoable.
+- 🧯 **Interruption-proof** - the dry-run is a frozen snapshot, so nothing is decided twice; content fingerprints are prepared by a separate cancellable job instead of stalling the preview; and if the app dies mid-move, the next launch replays the journal as a visible, cancellable recovery job that verifies by hash before touching anything.
 - 🌥️ **Cloud-safe** - OneDrive/iCloud placeholders are indexed but **never hydrated**: TidyMedia will not silently pull gigabytes down from the cloud.
 - 🕐 **Timezone-aware** - you pick your timezone on first run; date filters and library file names respect it, not whatever the OS guesses.
 - 🌍 **English · Tiếng Việt · 中文** out of the box.

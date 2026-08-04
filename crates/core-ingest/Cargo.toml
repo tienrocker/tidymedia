@@ -6,3 +6,6 @@ edition.workspace = true
 [dependencies]
 regex = { workspace = true }
 thiserror = { workspace = true }
+chrono.workspace = true
+chrono-tz.workspace = true
+serde.workspace = true

@@ -9,6 +9,19 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
+/// Offset thật của IANA timezone tại đúng instant (DST-aware).
+pub fn timezone_offset_minutes(timezone: &str, epoch_ms: i64) -> Option<i32> {
+    use chrono::{Offset, TimeZone};
+    let tz: chrono_tz::Tz = timezone.parse().ok()?;
+    let utc = chrono::Utc.timestamp_millis_opt(epoch_ms).single()?;
+    Some(
+        tz.offset_from_utc_datetime(&utc.naive_utc())
+            .fix()
+            .local_minus_utc()
+            / 60,
+    )
+}
+
 /// date_source values - khớp comment cột media_meta.date_source trong schema.sql
 pub const SRC_EXIF: i64 = 0;
 pub const SRC_FILENAME: i64 = 2;
@@ -106,6 +119,10 @@ fn g_u32(c: &regex::Captures, i: usize) -> u32 {
 /// dạng epoch (instant thật -> wall-clock); các dạng chữ số là giờ địa phương
 /// sẵn rồi.
 pub fn parse_filename_date(name: &str, tz_offset_min: i32) -> Option<ParsedDate> {
+    parse_filename_date_with(name, &|_| tz_offset_min)
+}
+
+pub fn parse_filename_date_with(name: &str, offset_at: &dyn Fn(i64) -> i32) -> Option<ParsedDate> {
     for caps in COMPACT_DT.captures_iter(name) {
         if let Some(ms) = ymd_hms_to_ms(
             g_i64(&caps, 1),
@@ -131,11 +148,13 @@ pub fn parse_filename_date(name: &str, tz_offset_min: i32) -> Option<ParsedDate>
         }
     }
     if let Some(caps) = EPOCH_MS.captures(name) {
-        let ms = g_i64(&caps, 1) + tz_offset_min as i64 * 60_000;
+        let instant = g_i64(&caps, 1);
+        let ms = instant + offset_at(instant) as i64 * 60_000;
         return Some(ParsedDate { ms, has_time: true });
     }
     if let Some(caps) = EPOCH_S.captures(name) {
-        let ms = g_i64(&caps, 1) * 1000 + tz_offset_min as i64 * 60_000;
+        let instant = g_i64(&caps, 1) * 1000;
+        let ms = instant + offset_at(instant) as i64 * 60_000;
         return Some(ParsedDate { ms, has_time: true });
     }
     for caps in COMPACT_D.captures_iter(name) {
@@ -179,6 +198,24 @@ pub fn resolve_taken(
     tz_offset_min: i32,
     now_ms: i64,
 ) -> Resolved {
+    resolve_taken_with(
+        meta_taken,
+        meta_source,
+        name,
+        mtime_ms,
+        &|_| tz_offset_min,
+        now_ms,
+    )
+}
+
+pub fn resolve_taken_with(
+    meta_taken: Option<i64>,
+    meta_source: Option<i64>,
+    name: &str,
+    mtime_ms: i64,
+    offset_at: &dyn Fn(i64) -> i32,
+    now_ms: i64,
+) -> Resolved {
     if let Some(t) = meta_taken {
         if sane(t, now_ms) {
             return Resolved {
@@ -187,7 +224,7 @@ pub fn resolve_taken(
             };
         }
     }
-    if let Some(p) = parse_filename_date(name, tz_offset_min) {
+    if let Some(p) = parse_filename_date_with(name, offset_at) {
         if sane(p.ms, now_ms) {
             return Resolved {
                 taken_ms: p.ms,
@@ -196,7 +233,7 @@ pub fn resolve_taken(
         }
     }
     Resolved {
-        taken_ms: mtime_ms + tz_offset_min as i64 * 60_000,
+        taken_ms: mtime_ms + offset_at(mtime_ms) as i64 * 60_000,
         source: SRC_MTIME_UNCERTAIN,
     }
 }
@@ -232,6 +269,17 @@ mod tests {
         assert!(ymd_hms_to_ms(2019, 13, 1, 0, 0, 0).is_none());
         assert!(ymd_hms_to_ms(2019, 6, 14, 24, 0, 0).is_none());
         assert!(ymd_hms_to_ms(2100, 2, 29, 0, 0, 0).is_none()); // 2100 không nhuận
+    }
+
+    #[test]
+    fn iana_timezone_offset_tracks_dst() {
+        // 2024-01-15 / 2024-07-15 12:00:00 UTC.
+        let jan = 1_705_320_000_000;
+        let jul = 1_721_044_800_000;
+        assert_eq!(timezone_offset_minutes("America/New_York", jan), Some(-300));
+        assert_eq!(timezone_offset_minutes("America/New_York", jul), Some(-240));
+        assert_eq!(timezone_offset_minutes("Asia/Ho_Chi_Minh", jan), Some(420));
+        assert_eq!(timezone_offset_minutes("Asia/Ho_Chi_Minh", jul), Some(420));
     }
 
     #[test]

@@ -52,9 +52,22 @@ export function FilterBar() {
   const { t } = useTranslation();
   const filter = useStore((s) => s.filter);
   const setFilter = useStore((s) => s.setFilter);
-  const tz = useStore((s) => s.tzOffsetMinutes);
+  const tz = useStore((s) => s.timezone);
+  const tzOffset = useStore((s) => s.tzOffsetMinutes);
   const viewMode = useStore((s) => s.viewMode);
   const setViewMode = useStore((s) => s.setViewMode);
+
+  const setDateFilter = (
+    key: "mtimeFrom" | "mtimeTo",
+    value: string,
+    endOfDay: boolean,
+  ) => {
+    const epoch = dateInputToEpoch(value, tz, endOfDay, tzOffset);
+    if (value && epoch == null) {
+      useStore.getState().showToast(t("filter.invalidLocalDate"), true);
+    }
+    setFilter({ [key]: epoch });
+  };
 
   // IME (Telex/Pinyin): không bắn query khi đang gõ dở tổ hợp.
   // Init từ store: component bị unmount khi sang mode dedup, quay lại phải
@@ -105,18 +118,16 @@ export function FilterBar() {
       <input
         type="date"
         className={inputCls}
-        value={epochToDateInput(filter.mtimeFrom, tz)}
-        onChange={(e) => setFilter({ mtimeFrom: dateInputToEpoch(e.target.value, tz) })}
+        value={epochToDateInput(filter.mtimeFrom, tz, tzOffset)}
+        onChange={(e) => setDateFilter("mtimeFrom", e.target.value, false)}
       />
       <input
         type="date"
         className={inputCls}
         value={
-          filter.mtimeTo != null ? epochToDateInput(filter.mtimeTo - 1, tz) : ""
+          filter.mtimeTo != null ? epochToDateInput(filter.mtimeTo, tz, tzOffset) : ""
         }
-        onChange={(e) =>
-          setFilter({ mtimeTo: dateInputToEpoch(e.target.value, tz, true) })
-        }
+        onChange={(e) => setDateFilter("mtimeTo", e.target.value, true)}
       />
       <select
         className={inputCls}

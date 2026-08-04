@@ -52,8 +52,23 @@ pub(crate) fn canonicalize_root(path: &str) -> CmdResult<String> {
 
 #[tauri::command]
 pub async fn add_root(state: State<'_, AppState>, path: String) -> CmdResult<i64> {
+    if state.recovery_active.load(Ordering::Acquire) {
+        return Err("ERR_RECOVERY_BUSY|".into());
+    }
+    crate::organize::invalidate_org_preview(&state);
     let writer = state.db.writer.clone();
+    let jobs = state.jobs.clone();
+    let op_gate = state.index_op_gate.clone();
     blocking(move || {
+        let _op = op_gate.lock().unwrap_or_else(|p| p.into_inner());
+        if jobs.active_job_of_kind("scan").is_some()
+            || jobs.active_job_of_kind("hash").is_some()
+            || jobs.active_job_of_kind("org_hash").is_some()
+            || jobs.active_job_of_kind("organize").is_some()
+            || jobs.active_job_of_kind("org_undo").is_some()
+        {
+            return Err("ERR_INDEX_BUSY|scan/organize is active".into());
+        }
         let canonical = canonicalize_root(&path)?;
         writer
             .exec(move |c| core_db::ops::upsert_root(c, &canonical))
@@ -70,9 +85,35 @@ pub async fn list_roots(state: State<'_, AppState>) -> CmdResult<Vec<RootInfo>> 
 
 #[tauri::command]
 pub async fn remove_root(state: State<'_, AppState>, root_id: i64) -> CmdResult<()> {
+    if state.recovery_active.load(Ordering::Acquire) {
+        return Err("ERR_RECOVERY_BUSY|".into());
+    }
+    crate::organize::invalidate_org_preview(&state);
     let db = state.db.clone();
     let jobs = state.jobs.clone();
+    let op_gate = state.index_op_gate.clone();
+    let fs_lock = state.delete_lock.clone();
     blocking(move || {
+        // Canonical nested lock order: index_op_gate -> delete_lock. The filesystem
+        // acquisition remains fail-fast, so the operation gate is never held while waiting.
+        let _op = op_gate.lock().unwrap_or_else(|p| p.into_inner());
+        let _fs = match fs_lock.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                return Err("ERR_INDEX_BUSY|filesystem operation is active".into())
+            }
+        };
+        if jobs.active_job_of_kind("hash").is_some()
+            || jobs.active_job_of_kind("org_hash").is_some()
+        {
+            return Err("ERR_INDEX_BUSY|hash job is active".into());
+        }
+        if jobs.active_job_of_kind("organize").is_some()
+            || jobs.active_job_of_kind("org_undo").is_some()
+        {
+            return Err("ERR_ORG_BUSY|".into());
+        }
         // Scan đang chạy trên root này phải chết hẳn trước khi xóa index —
         // nếu không dir_cache của nó sẽ ghi file vào dir id đã bị xóa/tái dùng.
         let cancelled = jobs.cancel_scans_for_root(root_id);
@@ -92,12 +133,28 @@ pub async fn remove_root(state: State<'_, AppState>, root_id: i64) -> CmdResult<
 
 #[tauri::command]
 pub async fn start_scan(state: State<'_, AppState>, root_id: i64) -> CmdResult<i64> {
+    if state.recovery_active.load(Ordering::Acquire) {
+        return Err("ERR_RECOVERY_BUSY|".into());
+    }
+    crate::organize::invalidate_org_preview(&state);
     if let Some(job_id) = state.jobs.active_scan_for_root(root_id) {
         return Err(format!("ERR_SCAN_ACTIVE|{job_id}"));
     }
     let db = state.db.clone();
     let jobs = state.jobs.clone();
+    let op_gate = state.index_op_gate.clone();
     blocking(move || {
+        let _op = op_gate.lock().unwrap_or_else(|p| p.into_inner());
+        if jobs.active_job_of_kind("hash").is_some()
+            || jobs.active_job_of_kind("org_hash").is_some()
+        {
+            return Err("ERR_INDEX_BUSY|hash job is active".into());
+        }
+        if jobs.active_job_of_kind("organize").is_some()
+            || jobs.active_job_of_kind("org_undo").is_some()
+        {
+            return Err("ERR_ORG_BUSY|".into());
+        }
         let (path, volume_id) = db
             .pool
             .with(|c| core_db::ops::get_root(c, root_id))
@@ -227,6 +284,9 @@ impl Drop for GateGuard {
 /// chạy; không còn gì để làm → None (không tạo job row rác).
 #[tauri::command]
 pub async fn start_meta_scan(state: State<'_, AppState>) -> CmdResult<Option<i64>> {
+    if state.recovery_active.load(Ordering::Acquire) {
+        return Err("ERR_RECOVERY_BUSY|".into());
+    }
     // Gate atomic: check-active → count → insert → register kéo dài hàng trăm
     // ms; không có gate thì 2 lời gọi sát nhau tạo 2 job cày trùng cả thư viện.
     let gate = state.meta_start_gate.clone();
@@ -325,11 +385,13 @@ fn run_meta_job(
 ) -> anyhow::Result<u64> {
     let include_video = ctx.ffprobe.is_some();
     // tz đọc 1 lần mỗi job — video creation_time là UTC, cần đổi ra wall-clock
-    let tz_offset_min: i64 = db
-        .pool
-        .with(|c| core_db::ops::kv_get(c, "tz_offset_minutes"))?
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+    let (timezone, tz_offset_min): (Option<String>, i64) = db.pool.with(|c| {
+        let timezone = core_db::ops::kv_get(c, "timezone")?;
+        let offset = core_db::ops::kv_get(c, "tz_offset_minutes")?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        Ok::<_, anyhow::Error>((timezone, offset))
+    })?;
     let mut done: u64 = 0;
     let mut cursor: i64 = 0;
     let mut throttle = Throttle::new(200);
@@ -349,7 +411,7 @@ fn run_meta_job(
         // None = file không đọc được (ổ rút...) → không ghi row, job sau thử lại.
         let metas: Vec<MetaUpsert> = batch
             .par_iter()
-            .filter_map(|p| extract_one_meta(p, ctx, tz_offset_min))
+            .filter_map(|p| extract_one_meta(p, ctx, timezone.as_deref(), tz_offset_min))
             .collect();
         let n = batch.len() as u64;
         if !metas.is_empty() {
@@ -374,7 +436,12 @@ fn run_meta_job(
 /// placeholder (status DB stale — đọc là hydrate, cấm tuyệt đối) — KHÔNG ghi
 /// row để job sau retry khi file quay lại. Truy cập được thì luôn ra row
 /// (decode fail → meta_state=2, không bao giờ chọn lại file hỏng thật).
-fn extract_one_meta(p: &PendingMeta, ctx: &MetaCtx, tz_offset_min: i64) -> Option<MetaUpsert> {
+fn extract_one_meta(
+    p: &PendingMeta,
+    ctx: &MetaCtx,
+    timezone: Option<&str>,
+    tz_offset_min: i64,
+) -> Option<MetaUpsert> {
     let path = Path::new(&p.path);
     match std::fs::metadata(path) {
         Ok(md) if !core_media::is_cloud_placeholder(&md) => {}
@@ -384,7 +451,7 @@ fn extract_one_meta(p: &PendingMeta, ctx: &MetaCtx, tz_offset_min: i64) -> Optio
         // select_pending_meta chỉ trả video khi có ffprobe
         let ff = ctx.ffprobe.as_deref()?;
         let m = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            core_media::probe_video(ff, path, tz_offset_min)
+            core_media::probe_video_in_timezone(ff, path, timezone, tz_offset_min)
         }))
         .unwrap_or_default();
         return Some(MetaUpsert {
@@ -539,6 +606,11 @@ pub async fn list_jobs(state: State<'_, AppState>) -> CmdResult<Vec<JobRow>> {
     .await
 }
 
+#[tauri::command]
+pub fn list_active_jobs(state: State<'_, AppState>) -> Vec<JobProgress> {
+    state.jobs.active_jobs()
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryResult {
@@ -595,27 +667,32 @@ pub async fn fetch_rows(
 pub struct Settings {
     pub setup_done: bool,
     pub tz_offset_minutes: Option<i32>,
+    pub timezone: Option<String>,
+}
+
+fn read_settings(db: &core_db::Db) -> anyhow::Result<Settings> {
+    db.pool.with(|c| {
+        let stored_setup_done = core_db::ops::kv_get(c, "setup_done")?
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let tz_offset_minutes =
+            core_db::ops::kv_get(c, "tz_offset_minutes")?.and_then(|v| v.parse().ok());
+        let timezone = core_db::ops::kv_get(c, "timezone")?;
+        // Fixed offset cũ không xác định duy nhất được IANA zone/DST.
+        // Buộc xác nhận wizard một lần thay vì âm thầm đoán sai.
+        let setup_done = stored_setup_done && timezone.is_some();
+        Ok(Settings {
+            setup_done,
+            tz_offset_minutes,
+            timezone,
+        })
+    })
 }
 
 #[tauri::command]
 pub async fn get_settings(state: State<'_, AppState>) -> CmdResult<Settings> {
     let db = state.db.clone();
-    blocking(move || {
-        db.pool
-            .with(|c| {
-                let setup_done = core_db::ops::kv_get(c, "setup_done")?
-                    .map(|v| v == "1")
-                    .unwrap_or(false);
-                let tz_offset_minutes =
-                    core_db::ops::kv_get(c, "tz_offset_minutes")?.and_then(|v| v.parse().ok());
-                Ok(Settings {
-                    setup_done,
-                    tz_offset_minutes,
-                })
-            })
-            .map_err(err)
-    })
-    .await
+    blocking(move || read_settings(&db).map_err(err)).await
 }
 
 #[tauri::command]
@@ -626,6 +703,10 @@ pub async fn get_excluded_paths(state: State<'_, AppState>) -> CmdResult<Vec<Str
 
 #[tauri::command]
 pub async fn set_excluded_paths(state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<()> {
+    if state.recovery_active.load(Ordering::Acquire) {
+        return Err("ERR_RECOVERY_BUSY|".into());
+    }
+    crate::organize::invalidate_org_preview(&state);
     let writer = state.db.writer.clone();
     blocking(move || {
         writer
@@ -638,18 +719,167 @@ pub async fn set_excluded_paths(state: State<'_, AppState>, paths: Vec<String>) 
 #[tauri::command]
 pub async fn set_settings(
     state: State<'_, AppState>,
+    timezone: String,
     tz_offset_minutes: i32,
     setup_done: bool,
 ) -> CmdResult<()> {
-    let writer = state.db.writer.clone();
-    blocking(move || {
-        writer
-            .exec(move |c| {
-                core_db::ops::kv_set(c, "tz_offset_minutes", &tz_offset_minutes.to_string())?;
-                core_db::ops::kv_set(c, "setup_done", if setup_done { "1" } else { "0" })?;
-                Ok(())
+    if state.recovery_active.load(Ordering::Acquire) {
+        return Err("ERR_RECOVERY_BUSY|".into());
+    }
+    let db = state.db.clone();
+    let jobs = state.jobs.clone();
+    let gate = state.meta_start_gate.clone();
+    let preview = state.org_preview.clone();
+    let preview_cancel = state.org_preview_cancel.clone();
+    let result =
+        blocking(move || apply_settings(&db, &jobs, gate, timezone, tz_offset_minutes, setup_done))
+            .await;
+    if result.is_ok() {
+        if let Some(cancel) = preview_cancel
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+        {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        *preview.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+    result
+}
+
+fn apply_settings(
+    db: &core_db::Db,
+    jobs: &core_jobs::JobManager,
+    gate: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    timezone: String,
+    tz_offset_minutes: i32,
+    setup_done: bool,
+) -> CmdResult<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    if core_ingest::date::timezone_offset_minutes(&timezone, now).is_none() {
+        return Err(format!("ERR_TZ_INVALID|{timezone}"));
+    }
+
+    // Serialize với start_meta_scan. Job dùng zone cũ phải dừng hoàn toàn
+    // TRƯỚC khi xóa rows, nếu không batch đang ffprobe có thể ghi dữ liệu
+    // cũ trở lại ngay sau DELETE.
+    let gate_deadline = Instant::now() + Duration::from_secs(30);
+    while gate
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        if Instant::now() > gate_deadline {
+            return Err("ERR_META_STOP_TIMEOUT|meta start gate busy".into());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let _gate = GateGuard(gate);
+
+    let old_timezone = db
+        .pool
+        .with(|c| core_db::ops::kv_get(c, "timezone"))
+        .map_err(err)?;
+    let timezone_changed = old_timezone.as_deref() != Some(timezone.as_str());
+    if timezone_changed {
+        if let Some(id) = jobs.active_job_of_kind("meta") {
+            jobs.cancel(id);
+            // Acquiring the start gate and stopping a running worker are two distinct
+            // waits. Reusing the first deadline could cancel a healthy job and then time
+            // out immediately, leaving the requested setting unapplied.
+            let stop_deadline = Instant::now() + Duration::from_secs(30);
+            while jobs.active_job_of_kind("meta").is_some() {
+                if Instant::now() > stop_deadline {
+                    return Err("ERR_META_STOP_TIMEOUT|meta job did not stop".into());
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+
+    db.writer
+        .exec(move |c| {
+            let new_offset = tz_offset_minutes.to_string();
+            core_db::ops::kv_set(c, "tz_offset_minutes", &new_offset)?;
+            core_db::ops::kv_set(c, "timezone", &timezone)?;
+            core_db::ops::kv_set(c, "setup_done", if setup_done { "1" } else { "0" })?;
+            if timezone_changed {
+                // creation_time UTC của video đã được đổi thành wall-clock
+                // theo zone cũ; xóa để meta job probe lại với DST-aware zone.
+                c.execute(
+                    "DELETE FROM media_meta WHERE file_id IN
+                           (SELECT id FROM files WHERE kind = 1)",
+                    [],
+                )?;
+            }
+            Ok(())
+        })
+        .map_err(err)
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    #[test]
+    fn legacy_fixed_offset_requires_iana_confirmation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = core_db::Db::open(tmp.path()).unwrap();
+        db.writer
+            .exec(|c| {
+                core_db::ops::kv_set(c, "setup_done", "1")?;
+                core_db::ops::kv_set(c, "tz_offset_minutes", "420")
             })
-            .map_err(err)
-    })
-    .await
+            .unwrap();
+        let old = read_settings(&db).unwrap();
+        assert!(!old.setup_done);
+        assert!(old.timezone.is_none());
+
+        db.writer
+            .exec(|c| core_db::ops::kv_set(c, "timezone", "Asia/Ho_Chi_Minh"))
+            .unwrap();
+        assert!(read_settings(&db).unwrap().setup_done);
+    }
+
+    #[test]
+    fn timezone_change_waits_for_old_meta_job_to_stop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = core_db::Db::open(tmp.path()).unwrap();
+        db.writer
+            .exec(|c| core_db::ops::kv_set(c, "timezone", "Etc/UTC"))
+            .unwrap();
+        let jobs = Arc::new(core_jobs::JobManager::new());
+        let cancel = jobs.register(7, "meta", None);
+        let jobs_worker = jobs.clone();
+        let worker = std::thread::spawn(move || {
+            while !cancel.load(Ordering::Relaxed) {
+                std::thread::yield_now();
+            }
+            jobs_worker.unregister(7);
+        });
+
+        apply_settings(
+            &db,
+            &jobs,
+            Arc::new(AtomicBool::new(false)),
+            "America/New_York".into(),
+            -240,
+            true,
+        )
+        .unwrap();
+        worker.join().unwrap();
+
+        assert!(jobs.active_job_of_kind("meta").is_none());
+        assert_eq!(
+            db.pool
+                .with(|c| core_db::ops::kv_get(c, "timezone"))
+                .unwrap()
+                .as_deref(),
+            Some("America/New_York")
+        );
+    }
 }

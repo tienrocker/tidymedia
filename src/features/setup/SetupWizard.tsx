@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { LANGS } from "../../i18n";
 import { api } from "../../lib/ipc";
-import { systemTzOffsetMinutes, tzOptions } from "../../lib/time";
+import { systemTimeZone, tzOptions } from "../../lib/time";
 import { runSafe, useStore } from "../../state/store";
 
 const LANG_LABELS: Record<string, string> = {
@@ -21,15 +21,32 @@ export function SettingsDialog({
   onClose?: () => void;
 }) {
   const { t, i18n } = useTranslation();
-  const storedTz = useStore((s) => s.tzOffsetMinutes);
+  const storedTz = useStore((s) => s.timezone);
   const [lang, setLang] = useState(i18n.resolvedLanguage ?? "en");
-  const [tz, setTz] = useState(firstRun ? systemTzOffsetMinutes() : storedTz);
+  const [tz, setTz] = useState(firstRun ? systemTimeZone() : storedTz);
   const [excluded, setExcluded] = useState<string[]>([]);
   const [excludedChanged, setExcludedChanged] = useState(false);
-  const systemTz = systemTzOffsetMinutes();
+  const [excludedLoaded, setExcludedLoaded] = useState(false);
+  const [excludedLoadFailed, setExcludedLoadFailed] = useState(false);
+  const systemTz = systemTimeZone();
+
+  const loadExcluded = () => {
+    setExcludedLoaded(false);
+    setExcludedLoadFailed(false);
+    api
+      .getExcludedPaths()
+      .then((paths) => {
+        setExcluded(paths);
+        setExcludedLoaded(true);
+      })
+      .catch((e) => {
+        setExcludedLoadFailed(true);
+        useStore.getState().showToast(String(e), true);
+      });
+  };
 
   useEffect(() => {
-    api.getExcludedPaths().then(setExcluded).catch(console.error);
+    loadExcluded();
   }, []);
 
   // Focus trap tối giản: Tab quay vòng trong dialog, không lọt ra background
@@ -84,7 +101,10 @@ export function SettingsDialog({
   const onSave = () => {
     runSafe(async () => {
       await i18n.changeLanguage(lang);
-      await api.setExcludedPaths(excluded);
+      if (excludedChanged) {
+        useStore.setState({ orgPreview: null });
+        await api.setExcludedPaths(excluded);
+      }
       await useStore.getState().saveSettings(tz);
       if (excludedChanged && !firstRun) {
         useStore.getState().showToast(t("wizard.rescanHint"), false);
@@ -141,12 +161,12 @@ export function SettingsDialog({
         <select
           className="mt-1 w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-neutral-200 outline-none focus:border-neutral-500"
           value={tz}
-          onChange={(e) => setTz(Number(e.target.value))}
+          onChange={(e) => setTz(e.target.value)}
         >
-          {tzOptions().map((o) => (
-            <option key={o.minutes} value={o.minutes}>
+          {tzOptions(storedTz).map((o) => (
+            <option key={o.id} value={o.id}>
               {o.label}
-              {o.minutes === systemTz ? ` - ${t("wizard.systemDefault")}` : ""}
+              {o.id === systemTz ? ` - ${t("wizard.systemDefault")}` : ""}
             </option>
           ))}
         </select>
@@ -157,15 +177,26 @@ export function SettingsDialog({
           </label>
           <button
             onClick={addExcluded}
+            disabled={!excludedLoaded}
             className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
           >
             {t("roots.add")}
           </button>
         </div>
         <div className="mt-1 flex max-h-36 flex-col gap-1 overflow-y-auto">
-          {excluded.length === 0 && (
+          {excludedLoadFailed ? (
+            <div className="flex items-center justify-between gap-2 text-xs text-amber-400">
+              <span>{t("wizard.excludedLoadFailed")}</span>
+              <button
+                onClick={loadExcluded}
+                className="rounded bg-neutral-800 px-2 py-0.5 text-neutral-200 hover:bg-neutral-700"
+              >
+                {t("wizard.retry")}
+              </button>
+            </div>
+          ) : excluded.length === 0 ? (
             <div className="text-xs text-neutral-600">{t("wizard.excludedEmpty")}</div>
-          )}
+          ) : null}
           {excluded.map((p) => (
             <div
               key={p}
@@ -176,6 +207,7 @@ export function SettingsDialog({
               </span>
               <button
                 onClick={() => removeExcluded(p)}
+                disabled={!excludedLoaded}
                 className="rounded px-1 text-xs text-red-400 hover:bg-neutral-800"
                 title={t("roots.remove")}
               >
@@ -187,7 +219,8 @@ export function SettingsDialog({
 
         <button
           onClick={onSave}
-          className="mt-6 w-full rounded bg-emerald-700 py-2 font-semibold text-white hover:bg-emerald-600"
+          disabled={!excludedLoaded && !(excludedLoadFailed && !excludedChanged)}
+          className="mt-6 w-full rounded bg-emerald-700 py-2 font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
         >
           {firstRun ? t("wizard.start") : t("wizard.save")}
         </button>

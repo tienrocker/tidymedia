@@ -40,7 +40,8 @@ function LightboxInner({ index }: { index: number }) {
   const { t } = useTranslation();
   const total = useStore((s) => s.total);
   const rows = useStore((s) => s.rows);
-  const tz = useStore((s) => s.tzOffsetMinutes);
+  const tz = useStore((s) => s.timezone);
+  const tzOffset = useStore((s) => s.tzOffsetMinutes);
   const row = rows.get(index);
 
   const [zoom, setZoom] = useState<Zoom>(ZOOM_RESET);
@@ -319,7 +320,10 @@ function LightboxInner({ index }: { index: number }) {
               }
             />
             <InfoRow label={t("lightbox.camera")} value={detail?.camera ?? null} />
-            <InfoRow label={t("list.modified")} value={fmtDateTime(row.mtime, tz)} />
+            <InfoRow
+              label={t("list.modified")}
+              value={fmtDateTime(row.mtime, tz, tzOffset)}
+            />
           </div>
         )}
       </div>

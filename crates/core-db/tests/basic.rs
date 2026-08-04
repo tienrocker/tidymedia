@@ -131,6 +131,53 @@ fn scan_upsert_query_reconcile() {
 }
 
 #[test]
+fn reconcile_preserves_unreadable_subtree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(tmp.path()).unwrap();
+    db.writer
+        .exec(|c| ops::upsert_root(c, "D:\\Photos"))
+        .unwrap();
+    let initial = vec![
+        entry("D:\\Photos\\ok", "keep.jpg", "jpg", 0, 10, 1),
+        entry("D:\\Photos\\locked", "still-there.jpg", "jpg", 0, 20, 1),
+        entry("D:\\Photos\\gone", "deleted.jpg", "jpg", 0, 30, 1),
+    ];
+    db.writer
+        .exec(move |c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(c, 1, 1, &initial, &mut cache)
+        })
+        .unwrap();
+    let rescan = vec![entry("D:\\Photos\\ok", "keep.jpg", "jpg", 0, 10, 1)];
+    db.writer
+        .exec(move |c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(c, 1, 2, &rescan, &mut cache)
+        })
+        .unwrap();
+
+    let marked = db
+        .writer
+        .exec(|c| ops::reconcile_scan_excluding(c, "D:\\Photos", 2, &["D:\\Photos\\locked".into()]))
+        .unwrap();
+    assert_eq!(marked, 1, "chi file trong subtree gone bi missing");
+
+    let locked = db
+        .pool
+        .with(|c| {
+            query::query_ids(
+                c,
+                &FileFilter {
+                    text: Some("still-there".into()),
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+    assert_eq!(locked.len(), 1, "subtree doc loi phai giu index cu");
+}
+
+#[test]
 fn root_overlap_rules() {
     let tmp = tempfile::tempdir().unwrap();
     let db = Db::open(tmp.path()).unwrap();
@@ -308,8 +355,19 @@ fn dedup_hash_pipeline_and_groups() {
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].count, 3);
     assert!(!list[0].samples.is_empty());
+    let stable_group_id = list[0].id;
 
-    let members = db.pool.with(|c| ops::get_dup_group(c, list[0].id)).unwrap();
+    db.writer.exec(ops::rebuild_dup_groups).unwrap();
+    let rebuilt = db.pool.with(ops::list_dup_groups).unwrap();
+    assert_eq!(
+        rebuilt[0].id, stable_group_id,
+        "unchanged hash keeps group id"
+    );
+
+    let members = db
+        .pool
+        .with(|c| ops::get_dup_group(c, stable_group_id))
+        .unwrap();
     assert_eq!(members.len(), 3);
 
     // Delete context phủ CẢ nhóm khi chỉ đưa 1 id
@@ -490,4 +548,61 @@ fn org_library_roots_journal_and_relocate() {
         .unwrap();
     let batches = db.pool.with(org::list_org_batches).unwrap();
     assert_eq!((batches[0].moved, batches[0].undone), (0, 1));
+}
+
+#[test]
+fn finish_root_scan_updates_bookkeeping_without_reconcile() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(tmp.path()).unwrap();
+    db.writer
+        .exec(|c| ops::upsert_root(c, r"D:\Photos"))
+        .unwrap();
+    db.writer
+        .exec(|c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(
+                c,
+                1,
+                7,
+                &[entry(r"D:\Photos", "kept.jpg", "jpg", 0, 10, 1)],
+                &mut cache,
+            )
+        })
+        .unwrap();
+
+    // This is the path used when reconciliation is conservatively skipped after an
+    // unscoped walker error: root completion/counting must still happen.
+    db.writer
+        .exec(|c| ops::finish_root_scan(c, r"D:\Photos"))
+        .unwrap();
+    let root = db.pool.with(ops::list_roots).unwrap().remove(0);
+    assert!(root.last_scan_at.is_some());
+    assert_eq!(root.file_count, 1);
+}
+
+#[test]
+fn schema_v5_migrates_recovery_terminal_state_columns() {
+    let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+    ops::ensure_schema(&mut conn).unwrap();
+    conn.execute_batch(
+        "ALTER TABLE org_ops DROP COLUMN recovery_error;
+         ALTER TABLE org_ops DROP COLUMN recovery_attempted_at;
+         PRAGMA user_version = 5;",
+    )
+    .unwrap();
+
+    ops::ensure_schema(&mut conn).unwrap();
+
+    let version: i64 = conn
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 6);
+    let mut columns = conn.prepare("PRAGMA table_info(org_ops)").unwrap();
+    let names: Vec<String> = columns
+        .query_map([], |r| r.get(1))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(names.iter().any(|name| name == "recovery_error"));
+    assert!(names.iter().any(|name| name == "recovery_attempted_at"));
 }

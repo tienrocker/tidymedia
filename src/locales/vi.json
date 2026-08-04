@@ -13,7 +13,8 @@
     "anyDur": "Mọi thời lượng",
     "durShort": "≤ 1 phút",
     "durMedium": "1-10 phút",
-    "durLong": "> 10 phút"
+    "durLong": "> 10 phút",
+    "invalidLocalDate": "Ngày này không tồn tại trong múi giờ đã chọn. Bộ lọc đã được xóa."
   },
   "view": {
     "grid": "Lưới thumbnail",
@@ -39,19 +40,26 @@
     "fileTemplate": "Tên file",
     "tokens": "Token",
     "tokensHint": "Token ngày/giờ lấy từ ngày chụp của ảnh. {hash4} {hash8} {hash16} = 4/8/16 ký tự đầu của vân tay nội dung file (2 ảnh khác nhau chụp cùng giây vẫn ra tên khác). {camera} = tên máy ảnh từ EXIF, ví dụ \"Apple iPhone 12\" - file không có thì để trống.",
+    "noHashTokenHint": "Không có token {hash4}/{hash8}/{hash16} thì Organize không phân biệt được nội dung: gom lần 2 từ cùng nguồn sẽ tạo bản _2 thay vì báo là trùng. Phải dùng Dedup dọn sau.",
     "sample": "Ví dụ",
     "settingsSaved": "Đã lưu cách đặt tên",
     "run": "Chạy",
     "includeUncertain": "Gom cả file không chắc ngày chụp (chỉ có giờ file)",
     "preview": "Xem trước (dry-run)",
     "previewing": "Đang quét…",
+    "cancelPreview": "Hủy xem trước",
+    "previewInvalidated": "Thư viện vừa thay đổi nên bản xem trước cũ đã được xóa.",
     "previewFirst": "Chạy xem trước đã",
+    "prepareHashes": "Chuẩn bị vân tay nội dung",
+    "hashConfirm": "Đọc các file đang cần vân tay nội dung? Một Live Photo có thể gồm cả video đi kèm. Việc này có thể lâu, chạy nền và hủy được; xong rồi cần xem trước lại.",
+    "hashRequired": "Cần vân tay nội dung - chuẩn bị hash rồi xem trước lại",
+    "hashPreparedDone": "Đã chuẩn bị xong vân tay nội dung. Hãy chạy Xem trước lại.",
     "execute": "Gom {{n}} file",
     "confirm": "Chuyển {{n}} file vào thư mục kho? Mọi bước đều ghi sổ và undo được.",
     "running": "Đang gom…",
     "cMoves": "sẽ chuyển",
     "cCopies": "sẽ copy xuyên ổ",
-    "cNeedsHash": "sẽ hash trước",
+    "cNeedsHash": "cần chuẩn bị vân tay",
     "cOrganized": "đã đúng chỗ",
     "cDuplicate": "trùng với file trong kho",
     "cCloud": "chỉ có trên cloud",
@@ -84,7 +92,7 @@
     "ruleOldest": "Giữ bản cũ nhất",
     "ruleNewest": "Giữ bản mới nhất",
     "deleteBtn": "Xóa {{n}} bản ({{size}})",
-    "confirm": "Chuyển {{n}} file ({{size}}) vào Thùng rác? Video của Live Photo đi cùng ảnh của nó. Mỗi ảnh luôn còn ít nhất 1 bản đã verify.",
+    "confirm": "Chuyển {{n}} file ({{size}}) vào Thùng rác? Video Live Photo chỉ đi theo khi ảnh được giữ có video giống hệt đã verify. Mỗi ảnh luôn còn ít nhất 1 bản đã verify.",
     "deleteResult": "Đã chuyển {{n}} file vào Thùng rác (giải phóng {{size}})",
     "skipped": "{{n}} bản bỏ qua",
     "reason": {
@@ -141,7 +149,8 @@
   "jobs": {
     "title": "Tác vụ",
     "none": "Không có tác vụ nào đang chạy",
-    "stop": "dừng"
+    "stop": "dừng",
+    "cancelled": "Đã hủy tác vụ."
   },
   "status": {
     "files_other": "{{formatted}} file",
@@ -160,7 +169,9 @@
     "excluded": "Thư mục loại trừ",
     "excludedEmpty": "Chưa có - mọi thư mục trong root theo dõi đều được quét.",
     "excludePick": "Chọn thư mục muốn loại khỏi scan",
-    "rescanHint": "Đã đổi thư mục loại trừ - bấm ⟳ trên thư mục theo dõi để áp dụng."
+    "rescanHint": "Đã đổi thư mục loại trừ - bấm ⟳ trên thư mục theo dõi để áp dụng.",
+    "excludedLoadFailed": "Không tải được thư mục loại trừ. Vẫn có thể lưu an toàn nếu không thay đổi danh sách.",
+    "retry": "Thử lại"
   },
   "errors": {
     "generic": "Lỗi: {{detail}}",
@@ -173,6 +184,12 @@
     "ERR_TPL_SEP_IN_FILE": "Template tên file không được chứa \\ hay /",
     "ERR_ORG_NO_LIBRARY_ROOT": "Chọn thư mục kho trước đã",
     "ERR_ORG_BUSY": "Đang có đợt gom/hoàn tác chạy dở - chờ xong đã",
+    "ERR_ORG_PREVIEW_STALE": "Thư viện đã thay đổi sau dry-run. Hãy chạy Xem trước lại.",
+    "ERR_ORG_PREVIEW_CANCELLED": "Đã hủy xem trước.",
+    "ERR_INDEX_BUSY": "Thư viện đang bận tác vụ khác. Chờ tác vụ đó xong rồi thử lại.",
+    "ERR_RECOVERY_BUSY": "App đang hoàn tất phục hồi sau sự cố ở nền. Thử lại sau một lát.",
+    "ERR_META_STOP_TIMEOUT": "Job metadata không dừng kịp. Hãy thử lại.",
+    "ERR_TZ_INVALID": "Múi giờ không được hỗ trợ: {{detail}}",
     "ERR_NOT_DIR": "Không phải thư mục: {{detail}}",
     "ERR_UNC_UNSUPPORTED": "Chưa hỗ trợ đường dẫn mạng (\\\\server\\…): {{detail}}",
     "ERR_ROOT_COVERED": "Đã được index bởi thư mục theo dõi {{detail}}",

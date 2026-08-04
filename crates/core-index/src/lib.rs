@@ -81,9 +81,45 @@ struct ScanTrack {
     walk_errors: AtomicU64,
     lossy_names: AtomicU64,
     write_errors: AtomicU64,
+    unknown_walk_errors: AtomicU64,
     first_write_error: Mutex<Option<String>>,
+    unreadable_scopes: Mutex<Vec<String>>,
     inflight: Mutex<usize>,
     inflight_cv: Condvar,
+}
+
+fn record_walk_error(track: &ScanTrack, path: Option<&Path>, protect_parent: bool) {
+    track.walk_errors.fetch_add(1, Ordering::Relaxed);
+    let Some(path) = path else {
+        track.unknown_walk_errors.fetch_add(1, Ordering::Relaxed);
+        return;
+    };
+    let protected = if protect_parent {
+        path.parent().unwrap_or(path)
+    } else {
+        path
+    };
+    let Some(s) = protected.to_str() else {
+        track.unknown_walk_errors.fetch_add(1, Ordering::Relaxed);
+        return;
+    };
+    let scope = ops::normalize_path(s);
+    let mut scopes = lock_ignore_poison(&track.unreadable_scopes);
+    let is_under = |path: &str, parent: &str| {
+        let path = path.to_uppercase();
+        let parent = parent.to_uppercase();
+        path == parent
+            || path
+                .strip_prefix(&parent)
+                .is_some_and(|rest| rest.starts_with('\\'))
+    };
+    // Giữ tập scope tối thiểu: đã bảo vệ parent thì không cần hàng nghìn child;
+    // scope parent mới cũng hấp thụ các child cũ.
+    if scopes.iter().any(|p| is_under(&scope, p)) {
+        return;
+    }
+    scopes.retain(|p| !is_under(p, &scope));
+    scopes.push(scope);
 }
 
 /// Mutex lock bỏ qua poison — batch trước panic không được phép giết scan.
@@ -296,12 +332,16 @@ pub fn scan_root(
             break;
         }
         let Ok(dent) = dent else {
-            track.walk_errors.fetch_add(1, Ordering::Relaxed);
+            record_walk_error(&track, None, false);
             continue;
         };
-        let Ok(md) = dent.metadata() else {
-            track.walk_errors.fetch_add(1, Ordering::Relaxed);
-            continue;
+        let md = match dent.metadata() {
+            Ok(md) => md,
+            Err(_) => {
+                let is_dir = dent.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                record_walk_error(&track, Some(&dent.path()), !is_dir);
+                continue;
+            }
         };
         if md.is_dir() {
             let name_lower = dent.file_name().to_string_lossy().to_ascii_lowercase();
@@ -368,8 +408,27 @@ pub fn scan_root(
         bail!("ERR_SCAN_WRITE_FAILED|{write_errors} batch failed; first: {first}");
     }
 
+    let unknown_errors = track.unknown_walk_errors.load(Ordering::Relaxed);
+    let scopes = lock_ignore_poison(&track.unreadable_scopes).clone();
+    // SQLite build cũ có thể chỉ cho 999 bind params; mỗi scope dùng 3.
+    // Quá nhiều sibling lỗi thì bỏ reconcile an toàn thay vì làm cả scan fail.
+    const MAX_RECONCILE_SCOPES: usize = 300;
+    let marked = if unknown_errors > 0 || scopes.len() > MAX_RECONCILE_SCOPES {
+        // Không biết lỗi thuộc subtree nào thì không có cách kết luận file unseen
+        // là đã bị xóa. Giữ index cũ; scan sau thành công sẽ reconcile lại.
+        tracing::warn!(
+            unknown_errors,
+            scopes = scopes.len(),
+            "skip reconcile: unsafe error scope set"
+        );
+        0
+    } else {
+        let rs = root_str.clone();
+        writer
+            .exec(move |c| ops::reconcile_scan_excluding(c, &rs, gen, &scopes).map(|n| n as u64))?
+    };
     let rs = root_str.clone();
-    let marked = writer.exec(move |c| ops::reconcile_scan(c, &rs, gen).map(|n| n as u64))?;
+    writer.exec(move |c| ops::finish_root_scan(c, &rs))?;
     Ok(summary_base(marked, &track))
 }
 
@@ -399,9 +458,12 @@ fn walk_subtree(
                 return;
             }
             children.retain(|res| {
-                let Ok(entry) = res else {
-                    track_walk.walk_errors.fetch_add(1, Ordering::Relaxed);
-                    return false;
+                let entry = match res {
+                    Ok(entry) => entry,
+                    Err(err) => {
+                        record_walk_error(&track_walk, err.path(), true);
+                        return false;
+                    }
                 };
                 let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
                 if entry.file_type().is_dir() {
@@ -420,7 +482,7 @@ fn walk_subtree(
                     match entry.metadata() {
                         Ok(md) => file_attrs(&md) & ATTR_REPARSE_POINT == 0,
                         Err(_) => {
-                            track_walk.walk_errors.fetch_add(1, Ordering::Relaxed);
+                            record_walk_error(&track_walk, Some(&entry.path()), false);
                             false
                         }
                     }
@@ -439,18 +501,32 @@ fn walk_subtree(
         }
         let entry = match item {
             Ok(e) => e,
-            Err(_) => {
-                track.walk_errors.fetch_add(1, Ordering::Relaxed);
+            Err(e) => {
+                // Per-child errors were already consumed in process_read_dir above.
+                // A remaining iterator error belongs to this walk's root entry (`sub`),
+                // so protect that exact subtree rather than its watched-root parent.
+                record_walk_error(track, e.path(), false);
                 continue;
             }
         };
+        // jwalk reports a failed `read_dir(directory)` on the directory entry itself instead
+        // of yielding Err from the iterator. Protect that exact unreadable subtree; using its
+        // parent here would suppress reconcile for an unnecessarily broad scope (often root).
+        if let Some(e) = entry.read_children_error.as_ref() {
+            if let Some(path) = e.path() {
+                record_walk_error(track, Some(path), false);
+            } else {
+                let path = entry.path();
+                record_walk_error(track, Some(&path), false);
+            }
+        }
         if !entry.file_type().is_file() {
             continue;
         }
         let md = match entry.metadata() {
             Ok(m) => m,
             Err(_) => {
-                track.walk_errors.fetch_add(1, Ordering::Relaxed);
+                record_walk_error(track, Some(&entry.path()), true);
                 continue;
             }
         };
@@ -476,6 +552,15 @@ fn walk_subtree(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unreadable_directory_protects_exact_subtree_not_parent() {
+        let track = ScanTrack::default();
+        record_walk_error(&track, Some(Path::new(r"D:\Photos\Locked")), false);
+        let scopes = lock_ignore_poison(&track.unreadable_scopes).clone();
+        assert_eq!(scopes, vec![r"D:\Photos\Locked"]);
+        assert_ne!(scopes[0], r"D:\Photos");
+    }
 
     /// Regression cho bug "scan D:\ ra 0 file": root truyền vào với trailing
     /// backslash phải index được y như không có.

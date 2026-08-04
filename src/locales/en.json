@@ -13,7 +13,8 @@
     "anyDur": "Any duration",
     "durShort": "≤ 1 min",
     "durMedium": "1-10 min",
-    "durLong": "> 10 min"
+    "durLong": "> 10 min",
+    "invalidLocalDate": "That date does not exist in the selected timezone. The filter was cleared."
   },
   "view": {
     "grid": "Thumbnail grid",
@@ -39,19 +40,26 @@
     "fileTemplate": "File name",
     "tokens": "Tokens",
     "tokensHint": "Date/time tokens come from the photo's capture date. {hash4} {hash8} {hash16} = first 4/8/16 characters of the file's content fingerprint (keeps identical names apart). {camera} = camera model from EXIF, e.g. \"Apple iPhone 12\" - left empty when the file has none.",
+    "noHashTokenHint": "Without a {hash4}/{hash8}/{hash16} token, Organize cannot tell two files apart by content: a second import of the same photos lands as _2 copies instead of being reported as duplicates. Use Dedup afterwards to clean them up.",
     "sample": "Example",
     "settingsSaved": "Naming saved",
     "run": "Run",
     "includeUncertain": "Also organize files with uncertain dates (file-time only)",
     "preview": "Preview (dry-run)",
     "previewing": "Scanning…",
+    "cancelPreview": "Cancel preview",
+    "previewInvalidated": "The library changed, so the previous preview was cleared.",
     "previewFirst": "Run the preview first",
+    "prepareHashes": "Prepare content fingerprints",
+    "hashConfirm": "Read the files that need content fingerprints? Live Photo items can include a paired video. This may take a while, runs as a cancellable background job, and must finish before a new preview.",
+    "hashRequired": "Content fingerprint required - prepare hashes, then preview again",
+    "hashPreparedDone": "Content fingerprints prepared. Run Preview again.",
     "execute": "Organize {{n}} files",
     "confirm": "Move {{n}} files into your library folders? Every move is journaled and can be undone.",
     "running": "Organizing…",
     "cMoves": "will move",
     "cCopies": "will copy across drives",
-    "cNeedsHash": "will hash first",
+    "cNeedsHash": "need fingerprint preparation",
     "cOrganized": "already organized",
     "cDuplicate": "duplicates of library files",
     "cCloud": "cloud-only",
@@ -84,7 +92,7 @@
     "ruleOldest": "Keep oldest",
     "ruleNewest": "Keep newest",
     "deleteBtn": "Delete {{n}} ({{size}})",
-    "confirm": "Move {{n}} files ({{size}}) to the Recycle Bin? Live Photo videos go along with their photos. At least one verified copy of each photo always stays.",
+    "confirm": "Move {{n}} files ({{size}}) to the Recycle Bin? A Live Photo video moves only when the kept photo has a verified identical video. At least one verified copy of each photo always stays.",
     "deleteResult": "Moved {{n}} files to Recycle Bin ({{size}} freed)",
     "skipped": "{{n}} skipped",
     "reason": {
@@ -142,7 +150,8 @@
   "jobs": {
     "title": "Jobs",
     "none": "No running jobs",
-    "stop": "stop"
+    "stop": "stop",
+    "cancelled": "Job cancelled."
   },
   "status": {
     "files_one": "{{formatted}} file",
@@ -162,7 +171,9 @@
     "excluded": "Excluded folders",
     "excludedEmpty": "None - every folder in watched roots is scanned.",
     "excludePick": "Pick a folder to exclude from scanning",
-    "rescanHint": "Excluded folders changed - hit ⟳ on your watched folders to apply."
+    "rescanHint": "Excluded folders changed - hit ⟳ on your watched folders to apply.",
+    "excludedLoadFailed": "Could not load excluded folders. Saving without changes is still safe.",
+    "retry": "Retry"
   },
   "errors": {
     "generic": "Error: {{detail}}",
@@ -175,6 +186,12 @@
     "ERR_TPL_SEP_IN_FILE": "File name template can't contain \\ or /",
     "ERR_ORG_NO_LIBRARY_ROOT": "Pick a library folder first",
     "ERR_ORG_BUSY": "An organize or undo run is already in progress - wait for it to finish",
+    "ERR_ORG_PREVIEW_STALE": "The library changed after the preview. Run Preview again.",
+    "ERR_ORG_PREVIEW_CANCELLED": "Preview cancelled.",
+    "ERR_INDEX_BUSY": "The library is busy with another operation. Wait for it to finish.",
+    "ERR_RECOVERY_BUSY": "Crash recovery is still finishing in the background. Try again shortly.",
+    "ERR_META_STOP_TIMEOUT": "The metadata job did not stop in time. Try again.",
+    "ERR_TZ_INVALID": "Unsupported timezone: {{detail}}",
     "ERR_NOT_DIR": "Not a folder: {{detail}}",
     "ERR_UNC_UNSUPPORTED": "Network paths (\\\\server\\…) are not supported yet: {{detail}}",
     "ERR_ROOT_COVERED": "Already indexed by watched folder {{detail}}",

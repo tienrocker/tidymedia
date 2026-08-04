@@ -88,6 +88,7 @@ export interface QueryResult {
 export interface Settings {
   setupDone: boolean;
   tzOffsetMinutes: number | null;
+  timezone: string | null;
 }
 
 export interface DupGroupRow {
@@ -145,6 +146,7 @@ export interface OrgPreviewRow {
 }
 
 export interface OrgPreview {
+  previewId: number;
   total: number;
   moves: number;
   copies: number;
@@ -173,12 +175,13 @@ export const api = {
   startScan: (rootId: number) => invoke<number>("start_scan", { rootId }),
   cancelJob: (jobId: number) => invoke<boolean>("cancel_job", { jobId }),
   listJobs: () => invoke<JobRow[]>("list_jobs"),
+  listActiveJobs: () => invoke<JobProgress[]>("list_active_jobs"),
   queryFiles: (filter: FileFilter) => invoke<QueryResult>("query_files", { filter }),
   fetchRows: (queryId: number, start: number, count: number) =>
     invoke<(FileRow | null)[]>("fetch_rows", { queryId, start, count }),
   getSettings: () => invoke<Settings>("get_settings"),
-  setSettings: (tzOffsetMinutes: number, setupDone: boolean) =>
-    invoke<void>("set_settings", { tzOffsetMinutes, setupDone }),
+  setSettings: (timezone: string, tzOffsetMinutes: number, setupDone: boolean) =>
+    invoke<void>("set_settings", { timezone, tzOffsetMinutes, setupDone }),
   getExcludedPaths: () => invoke<string[]>("get_excluded_paths"),
   setExcludedPaths: (paths: string[]) => invoke<void>("set_excluded_paths", { paths }),
   startMetaScan: () => invoke<number | null>("start_meta_scan"),
@@ -201,8 +204,11 @@ export const api = {
   removeLibraryRoot: (id: number) => invoke<void>("remove_library_root", { id }),
   orgPreview: (includeUncertain: boolean) =>
     invoke<OrgPreview>("org_preview", { includeUncertain }),
-  startOrganize: (includeUncertain: boolean) =>
-    invoke<number | null>("start_organize", { includeUncertain }),
+  cancelOrgPreview: () => invoke<boolean>("cancel_org_preview"),
+  startOrgHashScan: (includeUncertain: boolean) =>
+    invoke<number | null>("start_org_hash_scan", { includeUncertain }),
+  startOrganize: (includeUncertain: boolean, previewId: number) =>
+    invoke<number | null>("start_organize", { includeUncertain, previewId }),
   listOrgBatches: () => invoke<OrgBatchRow[]>("list_org_batches"),
   undoOrgBatch: (batchId: number) => invoke<number | null>("undo_org_batch", { batchId }),
 };

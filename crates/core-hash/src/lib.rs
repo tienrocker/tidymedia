@@ -6,6 +6,7 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Result;
 
@@ -42,6 +43,25 @@ pub fn full_blake3(path: &Path) -> Result<[u8; 32]> {
     let mut hasher = blake3::Hasher::new();
     hasher.update_reader(File::open(path)?)?;
     Ok(*hasher.finalize().as_bytes())
+}
+
+/// Cancellable BLAKE3 for background recovery. `None` means cancellation, not
+/// an I/O/hash failure. Reading in bounded chunks prevents a single huge file
+/// from making the application's Stop button ineffective for minutes.
+pub fn full_blake3_cancellable(path: &Path, cancel: &AtomicBool) -> Result<Option<[u8; 32]>> {
+    let mut file = File::open(path)?;
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            return Ok(Some(*hasher.finalize().as_bytes()));
+        }
+        hasher.update(&buf[..n]);
+    }
 }
 
 #[cfg(test)]
@@ -97,6 +117,14 @@ mod tests {
             full_blake3(&p).unwrap(),
             *blake3::hash(b"hello world").as_bytes()
         );
+        std::fs::remove_file(p).ok();
+    }
+
+    #[test]
+    fn cancellable_full_hash_stops_before_reading() {
+        let p = temp_file("cancel.bin", &[9u8; 1024]);
+        let cancel = AtomicBool::new(true);
+        assert_eq!(full_blake3_cancellable(&p, &cancel).unwrap(), None);
         std::fs::remove_file(p).ok();
     }
 }
