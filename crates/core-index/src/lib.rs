@@ -454,7 +454,15 @@ fn walk_subtree(
                 continue;
             }
         };
-        let dir_path = ops::normalize_path(&entry.parent_path().to_string_lossy());
+        // Tên THƯ MỤC lossy cũng nguy hiểm y như tên file lossy: path lưu vào
+        // index chứa U+FFFD sẽ không tồn tại trên đĩa — mọi move/delete sau
+        // này trỏ sai chỗ. Skip + đếm, giống chính sách với tên file.
+        let parent = entry.parent_path();
+        let Some(parent_str) = parent.to_str() else {
+            track.lossy_names.fetch_add(1, Ordering::Relaxed);
+            continue;
+        };
+        let dir_path = ops::normalize_path(parent_str);
         if let Some(e) = make_entry(&dir_path, entry.file_name().to_os_string(), &md, track) {
             batch.push(e);
             if batch.len() >= BATCH_SIZE {

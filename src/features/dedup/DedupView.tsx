@@ -48,7 +48,12 @@ function GroupList() {
                 g.id === activeId ? "bg-neutral-800" : "hover:bg-neutral-900"
               }`}
               style={{ height: GROUP_ROW_H, transform: `translateY(${vi.start}px)` }}
-              onClick={() => runSafe(() => useStore.getState().openDupGroup(g.id))}
+              onClick={(e) => {
+                // Blur để keyboard-flow (Space/1-9) không bị nuốt bởi button
+                // đang giữ focus sau cú click
+                e.currentTarget.blur();
+                runSafe(() => useStore.getState().openDupGroup(g.id));
+              }}
             >
               <div className="flex shrink-0 -space-x-4">
                 {g.samples.map(([id, mtime]) => (
@@ -139,7 +144,7 @@ function MemberCard({
             : "border-emerald-900/60"
       }`}
     >
-      {/* Preview — zoom/pan ĐỒNG BỘ giữa mọi card trong nhóm */}
+      {/* Preview - zoom/pan ĐỒNG BỘ giữa mọi card trong nhóm */}
       <div
         ref={boxRef}
         className="relative h-56 shrink-0 cursor-crosshair overflow-hidden bg-black"
@@ -197,7 +202,7 @@ function MemberCard({
         </button>
       </div>
 
-      {/* Metadata so sánh — giá trị tốt nhất được badge */}
+      {/* Metadata so sánh - giá trị tốt nhất được badge */}
       <div className="space-y-0.5 bg-neutral-950 px-2 py-1.5 text-xs">
         <div className="truncate text-neutral-200" title={m.name}>
           {m.name}
@@ -242,19 +247,28 @@ function GroupCompare() {
     setFocusIdx(0);
   }, [groupId]);
 
+  // Mirror focusIdx ra ref cho keyboard handler (deps rỗng): gọi action trong
+  // updater của setState là impure - StrictMode double-invoke chạy toggle 2
+  // lần (check rồi uncheck ngay) làm Space thành no-op trong dev.
+  const focusIdxRef = useRef(focusIdx);
+  focusIdxRef.current = focusIdx;
+
   // Keyboard-first: ←→ chuyển card, Space đánh dấu, 1-4 giữ bản đó, Enter nhóm kế
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
-      // BUTTON: Enter/Space kích hoạt button đang focus — không chồng thêm
-      // hành động của mình lên (double-fire nhảy nhóm loạn)
       if (
         el &&
         (el.tagName === "INPUT" ||
           el.tagName === "TEXTAREA" ||
-          el.tagName === "SELECT" ||
-          el.tagName === "BUTTON")
+          el.tagName === "SELECT")
       ) {
+        return;
+      }
+      // BUTTON: chỉ nhường Enter/Space (kích hoạt native - chồng thêm hành
+      // động của mình là double-fire); mũi tên + 1-9 vẫn phải chạy để flow
+      // bàn phím không chết sau 1 cú click chuột.
+      if (el?.tagName === "BUTTON" && (e.key === "Enter" || e.key === " ")) {
         return;
       }
       const st = useStore.getState();
@@ -267,10 +281,8 @@ function GroupCompare() {
         setFocusIdx((i) => Math.min(n - 1, i + 1));
       } else if (e.key === " ") {
         e.preventDefault();
-        setFocusIdx((i) => {
-          st.toggleDupChecked(st.activeGroupId!, st.groupMembers[i].fileId);
-          return i;
-        });
+        const i = Math.min(focusIdxRef.current, n - 1);
+        st.toggleDupChecked(st.activeGroupId!, st.groupMembers[i].fileId);
       } else if (/^[1-9]$/.test(e.key)) {
         const idx = Number(e.key) - 1;
         if (idx < n) st.keepOnly(st.activeGroupId!, st.groupMembers[idx].fileId);

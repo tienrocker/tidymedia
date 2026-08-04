@@ -11,7 +11,7 @@ use crate::models::{
 
 /// Bump khi đổi schema. Có migration tăng dần từ v2 trở đi (giữ index của
 /// user); version lạ/quá cũ → wipe & recreate (rebuild bằng rescan, ok pre-1.0).
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 /// Migration tăng dần: MIGRATIONS[i] đưa schema từ version (i+2) lên (i+3).
 /// DDL PHẢI giống hệt schema.sql (fresh install đi thẳng schema.sql).
@@ -26,6 +26,16 @@ const MIGRATIONS: &[&str] = &[
      END;",
     // v3 -> v4: index reverse lookup Live Photo
     "CREATE INDEX files_live_pair ON files(live_pair_id) WHERE live_pair_id IS NOT NULL;",
+    // v4 -> v5: FTS AU trigger thêm WHEN (rescan không rewrite trigram khi tên
+    // không đổi) + org_ops.undone_at cho undo M5
+    "DROP TRIGGER files_fts_au;
+     CREATE TRIGGER files_fts_au AFTER UPDATE OF name_norm ON files
+     WHEN old.name_norm IS NOT new.name_norm
+     BEGIN
+       INSERT INTO files_fts(files_fts, rowid, name_norm) VALUES ('delete', old.id, old.name_norm);
+       INSERT INTO files_fts(rowid, name_norm) VALUES (new.id, new.name_norm);
+     END;
+     ALTER TABLE org_ops ADD COLUMN undone_at INTEGER;",
 ];
 const OLDEST_MIGRATABLE: i64 = 2;
 
@@ -964,6 +974,18 @@ pub fn get_delete_context(conn: &Connection, file_ids: &[i64]) -> Result<Vec<Del
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+/// Id mọi ẢNH (kind=0) đang trỏ live_pair_id vào file này. Dùng ngay trước
+/// khi trash 1 pair MOV: còn ảnh sống nào khác ngoài victim đã xóa → MOV
+/// không được đụng (HEIC + JPG export cùng stem share chung 1 MOV).
+pub fn image_refs_of_pair(conn: &Connection, pair_id: i64) -> Result<Vec<i64>> {
+    let mut st =
+        conn.prepare_cached("SELECT id FROM files WHERE live_pair_id = ?1 AND kind = 0")?;
+    let ids = st
+        .query_map([pair_id], |r| r.get(0))?
+        .collect::<Result<Vec<i64>, _>>()?;
+    Ok(ids)
 }
 
 /// Xóa row các file đã vào Recycle Bin thành công (CASCADE dọn hashes/meta/

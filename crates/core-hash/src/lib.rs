@@ -33,9 +33,14 @@ pub fn quick64(path: &Path) -> Result<i64> {
 }
 
 /// BLAKE3 toàn bộ nội dung — căn cứ duy nhất để kết luận trùng lặp.
+///
+/// KHÔNG mmap: ổ tháo được (USB/SD) bị rút giữa lúc đang fault page →
+/// EXCEPTION_IN_PAGE_ERROR là SEH chứ không phải Rust panic, catch_unwind
+/// không đỡ được và CẢ PROCESS chết. Đọc buffered thì cùng tình huống chỉ là
+/// io::Error bình thường. Hash vốn disk-bound nên không mất tốc độ thực tế.
 pub fn full_blake3(path: &Path) -> Result<[u8; 32]> {
     let mut hasher = blake3::Hasher::new();
-    hasher.update_mmap_rayon(path)?;
+    hasher.update_reader(File::open(path)?)?;
     Ok(*hasher.finalize().as_bytes())
 }
 

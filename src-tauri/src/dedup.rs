@@ -362,6 +362,9 @@ fn plan_delete(
     (plans, skipped)
 }
 
+/// Tuple: `(pair_id, owner_image_id, path, size, mtime)`
+type PairPlan = (i64, i64, String, i64, i64);
+
 /// Live-pair expansion THUẦN. Luật cứng:
 /// - CHỈ đi từ ảnh (kind=0) sang MOV — live_pair_id 2 chiều, đi từ MOV sẽ
 ///   trỏ ngược về ẢNH GỐC và xóa nhầm nó (P0 của review).
@@ -371,13 +374,13 @@ fn plan_pairs(
     plans: &[GroupPlan],
     keeper_ids: &std::collections::HashSet<i64>,
     lookup: &dyn Fn(i64) -> Option<(String, i64, i64, i64, i64)>, // (path, size, mtime, status, kind)
-) -> Vec<(i64, String, i64, i64)> {
+) -> Vec<PairPlan> {
     use std::collections::HashSet;
     let planned: HashSet<i64> = plans
         .iter()
         .flat_map(|g| g.victims.iter().map(|v| v.file_id))
         .collect();
-    let mut out: Vec<(i64, String, i64, i64)> = Vec::new();
+    let mut out: Vec<PairPlan> = Vec::new();
     for g in plans {
         for v in &g.victims {
             if v.kind != 0 {
@@ -392,12 +395,32 @@ fn plan_pairs(
             }
             if let Some((path, size, mtime, status, kind)) = lookup(pid) {
                 if status == 0 && kind == 1 {
-                    out.push((pid, path, size, mtime));
+                    out.push((pid, v.file_id, path, size, mtime));
                 }
             }
         }
     }
     out
+}
+
+/// Lọc pair NGAY TRƯỚC khi trash (thuần, test được). Pair chỉ được trash khi:
+/// - Ảnh chủ THỰC SỰ đã bị xóa — plan_pairs tính từ kế hoạch, nhưng victim có
+///   thể bị skip lúc thực thi (SURVIVOR_CHANGED / CHANGED_ON_DISK / TRASH_FAILED);
+///   trash MOV của ảnh còn nằm trên đĩa = xé cặp Live Photo còn sống.
+/// - Không còn ảnh sống nào KHÁC trỏ vào MOV này — HEIC + JPG export cùng stem
+///   cùng pair về 1 MOV: xóa JPG không được kéo MOV của HEIC đi theo.
+fn filter_pairs_for_trash(
+    pairs: &[PairPlan],
+    deleted: &std::collections::HashSet<i64>,
+    image_refs: &dyn Fn(i64) -> Vec<i64>, // id mọi ảnh (kind=0) có live_pair_id = pid
+) -> Vec<PairPlan> {
+    pairs
+        .iter()
+        .filter(|(pid, owner, ..)| {
+            deleted.contains(owner) && image_refs(*pid).iter().all(|img| deleted.contains(img))
+        })
+        .cloned()
+        .collect()
 }
 
 /// Xóa các bản trùng đã đánh dấu → Recycle Bin. Backend verify lại TOÀN BỘ
@@ -474,7 +497,7 @@ pub async fn delete_dup_files(
         let intent: Vec<String> = plans
             .iter()
             .flat_map(|g| g.victims.iter().map(|v| v.path.clone()))
-            .chain(pairs.iter().map(|(_, p, ..)| p.clone()))
+            .chain(pairs.iter().map(|(_, _, p, ..)| p.clone()))
             .collect();
         let journal = serde_json::to_string(&intent).unwrap_or_default();
         let jid = db
@@ -513,7 +536,15 @@ pub async fn delete_dup_files(
                 }
             }
         }
-        for (pid, path, size, mtime) in &pairs {
+        // Pair chỉ trash khi ảnh chủ THỰC SỰ đã xóa và không còn ảnh sống nào
+        // khác trỏ vào MOV (HEIC + JPG cùng stem share 1 MOV).
+        let deleted_set: HashSet<i64> = deleted_ids.iter().copied().collect();
+        let pairs_final = filter_pairs_for_trash(&pairs, &deleted_set, &|pid| {
+            db.pool
+                .with(|c| core_db::ops::image_refs_of_pair(c, pid))
+                .unwrap_or_default()
+        });
+        for (pid, _, path, size, mtime) in &pairs_final {
             match trash_one(path, *size, *mtime, &mut recycle_cache) {
                 Ok(()) => {
                     deleted_ids.push(*pid);
@@ -562,7 +593,7 @@ fn trash_one(
     let drive = path.chars().next().unwrap_or('?').to_ascii_uppercase();
     let has_bin = *recycle_cache
         .entry(drive)
-        .or_insert_with(|| std::path::Path::new(&format!("{drive}:\\$Recycle.Bin")).exists());
+        .or_insert_with(|| volume_supports_recycle(drive));
     if !has_bin {
         return Err("NO_RECYCLE_BIN");
     }
@@ -575,6 +606,47 @@ fn trash_one(
             tracing::warn!(path = %path, "trash failed: {e}");
             Err("TRASH_FAILED")
         }
+    }
+}
+
+/// Volume có hỗ trợ Recycle Bin thật không. Probe thư mục `$Recycle.Bin` sai
+/// cả 2 chiều: ổ FAT32 có sẵn folder rác từ máy khác → pass rồi bị
+/// IFileOperation XÓA VĨNH VIỄN; ổ NTFS mới tinh chưa từng recycle → chưa có
+/// folder → từ chối oan. Đúng cách: hỏi hệ điều hành loại drive + filesystem.
+/// Chỉ cho DRIVE_FIXED + NTFS/ReFS — ổ removable từ chối (hướng an toàn:
+/// thà bắt user tự xóa còn hơn hard-delete ngầm).
+fn volume_supports_recycle(drive: char) -> bool {
+    use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetVolumeInformationW};
+    /// winbase.h: DRIVE_FIXED = 3 (giá trị ABI cố định)
+    const DRIVE_FIXED: u32 = 3;
+    if !drive.is_ascii_alphabetic() {
+        return false;
+    }
+    let root: Vec<u16> = format!("{drive}:\\")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        if GetDriveTypeW(root.as_ptr()) != DRIVE_FIXED {
+            return false;
+        }
+        let mut fs_name = [0u16; 64];
+        if GetVolumeInformationW(
+            root.as_ptr(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            fs_name.as_mut_ptr(),
+            fs_name.len() as u32,
+        ) == 0
+        {
+            return false;
+        }
+        let len = fs_name.iter().position(|&c| c == 0).unwrap_or(0);
+        let name = String::from_utf16_lossy(&fs_name[..len]);
+        matches!(name.as_str(), "NTFS" | "ReFS")
     }
 }
 
@@ -733,5 +805,31 @@ mod tests {
         let lookup = |_: i64| Some(("D:\\t\\f300".to_string(), 50, 1, 0, 0)); // kind 0!
         let pairs = plan_pairs(&plans, &keeper_ids, &lookup);
         assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn pair_not_trashed_when_owner_was_skipped() {
+        // P1 review: victim ảnh 10 bị skip lúc thực thi (vd SURVIVOR_CHANGED)
+        // → MOV 100 của nó KHÔNG được trash (xé cặp Live Photo còn sống).
+        let pairs: Vec<PairPlan> = vec![(100, 10, "D:\\t\\f100".into(), 50, 1)];
+        let deleted: HashSet<i64> = HashSet::new(); // 10 không xóa được
+        let refs = |_: i64| vec![10];
+        assert!(filter_pairs_for_trash(&pairs, &deleted, &refs).is_empty());
+        // owner xóa thật → pair đi cùng
+        let deleted: HashSet<i64> = [10].into();
+        assert_eq!(filter_pairs_for_trash(&pairs, &deleted, &refs).len(), 1);
+    }
+
+    #[test]
+    fn shared_mov_protected_while_other_image_alive() {
+        // P1 review: HEIC (20) + JPG (10) cùng stem đều pair về MOV 100.
+        // Xóa JPG 10 → MOV phải Ở LẠI vì HEIC 20 còn sống vẫn trỏ vào nó.
+        let pairs: Vec<PairPlan> = vec![(100, 10, "D:\\t\\f100".into(), 50, 1)];
+        let deleted: HashSet<i64> = [10].into();
+        let refs = |_: i64| vec![10, 20]; // 20 còn sống
+        assert!(filter_pairs_for_trash(&pairs, &deleted, &refs).is_empty());
+        // cả 2 ảnh cùng bị xóa trong đợt này → MOV mới được đi
+        let deleted: HashSet<i64> = [10, 20].into();
+        assert_eq!(filter_pairs_for_trash(&pairs, &deleted, &refs).len(), 1);
     }
 }

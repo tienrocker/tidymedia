@@ -15,6 +15,7 @@ core-index.workspace = true
 core-jobs.workspace = true
 core-media.workspace = true
 trash.workspace = true
+windows-sys = { version = "0.60", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
 rayon.workspace = true
 crossbeam-channel.workspace = true
 tokio.workspace = true

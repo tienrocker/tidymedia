@@ -1,10 +1,12 @@
--- TidyMedia index schema v4
+-- TidyMedia index schema v5
 -- All timestamps are unix epoch milliseconds unless noted.
 -- v2: dirs.path_key (case-insensitive scoping), files.name_norm (accent-insensitive
 -- search), AUTOINCREMENT (chống rowid reuse), roots.file_count cache, files.status
 -- ghi được từ scanner (cloud placeholder).
 -- v3: trigger files_meta_invalidate — file đổi size/mtime thì meta/hash cũ vô nghĩa.
 -- v4: index files_live_pair — reverse lookup cặp Live Photo (HEIC <-> MOV).
+-- v5: files_fts_au thêm WHEN (rescan không rewrite cả FTS index khi tên không
+-- đổi), org_ops.undone_at (undo theo batch của M5 organize).
 -- media_meta.taken_at: EXIF không có timezone → lưu wall-clock camera encode như
 -- epoch ms khung UTC; hiển thị/organize đọc với tz=0 là ra đúng giờ camera.
 
@@ -84,7 +86,12 @@ END;
 CREATE TRIGGER files_fts_ad AFTER DELETE ON files BEGIN
   INSERT INTO files_fts(files_fts, rowid, name_norm) VALUES ('delete', old.id, old.name_norm);
 END;
-CREATE TRIGGER files_fts_au AFTER UPDATE OF name_norm ON files BEGIN
+-- WHEN bắt buộc: UPDATE OF bắn theo cột có mặt trong SET chứ không theo giá trị
+-- đổi thật — scan upsert luôn SET name_norm nên thiếu WHEN thì mỗi lần rescan
+-- 1M file là 1M lần delete+insert trigram vô nghĩa.
+CREATE TRIGGER files_fts_au AFTER UPDATE OF name_norm ON files
+WHEN old.name_norm IS NOT new.name_norm
+BEGIN
   INSERT INTO files_fts(files_fts, rowid, name_norm) VALUES ('delete', old.id, old.name_norm);
   INSERT INTO files_fts(rowid, name_norm) VALUES (new.id, new.name_norm);
 END;
@@ -198,7 +205,8 @@ CREATE TABLE org_ops(
   file_id INTEGER NOT NULL,
   old_path TEXT NOT NULL,
   new_path TEXT NOT NULL,
-  done_at INTEGER
+  done_at INTEGER,
+  undone_at INTEGER
 );
 CREATE INDEX org_ops_batch ON org_ops(batch_id);
 

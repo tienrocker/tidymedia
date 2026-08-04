@@ -80,6 +80,30 @@ impl JobManager {
         flag
     }
 
+    /// Đăng ký scan ATOMIC: check scan-đang-chạy + insert trong CÙNG một lần
+    /// giữ lock. Check rời rồi mới register (như cũ) thì 2 start_scan song song
+    /// cùng root (double-click / StrictMode double-invoke) đều lọt: 2 scan gen
+    /// chồng nhau → reconcile của gen sau đánh missing file đang tồn tại.
+    pub fn try_register_scan(&self, job_id: i64, root_id: i64) -> Option<CancelFlag> {
+        let mut map = self.active.lock().unwrap();
+        if map
+            .values()
+            .any(|i| i.kind == "scan" && i.root_id == Some(root_id))
+        {
+            return None;
+        }
+        let flag: CancelFlag = Arc::new(AtomicBool::new(false));
+        map.insert(
+            job_id,
+            JobInfo {
+                flag: flag.clone(),
+                kind: "scan".to_string(),
+                root_id: Some(root_id),
+            },
+        );
+        Some(flag)
+    }
+
     /// Trả true nếu job tồn tại và đã được gắn cờ hủy.
     pub fn cancel(&self, job_id: i64) -> bool {
         if let Some(info) = self.active.lock().unwrap().get(&job_id) {

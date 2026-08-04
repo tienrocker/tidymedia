@@ -15,14 +15,16 @@ import { systemTzOffsetMinutes } from "../lib/time";
 import { fmtSize } from "../lib/format";
 import i18n from "../i18n";
 
-export const PAGE = 200;
-/** LRU cap: ~50 trang (10k row) quanh viewport — không giữ cả 1M row trong heap. */
+const PAGE = 200;
+/** LRU cap: ~50 trang (10k row) quanh viewport - không giữ cả 1M row trong heap. */
 const MAX_CACHED_PAGES = 50;
 
 // Module-level (không cần re-render): viewport hiện tại + chống toast trùng
 let lastRange: [number, number] = [0, 0];
 let querySeq = 0;
 let toastSeq = 0;
+/** Job id đã nhận terminal event - chặn placeholder đến muộn hồi sinh job ma. */
+const endedJobIds = new Set<number>();
 
 interface ToastMsg {
   id: number;
@@ -61,7 +63,7 @@ function initialViewMode(): ViewMode {
 
 interface AppStore {
   filter: FileFilter;
-  /** Chỉ tăng khi FILTER đổi — FileList reset scroll theo cái này, KHÔNG theo queryId
+  /** Chỉ tăng khi FILTER đổi - FileList reset scroll theo cái này, KHÔNG theo queryId
    *  (index://changed lúc đang scan re-query liên tục, không được phá scroll). */
   filterEpoch: number;
   queryId: number | null;
@@ -87,6 +89,13 @@ interface AppStore {
   dupStats: DedupStats | null;
   activeGroupId: number | null;
   groupMembers: DupMemberRow[];
+  /**
+   * Group id mà groupMembers THUỘC VỀ (null khi đang fetch). Mọi thao tác ghi
+   * dupChecked phải đối chiếu tag này với activeGroupId - không thì trong cửa
+   * sổ chuyển nhóm, member của nhóm CŨ bị ghi vào checked set của nhóm MỚI
+   * (P0 review: đánh dấu xóa vô hình).
+   */
+  groupMembersFor: number | null;
   /** groupId -> set fileId đánh dấu XÓA (ngữ nghĩa cố định, không đảo). */
   dupChecked: Map<number, Set<number>>;
   dedupRule: DedupRule;
@@ -145,6 +154,7 @@ export const useStore = create<AppStore>((set, get) => ({
   dupStats: null,
   activeGroupId: null,
   groupMembers: [],
+  groupMembersFor: null,
   dupChecked: new Map(),
   dedupRule: "res",
 
@@ -157,7 +167,7 @@ export const useStore = create<AppStore>((set, get) => ({
     try {
       const [groups, stats] = await Promise.all([api.listDupGroups(), api.dedupStats()]);
       const cur = get().activeGroupId;
-      // PRUNE selection của group id không còn tồn tại — hash job rebuild làm
+      // PRUNE selection của group id không còn tồn tại - hash job rebuild làm
       // group id đổi hết; giữ lại là user xóa ngầm file họ không còn thấy.
       const valid = new Set(groups.map((g) => g.id));
       const pruned = new Map(
@@ -176,22 +186,26 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   openDupGroup: async (id) => {
-    set({ activeGroupId: id });
+    // Clear members ĐỒNG BỘ: trong cửa sổ fetch, UI không được render card
+    // của nhóm cũ dưới activeGroupId mới (mọi mutation sẽ ghi nhầm nhóm).
+    set({ activeGroupId: id, groupMembers: [], groupMembersFor: null });
     try {
       const members = await api.getDupGroup(id);
       if (get().activeGroupId !== id) return; // đã chuyển nhóm khác
       const checked = new Map(get().dupChecked);
       if (!checked.has(id)) {
-        // Pre-check theo rule đang chọn — user override từng ô thoải mái
+        // Pre-check theo rule đang chọn - user override từng ô thoải mái
         checked.set(id, ruleChecked(members, get().dedupRule));
       }
-      set({ groupMembers: members, dupChecked: checked });
+      set({ groupMembers: members, groupMembersFor: id, dupChecked: checked });
     } catch (e) {
       get().showToast(errText(e), true);
     }
   },
 
   toggleDupChecked: (groupId, fileId) => {
+    // Members chưa load xong nhóm này → không có cơ sở validate keepGuard
+    if (get().groupMembersFor !== groupId) return;
     const checked = new Map(get().dupChecked);
     const set_ = new Set(checked.get(groupId) ?? []);
     if (set_.has(fileId)) {
@@ -199,7 +213,7 @@ export const useStore = create<AppStore>((set, get) => ({
     } else {
       // Guard cứng: không bao giờ cho check 100% member của nhóm
       const total = get().groupMembers.length;
-      if (get().activeGroupId === groupId && set_.size >= total - 1) {
+      if (set_.size >= total - 1) {
         get().showToast(i18n.t("dedup.keepGuard"), true);
         return;
       }
@@ -211,7 +225,7 @@ export const useStore = create<AppStore>((set, get) => ({
 
   keepOnly: (groupId, fileId) => {
     const members = get().groupMembers;
-    if (get().activeGroupId !== groupId || members.length < 2) return;
+    if (get().groupMembersFor !== groupId || members.length < 2) return;
     const checked = new Map(get().dupChecked);
     checked.set(
       groupId,
@@ -222,9 +236,10 @@ export const useStore = create<AppStore>((set, get) => ({
 
   setDedupRule: (r) => {
     set({ dedupRule: r });
-    // Áp lại cho nhóm đang mở (nhóm khác giữ lựa chọn tay của user)
+    // Áp lại cho nhóm đang mở - CHỈ khi members đã thuộc đúng nhóm đó
+    // (đang fetch nhóm mới thì members cũ không được ghi vào nhóm mới)
     const id = get().activeGroupId;
-    if (id != null) {
+    if (id != null && get().groupMembersFor === id) {
       const checked = new Map(get().dupChecked);
       checked.set(id, ruleChecked(get().groupMembers, r));
       set({ dupChecked: checked });
@@ -254,19 +269,33 @@ export const useStore = create<AppStore>((set, get) => ({
       n: res.deleted,
       size: fmtSize(res.freedBytes),
     });
-    get().showToast(
-      res.skipped.length > 0
-        ? `${t} - ${i18n.t("dedup.skipped", { n: res.skipped.length })}`
-        : t,
-      res.skipped.length > 0,
-    );
+    if (res.skipped.length > 0) {
+      // Backend trả reason CODE ổn định cho từng file - gộp đếm theo lý do
+      // để user biết vì sao (NO_RECYCLE_BIN trên ổ exFAT khác hẳn
+      // CHANGED_ON_DISK, gộp chung 1 câu là báo sai nguyên nhân)
+      const counts = new Map<string, number>();
+      for (const s of res.skipped) {
+        counts.set(s.reason, (counts.get(s.reason) ?? 0) + 1);
+      }
+      const parts = [...counts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([r, n]) =>
+          i18n.t(`dedup.reason.${r}`, { defaultValue: `${n} ${r}`, n }),
+        );
+      get().showToast(
+        `${t} - ${i18n.t("dedup.skipped", { n: res.skipped.length })}: ${parts.join("; ")}`,
+        true,
+      );
+    } else {
+      get().showToast(t, false);
+    }
   },
 
   setViewMode: (m) => {
     try {
       localStorage.setItem("viewMode", m);
     } catch {
-      // private mode — thôi kệ, chỉ mất persist
+      // private mode - thôi kệ, chỉ mất persist
     }
     set({ viewMode: m });
   },
@@ -359,7 +388,7 @@ export const useStore = create<AppStore>((set, get) => ({
           if (get().queryId !== queryId) return;
           get().fetchedPages.delete(page);
           if (String(e).includes("ERR_QUERY_EXPIRED")) {
-            // Snapshot bị evict (2 generation) — re-materialize 1 lần
+            // Snapshot bị evict (2 generation) - re-materialize 1 lần
             void get().runQuery();
           } else {
             console.error("fetch_rows failed", e);
@@ -388,7 +417,7 @@ export const useStore = create<AppStore>((set, get) => ({
     const rootId = await api.addRoot(path);
     await get().loadRoots();
     const jobId = await api.startScan(rootId);
-    // Placeholder ngay lập tức — đừng để UI trơ tới batch đầu tiên (5k file)
+    // Placeholder ngay lập tức - đừng để UI trơ tới batch đầu tiên (5k file)
     get().onJobProgress({ jobId, kind: "scan", done: 0, total: null, message: null });
   },
 
@@ -408,12 +437,21 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   onJobProgress: (p) => {
+    // Tombstone: scan folder tí hin có thể bắn job://done TRƯỚC khi promise
+    // startScan resolve - placeholder addRootAndScan/scanRoot đến sau sẽ
+    // hồi sinh job ma quay vĩnh viễn nếu không nhớ những id đã kết thúc.
+    if (endedJobIds.has(p.jobId)) return;
     const activeJobs = new Map(get().activeJobs);
     activeJobs.set(p.jobId, p);
     set({ activeJobs });
   },
 
   onJobEnd: (jobId) => {
+    endedJobIds.add(jobId);
+    if (endedJobIds.size > 500) {
+      // Giữ gọn - id cũ nhất không bao giờ quay lại
+      for (const id of [...endedJobIds].slice(0, 250)) endedJobIds.delete(id);
+    }
     const activeJobs = new Map(get().activeJobs);
     activeJobs.delete(jobId);
     set({ activeJobs });

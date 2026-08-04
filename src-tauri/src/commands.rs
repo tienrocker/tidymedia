@@ -116,7 +116,14 @@ pub async fn start_scan(state: State<'_, AppState>, root_id: i64) -> CmdResult<i
             .exec(move |c| core_db::ops::insert_job(c, "scan", Some(&params)))
             .map_err(err)?;
 
-        let cancel = jobs.register(job_id, "scan", Some(root_id));
+        // Register ATOMIC — thua race với scan khác vừa start cùng root thì
+        // chốt job row failed và trả lỗi thay vì chạy scan gen chồng nhau.
+        let Some(cancel) = jobs.try_register_scan(job_id, root_id) else {
+            let _ = db.writer.exec(move |c| {
+                core_db::ops::finish_job(c, job_id, "failed", Some("ERR_SCAN_ACTIVE"))
+            });
+            return Err(format!("ERR_SCAN_ACTIVE|{root_id}"));
+        };
         let events = jobs.sender();
         let writer = db.writer.clone();
         let writer_cleanup = db.writer.clone();

@@ -1,5 +1,5 @@
 /// Mọi chuyển đổi ngày-giờ đi qua timezone user chọn trong Setup (mặc định
-/// system tz). KHÔNG dùng `new Date("yyyy-mm-dd")` — nó parse UTC và làm lệch
+/// system tz). KHÔNG dùng `new Date("yyyy-mm-dd")` - nó parse UTC và làm lệch
 /// ranh giới ngày theo múi giờ (7 tiếng với UTC+7).
 
 export const systemTzOffsetMinutes = () => -new Date().getTimezoneOffset();
@@ -26,7 +26,7 @@ export function epochToDateInput(ms: number | undefined, tzOffsetMin: number): s
 /** epoch ms → "yyyy-mm-dd hh:mm" theo tz đã chọn. */
 export function fmtDateTime(ms: number, tzOffsetMin: number): string {
   const d = new Date(ms + tzOffsetMin * 60_000);
-  if (isNaN(d.getTime())) return "—";
+  if (isNaN(d.getTime())) return "-";
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(
     d.getUTCHours(),

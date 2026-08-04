@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { LANGS } from "../../i18n";
@@ -32,6 +32,40 @@ export function SettingsDialog({
     api.getExcludedPaths().then(setExcluded).catch(console.error);
   }, []);
 
+  // Focus trap tối giản: Tab quay vòng trong dialog, không lọt ra background
+  // (background vẫn bấm được bằng bàn phím = kích hoạt được cả nút Delete
+  // của dedup từ dưới lớp modal); focus phần tử đầu khi mở.
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    const focusables = () =>
+      [...box.querySelectorAll<HTMLElement>("button, select, input, [tabindex]")].filter(
+        (el) => !el.hasAttribute("disabled"),
+      );
+    focusables()[0]?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const els = focusables();
+      if (els.length === 0) return;
+      const first = els[0];
+      const last = els[els.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || !box.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
   const addExcluded = () => {
     runSafe(async () => {
       const dir = await open({ directory: true, title: t("wizard.excludePick") });
@@ -61,7 +95,10 @@ export function SettingsDialog({
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70">
-      <div className="max-h-[85vh] w-[26rem] overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-900 p-6 shadow-2xl">
+      <div
+        ref={boxRef}
+        className="max-h-[85vh] w-[26rem] overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-900 p-6 shadow-2xl"
+      >
         <div className="flex items-start justify-between">
           <h1 className="text-lg font-semibold text-neutral-100">
             {firstRun ? t("wizard.title") : t("wizard.settingsTitle")}
@@ -109,7 +146,7 @@ export function SettingsDialog({
           {tzOptions().map((o) => (
             <option key={o.minutes} value={o.minutes}>
               {o.label}
-              {o.minutes === systemTz ? ` — ${t("wizard.systemDefault")}` : ""}
+              {o.minutes === systemTz ? ` - ${t("wizard.systemDefault")}` : ""}
             </option>
           ))}
         </select>

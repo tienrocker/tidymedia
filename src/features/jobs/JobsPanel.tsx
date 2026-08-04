@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { runSafe, useStore } from "../../state/store";
 import { fmtCount } from "../../lib/format";
+import { errText } from "../../lib/errors";
 
 export function JobsPanel() {
   const { t } = useTranslation();
@@ -20,9 +21,9 @@ export function JobsPanel() {
             <span className={lastFinished.state === "failed" ? "text-red-400" : ""}>
               {lastFinished.kind} #{lastFinished.id}: {lastFinished.state}
               {lastFinished.error
-                ? ` — ${lastFinished.error}`
+                ? ` - ${errText(lastFinished.error)}`
                 : lastFinished.message
-                  ? ` — ${lastFinished.message}`
+                  ? ` - ${lastFinished.message}`
                   : ""}
             </span>
           ) : (
@@ -33,7 +34,7 @@ export function JobsPanel() {
       {[...active.values()].map((j) => (
         <div key={j.jobId} className="flex items-center gap-2 px-1 py-0.5">
           <span className="flex-1 truncate text-xs text-neutral-300">
-            {j.kind} #{j.jobId} — {fmtCount(j.done)}
+            {j.kind} #{j.jobId} - {fmtCount(j.done)}
             {j.total != null ? ` / ${fmtCount(j.total)}` : ""}
           </span>
           <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />

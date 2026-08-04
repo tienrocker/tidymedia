@@ -12,12 +12,19 @@ const MB = 1024 * 1024;
 /** Ô nhập size: giữ raw string local (gõ được "1.5"), chỉ đẩy bytes hợp lệ vào store. */
 function SizeInput({
   placeholder,
+  initialBytes,
   onBytes,
 }: {
   placeholder: string;
+  initialBytes: number | undefined;
   onBytes: (bytes: number | undefined) => void;
 }) {
-  const [raw, setRaw] = useState("");
+  // Init từ filter đang có trong store - FilterBar bị unmount khi chuyển mode
+  // (dedup), quay lại mà render ô trống trong khi filter vẫn chạy = thư viện
+  // "mất file" không thấy lý do.
+  const [raw, setRaw] = useState(
+    initialBytes != null ? String(initialBytes / MB) : "",
+  );
   return (
     <input
       className={`${inputCls} w-24`}
@@ -35,7 +42,7 @@ function SizeInput({
         if (!isNaN(f) && f >= 0) {
           onBytes(Math.round(f * MB));
         }
-        // Trạng thái gõ dở ("1.", "0,") — giữ nguyên filter cũ, không phá input
+        // Trạng thái gõ dở ("1.", "0,") - giữ nguyên filter cũ, không phá input
       }}
     />
   );
@@ -49,8 +56,10 @@ export function FilterBar() {
   const viewMode = useStore((s) => s.viewMode);
   const setViewMode = useStore((s) => s.setViewMode);
 
-  // IME (Telex/Pinyin): không bắn query khi đang gõ dở tổ hợp
-  const [text, setText] = useState("");
+  // IME (Telex/Pinyin): không bắn query khi đang gõ dở tổ hợp.
+  // Init từ store: component bị unmount khi sang mode dedup, quay lại phải
+  // hiện đúng filter text đang hoạt động.
+  const [text, setText] = useState(() => useStore.getState().filter.text ?? "");
   const composing = useRef(false);
   const pushText = (v: string) => setFilter({ text: v || undefined });
 
@@ -71,7 +80,6 @@ export function FilterBar() {
           composing.current = false;
           pushText(e.currentTarget.value);
         }}
-        autoFocus
       />
       <select
         className={inputCls}
@@ -86,10 +94,12 @@ export function FilterBar() {
       </select>
       <SizeInput
         placeholder={t("filter.minMb")}
+        initialBytes={filter.sizeMin}
         onBytes={(b) => setFilter({ sizeMin: b })}
       />
       <SizeInput
         placeholder={t("filter.maxMb")}
+        initialBytes={filter.sizeMax}
         onBytes={(b) => setFilter({ sizeMax: b })}
       />
       <input
