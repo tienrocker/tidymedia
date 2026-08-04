@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { runSafe, useStore } from "../../state/store";
+import { api } from "../../lib/ipc";
+import { errText } from "../../lib/errors";
 import { fmtCount } from "../../lib/format";
 import { fmtDateTime } from "../../lib/time";
 
@@ -76,12 +78,15 @@ function LibraryRoots() {
   );
 }
 
-/** Template thư mục + tên file, validate backend, preview mẫu tức thì. */
+/** Template thư mục + tên file, validate + render ví dụ REALTIME khi gõ. */
 function TemplateSettings() {
   const { t } = useTranslation();
   const settings = useStore((s) => s.orgSettings);
   const [dir, setDir] = useState<string | null>(null);
   const [file, setFile] = useState<string | null>(null);
+  const [live, setLive] = useState<
+    { sample: string } | { error: string } | null
+  >(null);
 
   // Local edit state init từ settings load xong
   const dirVal = dir ?? settings?.dirTemplate ?? "";
@@ -89,6 +94,24 @@ function TemplateSettings() {
   const dirty =
     settings != null &&
     (dirVal !== settings.dirTemplate || fileVal !== settings.fileTemplate);
+  const hasSettings = settings != null;
+
+  // Ví dụ chạy theo INPUT (debounce 250ms), không đợi Lưu — lỗi template
+  // cũng hiện ngay tại chỗ thay vì toast lúc bấm Lưu
+  useEffect(() => {
+    if (!hasSettings) return;
+    const timer = window.setTimeout(() => {
+      api
+        .previewOrgTemplate(dirVal, fileVal)
+        .then((sample) => setLive({ sample }))
+        .catch((e) => setLive({ error: errText(e) }));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [dirVal, fileVal, hasSettings]);
+
+  const liveError = live != null && "error" in live ? live.error : null;
+  const liveSample =
+    live != null && "sample" in live ? live.sample : settings?.sample;
 
   return (
     <Section title={t("org.template")}>
@@ -118,15 +141,23 @@ function TemplateSettings() {
             {"{YYYY} {MM} {DD} {YYYYMMDD} {hh} {mm} {ss} {hhmmss} {hash4} {hash8} {hash16} {camera}"}
           </code>
         </div>
-        {settings && (
-          <div className="rounded bg-neutral-900 px-2 py-1.5 text-sm">
-            <span className="text-neutral-500">{t("org.sample")}: </span>
-            <span className="font-mono text-emerald-300">{settings.sample}</span>
+        <div className="text-xs text-neutral-500">{t("org.tokensHint")}</div>
+        {liveError != null ? (
+          <div className="rounded border border-red-900 bg-red-950/60 px-2 py-1.5 text-sm text-red-300">
+            {liveError}
           </div>
+        ) : (
+          liveSample != null && (
+            <div className="rounded bg-neutral-900 px-2 py-1.5 text-sm">
+              <span className="text-neutral-500">{t("org.sample")}: </span>
+              <span className="font-mono text-emerald-300">{liveSample}</span>
+            </div>
+          )
         )}
         {dirty && (
           <button
-            className="self-start rounded bg-emerald-700 px-3 py-1 text-sm font-semibold text-white hover:bg-emerald-600"
+            className="self-start rounded bg-emerald-700 px-3 py-1 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+            disabled={liveError != null}
             onClick={() =>
               runSafe(async () => {
                 await useStore.getState().saveOrgSettings(dirVal, fileVal);

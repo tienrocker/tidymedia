@@ -38,6 +38,7 @@
     "dirTemplate": "Thư mục",
     "fileTemplate": "Tên file",
     "tokens": "Token",
+    "tokensHint": "Token ngày/giờ lấy từ ngày chụp của ảnh. {hash4} {hash8} {hash16} = 4/8/16 ký tự đầu của vân tay nội dung file (2 ảnh khác nhau chụp cùng giây vẫn ra tên khác). {camera} = tên máy ảnh từ EXIF, ví dụ \"Apple iPhone 12\" - file không có thì để trống.",
     "sample": "Ví dụ",
     "settingsSaved": "Đã lưu cách đặt tên",
     "run": "Chạy",

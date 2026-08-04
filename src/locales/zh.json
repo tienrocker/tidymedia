@@ -38,6 +38,7 @@
     "dirTemplate": "文件夹",
     "fileTemplate": "文件名",
     "tokens": "令牌",
+    "tokensHint": "日期/时间令牌取自照片的拍摄时间。{hash4} {hash8} {hash16} = 文件内容指纹的前 4/8/16 个字符（同秒拍摄的不同照片也不会重名）。{camera} = EXIF 中的相机型号，如 \"Apple iPhone 12\"，文件没有则留空。",
     "sample": "示例",
     "settingsSaved": "命名已保存",
     "run": "执行",

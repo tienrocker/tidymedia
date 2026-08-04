@@ -38,6 +38,7 @@
     "dirTemplate": "Folders",
     "fileTemplate": "File name",
     "tokens": "Tokens",
+    "tokensHint": "Date/time tokens come from the photo's capture date. {hash4} {hash8} {hash16} = first 4/8/16 characters of the file's content fingerprint (keeps identical names apart). {camera} = camera model from EXIF, e.g. \"Apple iPhone 12\" - left empty when the file has none.",
     "sample": "Example",
     "settingsSaved": "Naming saved",
     "run": "Run",

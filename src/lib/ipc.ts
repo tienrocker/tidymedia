@@ -194,6 +194,8 @@ export const api = {
   getOrgSettings: () => invoke<OrgSettings>("get_org_settings"),
   setOrgSettings: (dirTemplate: string, fileTemplate: string) =>
     invoke<OrgSettings>("set_org_settings", { dirTemplate, fileTemplate }),
+  previewOrgTemplate: (dirTemplate: string, fileTemplate: string) =>
+    invoke<string>("preview_org_template", { dirTemplate, fileTemplate }),
   listLibraryRoots: () => invoke<LibraryRootRow[]>("list_library_roots"),
   setLibraryRoot: (path: string) => invoke<number>("set_library_root", { path }),
   removeLibraryRoot: (id: number) => invoke<void>("remove_library_root", { id }),

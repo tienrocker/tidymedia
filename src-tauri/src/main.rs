@@ -50,6 +50,7 @@ fn main() {
             dedup::delete_dup_files,
             organize::get_org_settings,
             organize::set_org_settings,
+            organize::preview_org_template,
             organize::list_library_roots,
             organize::set_library_root,
             organize::remove_library_root,

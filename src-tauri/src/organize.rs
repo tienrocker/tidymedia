@@ -80,6 +80,18 @@ pub async fn get_org_settings(state: State<'_, AppState>) -> CmdResult<OrgSettin
     .await
 }
 
+/// Validate + render ví dụ KHÔNG lưu — UI gọi debounce khi user đang gõ
+/// template để thấy kết quả/lỗi realtime.
+#[tauri::command]
+pub async fn preview_org_template(
+    dir_template: String,
+    file_template: String,
+) -> CmdResult<String> {
+    let dir = parse_template(&dir_template, TemplateKind::Dir).map_err(|e| e.to_string())?;
+    let file = parse_template(&file_template, TemplateKind::File).map_err(|e| e.to_string())?;
+    Ok(sample_render(&dir, &file))
+}
+
 #[tauri::command]
 pub async fn set_org_settings(
     state: State<'_, AppState>,
