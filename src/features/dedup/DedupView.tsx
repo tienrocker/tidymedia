@@ -1,13 +1,49 @@
 import { useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
-import { runSafe, useStore, DedupRule } from "../../state/store";
+import { groupCheckState, runSafe, useStore, DedupRule } from "../../state/store";
 import { api, DupGroupRow, DupMemberRow } from "../../lib/ipc";
 import { thumbUrl, THUMB_GRID, THUMB_PREVIEW } from "../../lib/media";
+import { useInViewThumb } from "../../lib/useInViewThumb";
 import { fmtCount, fmtSize } from "../../lib/format";
 import { fmtDateTime } from "../../lib/time";
 
 const GROUP_ROW_H = 64;
+
+/** Checkbox 3 trạng thái dùng chung cho row nhóm + "chọn tất cả". */
+function TriCheckbox({
+  state,
+  disabled,
+  title,
+  onChange,
+}: {
+  state: "none" | "partial" | "all";
+  disabled?: boolean;
+  title?: string;
+  onChange: (checked: boolean, shift: boolean) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = state === "partial";
+  }, [state]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={state === "all"}
+      readOnly // state do store quyết định; onClick mới là nguồn hành động
+      disabled={disabled}
+      title={title}
+      className="h-4 w-4 shrink-0 cursor-pointer accent-red-600 disabled:opacity-40"
+      onClick={(e) => {
+        // Click checkbox KHÔNG được lan ra row (row = mở nhóm để xem)
+        e.stopPropagation();
+        // Đang dở dang mà bấm tiếp = tick nốt cho đủ, không phải bỏ tick
+        onChange(state !== "all", e.shiftKey);
+      }}
+    />
+  );
+}
 
 interface Zoom {
   scale: number;
@@ -16,11 +52,94 @@ interface Zoom {
 }
 const ZOOM_RESET: Zoom = { scale: 1, tx: 0, ty: 0 };
 
+/** 1 dòng nhóm: checkbox (đánh dấu xóa theo rule) + 3 ảnh mẫu theo viewport. */
+function GroupRow({
+  g,
+  active,
+  marked,
+  top,
+}: {
+  g: DupGroupRow;
+  active: boolean;
+  marked: number;
+  top: number;
+}) {
+  const { t } = useTranslation();
+  const marking = useStore((s) => s.dupMarking);
+  // Ảnh mẫu cũng phải theo viewport: list 4k nhóm mà mount là bắn request thì
+  // HDD nghẽn y như lưới ảnh trước đây.
+  const { ref, wanted } = useInViewThumb(g.id);
+  const state = groupCheckState(marked, g.count);
+
+  return (
+    <div
+      ref={ref}
+      className={`absolute left-0 top-0 flex w-full items-center gap-2 border-b border-neutral-900 px-2 ${
+        active ? "bg-neutral-800" : "hover:bg-neutral-900"
+      }`}
+      style={{ height: GROUP_ROW_H, transform: `translateY(${top}px)` }}
+    >
+      <TriCheckbox
+        state={state}
+        disabled={marking}
+        title={t("dedup.markGroup")}
+        onChange={(checked, shift) =>
+          runSafe(() => useStore.getState().setGroupChecked(g.id, checked, shift))
+        }
+      />
+      <button
+        className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left"
+        onClick={(e) => {
+          // Blur để keyboard-flow (Space/1-9) không bị nuốt bởi button
+          // đang giữ focus sau cú click
+          e.currentTarget.blur();
+          runSafe(() => useStore.getState().openDupGroup(g.id));
+        }}
+      >
+        <div className="flex shrink-0 -space-x-4">
+          {g.samples.map(([id, mtime]) => (
+            <div
+              key={id}
+              className="h-12 w-12 overflow-hidden rounded border border-neutral-700 bg-neutral-900"
+            >
+              {wanted && (
+                <img
+                  src={thumbUrl(id, THUMB_GRID, mtime)}
+                  alt=""
+                  decoding="async"
+                  className="h-full w-full object-cover"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.visibility = "hidden";
+                  }}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1 text-sm text-neutral-200">
+            {t("dedup.copies", { n: g.count })}
+            {marked > 0 && (
+              <span className="rounded bg-red-950 px-1 text-[10px] font-semibold text-red-300">
+                🗑 {marked}
+              </span>
+            )}
+          </div>
+          <div className="truncate text-xs text-neutral-500">
+            {fmtSize(g.size)} · {t("dedup.wasted", { size: fmtSize(g.waste) })}
+          </div>
+        </div>
+      </button>
+    </div>
+  );
+}
+
 /** Cột trái: danh sách nhóm trùng, lãng phí nhiều nhất trước (ảo hóa). */
 function GroupList() {
   const { t } = useTranslation();
   const groups = useStore((s) => s.dupGroups);
   const activeId = useStore((s) => s.activeGroupId);
+  const checked = useStore((s) => s.dupChecked);
   const parentRef = useRef<HTMLDivElement>(null);
 
   const virtualizer = useVirtualizer({
@@ -42,42 +161,13 @@ function GroupList() {
         {virtualizer.getVirtualItems().map((vi) => {
           const g: DupGroupRow = groups[vi.index];
           return (
-            <button
+            <GroupRow
               key={g.id}
-              className={`absolute left-0 top-0 flex w-full items-center gap-2 border-b border-neutral-900 px-2 text-left ${
-                g.id === activeId ? "bg-neutral-800" : "hover:bg-neutral-900"
-              }`}
-              style={{ height: GROUP_ROW_H, transform: `translateY(${vi.start}px)` }}
-              onClick={(e) => {
-                // Blur để keyboard-flow (Space/1-9) không bị nuốt bởi button
-                // đang giữ focus sau cú click
-                e.currentTarget.blur();
-                runSafe(() => useStore.getState().openDupGroup(g.id));
-              }}
-            >
-              <div className="flex shrink-0 -space-x-4">
-                {g.samples.map(([id, mtime]) => (
-                  <img
-                    key={id}
-                    src={thumbUrl(id, THUMB_GRID, mtime)}
-                    alt=""
-                    loading="lazy"
-                    className="h-12 w-12 rounded border border-neutral-700 object-cover"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.visibility = "hidden";
-                    }}
-                  />
-                ))}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm text-neutral-200">
-                  {t("dedup.copies", { n: g.count })}
-                </div>
-                <div className="truncate text-xs text-neutral-500">
-                  {fmtSize(g.size)} · {t("dedup.wasted", { size: fmtSize(g.waste) })}
-                </div>
-              </div>
-            </button>
+              g={g}
+              active={g.id === activeId}
+              marked={checked.get(g.id)?.size ?? 0}
+              top={vi.start}
+            />
           );
         })}
       </div>
@@ -191,17 +281,26 @@ function MemberCard({
             ◉ LIVE
           </span>
         )}
-        <button
-          className={`absolute right-1 top-1 rounded px-2 py-0.5 text-xs font-semibold ${
+        <label
+          className={`absolute right-1 top-1 flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-xs font-semibold ${
             checked
               ? "bg-red-700 text-white"
               : "bg-black/70 text-neutral-300 hover:bg-neutral-700"
           }`}
-          onClick={() => useStore.getState().toggleDupChecked(groupId, m.fileId)}
           title={t("dedup.markDelete")}
         >
-          {checked ? "🗑 " + t("dedup.marked") : t("dedup.markDelete")}
-        </button>
+          <input
+            type="checkbox"
+            checked={checked}
+            readOnly
+            className="h-3.5 w-3.5 cursor-pointer accent-red-600"
+            onClick={(e) => {
+              e.stopPropagation();
+              useStore.getState().toggleDupChecked(groupId, m.fileId);
+            }}
+          />
+          {checked ? t("dedup.marked") : t("dedup.markDelete")}
+        </label>
       </div>
 
       {/* Metadata so sánh - giá trị tốt nhất được badge */}
@@ -244,10 +343,12 @@ function GroupCompare() {
   const [zoom, setZoom] = useState<Zoom>(ZOOM_RESET);
   const [focusIdx, setFocusIdx] = useState(0);
 
-  // Đổi nhóm → reset zoom + focus
+  // Đổi nhóm → reset zoom + focus, và xả hàng đợi thumb của nhóm cũ (webview
+  // đã hủy request rồi, nhưng phía Rust vẫn còn xếp hàng giành ổ đĩa)
   useEffect(() => {
     setZoom(ZOOM_RESET);
     setFocusIdx(0);
+    void api.clearThumbQueue();
   }, [groupId]);
 
   // Mirror focusIdx ra ref cho keyboard handler (deps rỗng): gọi action trong
@@ -355,8 +456,10 @@ export function DedupView() {
   const groups = useStore((s) => s.dupGroups);
   const rule = useStore((s) => s.dedupRule);
   const deleting = useStore((s) => s.dupDeleting);
+  const marking = useStore((s) => s.dupMarking);
   const activeJobs = useStore((s) => s.activeJobs);
   const hashJob = [...activeJobs.values()].find((j) => j.kind === "hash");
+  const deleteJob = [...activeJobs.values()].find((j) => j.kind === "dedup_delete");
   const anyHashJob = [...activeJobs.values()].some(
     (j) => j.kind === "hash" || j.kind === "org_hash",
   );
@@ -365,16 +468,91 @@ export function DedupView() {
   for (const s of checked.values()) totalChecked += s.size;
   // Ước lượng bytes giải phóng: size các bản checked của nhóm đang biết size
   let freed = 0;
+  let markedGroups = 0;
+  let fullGroups = 0;
   if (groups) {
     const bySize = new Map(groups.map((g) => [g.id, g.size]));
     for (const [gid, s] of checked) {
       freed += (bySize.get(gid) ?? 0) * s.size;
     }
+    for (const g of groups) {
+      const n = checked.get(g.id)?.size ?? 0;
+      if (n > 0) {
+        markedGroups++;
+        if (n >= g.count - 1) fullGroups++;
+      }
+    }
   }
+  const allState: "none" | "partial" | "all" =
+    groups != null && groups.length > 0 && fullGroups === groups.length
+      ? "all"
+      : markedGroups > 0
+        ? "partial"
+        : "none";
+
+  // Dùng chung cho nút Delete và phím Del - đọc thẳng store nên không bao giờ
+  // xóa theo một snapshot cũ.
+  const confirmAndDelete = () => {
+    const st = useStore.getState();
+    if (st.dupDeleting) return;
+    let n = 0;
+    for (const s of st.dupChecked.values()) n += s.size;
+    if (n === 0) return;
+    if (
+      [...st.activeJobs.values()].some(
+        (j) => j.kind === "hash" || j.kind === "org_hash",
+      )
+    ) {
+      return;
+    }
+    const bySize = new Map((st.dupGroups ?? []).map((g) => [g.id, g.size]));
+    let bytes = 0;
+    for (const [gid, s] of st.dupChecked) bytes += (bySize.get(gid) ?? 0) * s.size;
+    if (window.confirm(t("dedup.confirm", { n, size: fmtSize(bytes) }))) {
+      runSafe(() => useStore.getState().deleteChecked());
+    }
+  };
+
+  // Phím cấp danh sách (Ctrl+A / Ctrl+D / Esc / Del). Phím cấp bản sao
+  // (Space/1-9/mũi tên) nằm trong GroupCompare - tách ra để không đá nhau.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (
+        el &&
+        (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")
+      ) {
+        return;
+      }
+      if (useStore.getState().appMode !== "dedup") return;
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (ctrl && (e.key === "a" || e.key === "A")) {
+        e.preventDefault();
+        runSafe(() => useStore.getState().setAllChecked(true));
+      } else if ((ctrl && (e.key === "d" || e.key === "D")) || e.key === "Escape") {
+        e.preventDefault();
+        runSafe(() => useStore.getState().setAllChecked(false));
+      } else if (e.key === "Delete") {
+        e.preventDefault();
+        confirmAndDelete();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t]);
+
+  // Rời tab Dedup: xả hàng đợi thumb (ảnh mẫu + card) để job nền không phải
+  // giành ổ đĩa với những request không ai còn nhìn.
+  useEffect(() => {
+    return () => {
+      void api.clearThumbQueue();
+    };
+  }, []);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* Header: quét + rule + xóa */}
+      {/* Header: quét + chọn tất cả + rule + xóa */}
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800 bg-neutral-950 px-3 py-2">
         <button
           className="rounded border border-neutral-600 bg-neutral-800 px-3 py-1 text-sm text-neutral-100 hover:bg-neutral-700 disabled:opacity-50"
@@ -386,7 +564,11 @@ export function DedupView() {
           }
         >
           {hashJob != null
-            ? `${t("dedup.scanning")} ${fmtCount(Number(hashJob.done))}${
+            ? `${
+                hashJob.message === "verify"
+                  ? t("dedup.phaseVerify")
+                  : t("dedup.phaseQuick")
+              } ${fmtCount(Number(hashJob.done))}${
                 hashJob.total != null ? ` / ${fmtCount(Number(hashJob.total))}` : ""
               }`
             : t("dedup.scan")}
@@ -394,8 +576,25 @@ export function DedupView() {
         {stats && (
           <span className="text-sm text-neutral-400">
             {t("dedup.stats", { n: fmtCount(stats.groups), size: fmtSize(stats.waste) })}
+            {hashJob != null && (
+              <span className="ml-1 text-xs text-emerald-500">● {t("dedup.live")}</span>
+            )}
           </span>
         )}
+        <label className="ml-3 flex cursor-pointer items-center gap-1.5 text-sm text-neutral-300">
+          <TriCheckbox
+            state={allState}
+            disabled={marking || anyHashJob || deleting || (groups?.length ?? 0) === 0}
+            onChange={(c) => runSafe(() => useStore.getState().setAllChecked(c))}
+          />
+          {t("dedup.selectAll")}
+          {groups != null && groups.length > 0 && (
+            <span className="text-xs text-neutral-500">
+              {fmtCount(markedGroups)} / {fmtCount(groups.length)}
+            </span>
+          )}
+          {marking && <span className="text-xs text-neutral-500">…</span>}
+        </label>
         <div className="ml-auto flex items-center gap-2">
           <select
             className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none"
@@ -410,17 +609,14 @@ export function DedupView() {
           <button
             className="rounded border border-red-800 bg-red-950 px-3 py-1 text-sm text-red-200 hover:bg-red-900 disabled:opacity-40"
             disabled={totalChecked === 0 || deleting || anyHashJob}
-            onClick={() => {
-              if (
-                window.confirm(
-                  t("dedup.confirm", { n: totalChecked, size: fmtSize(freed) }),
-                )
-              ) {
-                runSafe(() => useStore.getState().deleteChecked());
-              }
-            }}
+            onClick={confirmAndDelete}
           >
-            🗑 {t("dedup.deleteBtn", { n: totalChecked, size: fmtSize(freed) })}
+            {deleteJob != null
+              ? `🗑 ${t("dedup.deleting", {
+                  done: fmtCount(Number(deleteJob.done)),
+                  total: fmtCount(Number(deleteJob.total ?? 0)),
+                })}`
+              : `🗑 ${t("dedup.deleteBtn", { n: totalChecked, size: fmtSize(freed) })}`}
           </button>
         </div>
       </div>

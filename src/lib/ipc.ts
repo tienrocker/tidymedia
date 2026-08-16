@@ -113,6 +113,18 @@ export interface DupMemberRow {
   camera: string | null;
 }
 
+/** Member rút gọn của MỌI nhóm — đủ để chạy rule "giữ bản nào" hàng loạt. */
+export interface DupMemberBrief {
+  groupId: number;
+  fileId: number;
+  size: number;
+  mtime: number;
+  status: number;
+  width: number | null;
+  height: number | null;
+  takenAt: number | null;
+}
+
 export interface DedupStats {
   groups: number;
   waste: number;
@@ -156,6 +168,7 @@ export interface OrgPreview {
   skipCloud: number;
   skipUncertain: number;
   skipPairBlocked: number;
+  skipPathTooLong: number;
   skipOther: number;
   volumesMissingRoot: string[];
   sample: OrgPreviewRow[];
@@ -185,12 +198,15 @@ export const api = {
   getExcludedPaths: () => invoke<string[]>("get_excluded_paths"),
   setExcludedPaths: (paths: string[]) => invoke<void>("set_excluded_paths", { paths }),
   startMetaScan: () => invoke<number | null>("start_meta_scan"),
+  startThumbWarm: () => invoke<number | null>("start_thumb_warm"),
+  clearThumbQueue: () => invoke<number>("clear_thumb_queue"),
   getFileMeta: (fileId: number) => invoke<FileDetail | null>("get_file_meta", { fileId }),
   openFile: (fileId: number) => invoke<void>("open_file", { fileId }),
   revealFile: (fileId: number) => invoke<void>("reveal_file", { fileId }),
   startHashScan: () => invoke<number | null>("start_hash_scan"),
   listDupGroups: () => invoke<DupGroupRow[]>("list_dup_groups"),
   getDupGroup: (groupId: number) => invoke<DupMemberRow[]>("get_dup_group", { groupId }),
+  listDupMembersBrief: () => invoke<DupMemberBrief[]>("list_dup_members_brief"),
   dedupStats: () => invoke<DedupStats>("dedup_stats"),
   deleteDupFiles: (fileIds: number[]) =>
     invoke<DeleteResult>("delete_dup_files", { fileIds }),

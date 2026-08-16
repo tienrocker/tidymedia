@@ -1,27 +1,41 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useStore } from "../../state/store";
-import { FileRow } from "../../lib/ipc";
+import { api, FileRow } from "../../lib/ipc";
 import { thumbUrl, THUMB_GRID } from "../../lib/media";
+import { useInViewThumb } from "../../lib/useInViewThumb";
 import { fmtDuration, fmtSize } from "../../lib/format";
 
-// Cell: thumb vuông + 1 dòng tên. Cột tự co theo bề rộng container.
+// Cell: thumb + 1 dòng tên. CELL_W là bề rộng TỐI THIỂU để tính số cột;
+// bề rộng thật của ô co giãn chia đều phần dư → lưới luôn khít mép phải,
+// không còn dải đen thừa (kiểu Google Photos).
 const CELL_W = 168;
 const THUMB_H = 152;
 const CELL_H = THUMB_H + 34;
 const GAP = 8;
 
-function Cell({ row, index }: { row: FileRow | undefined; index: number }) {
+function Cell({
+  row,
+  index,
+  cellW,
+}: {
+  row: FileRow | undefined;
+  index: number;
+  cellW: number;
+}) {
   const openLightbox = useStore((s) => s.openLightbox);
   const [failed, setFailed] = useState(false);
-  // Row thay đổi (trang khác load vào slot) → reset trạng thái lỗi ảnh
-  useEffect(() => setFailed(false), [row?.id]);
+  const { ref: thumbRef, wanted } = useInViewThumb(row?.id);
+  useEffect(() => {
+    setFailed(false);
+  }, [row?.id]);
 
   if (!row) {
     return (
       <div
+        ref={thumbRef}
         className="animate-pulse rounded bg-neutral-900"
-        style={{ width: CELL_W, height: CELL_H }}
+        style={{ width: cellW, height: CELL_H }}
       />
     );
   }
@@ -31,8 +45,9 @@ function Cell({ row, index }: { row: FileRow | undefined; index: number }) {
 
   return (
     <button
+      ref={thumbRef}
       className="group flex flex-col overflow-hidden rounded text-left outline-none focus-visible:ring-1 focus-visible:ring-neutral-400"
-      style={{ width: CELL_W }}
+      style={{ width: cellW }}
       title={`${row.name}\n${row.dir}\n${fmtSize(row.size)}`}
       onClick={() => openLightbox(index)}
     >
@@ -42,7 +57,7 @@ function Cell({ row, index }: { row: FileRow | undefined; index: number }) {
       >
         {icon ? (
           <span className="text-3xl opacity-60">{icon}</span>
-        ) : (
+        ) : wanted ? (
           <img
             src={thumbUrl(row.id, THUMB_GRID, row.mtime)}
             alt=""
@@ -52,7 +67,7 @@ function Cell({ row, index }: { row: FileRow | undefined; index: number }) {
             className="h-full w-full object-cover transition-transform duration-100 group-hover:scale-[1.03]"
             onError={() => setFailed(true)}
           />
-        )}
+        ) : null}
         {row.kind === 1 && row.durationMs != null && (
           <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 text-[10px] tabular-nums text-neutral-200">
             {fmtDuration(row.durationMs)}
@@ -82,15 +97,19 @@ export function FileGrid() {
   const queryId = useStore((s) => s.queryId);
   const filterEpoch = useStore((s) => s.filterEpoch);
   const parentRef = useRef<HTMLDivElement>(null);
-  const [cols, setCols] = useState(4);
+  const [layout, setLayout] = useState({ cols: 4, cellW: CELL_W });
+  const { cols, cellW } = layout;
 
-  // Số cột theo bề rộng thật của container (ResizeObserver, không đoán window)
+  // Số cột theo bề rộng thật của container (ResizeObserver, không đoán window);
+  // phần dư chia đều vào bề rộng ô để hàng luôn khít mép phải.
   useLayoutEffect(() => {
     const el = parentRef.current;
     if (!el) return;
     const update = () => {
       const w = el.clientWidth - 16; // padding x
-      setCols(Math.max(2, Math.floor((w + GAP) / (CELL_W + GAP))));
+      const cols = Math.max(2, Math.floor((w + GAP) / (CELL_W + GAP)));
+      const cellW = Math.max(CELL_W, Math.floor((w - (cols - 1) * GAP) / cols));
+      setLayout({ cols, cellW });
     };
     update();
     const ro = new ResizeObserver(update);
@@ -112,8 +131,18 @@ export function FileGrid() {
 
   useEffect(() => {
     virtualizer.scrollToOffset(0);
+    // Filter đổi → thumb đang xếp hàng phía Rust là của query cũ, xả đi
+    void api.clearThumbQueue();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterEpoch]);
+
+  // Rời chế độ grid (sang list/tab khác): request cũ đã bị webview hủy —
+  // xả nốt hàng đợi phía Rust để không giành I/O với job nền.
+  useEffect(() => {
+    return () => {
+      void api.clearThumbQueue();
+    };
+  }, []);
 
   useEffect(() => {
     if (firstRow >= 0) {
@@ -132,8 +161,8 @@ export function FileGrid() {
           >
             {Array.from({ length: cols }, (_, c) => {
               const idx = vi.index * cols + c;
-              if (idx >= total) return <span key={c} style={{ width: CELL_W }} />;
-              return <Cell key={c} row={rows.get(idx)} index={idx} />;
+              if (idx >= total) return <span key={c} style={{ width: cellW }} />;
+              return <Cell key={c} row={rows.get(idx)} index={idx} cellW={cellW} />;
             })}
           </div>
         ))}

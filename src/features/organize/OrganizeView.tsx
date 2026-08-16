@@ -78,6 +78,14 @@ function LibraryRoots() {
   );
 }
 
+/** Preset 1-click — giá trị PHẢI khớp DEFAULT_*_TEMPLATE (template.rs) và token mới. */
+const TEMPLATE_PRESETS = [
+  { key: "org.presetByDate", dir: "{YYYY}\\{YYYY}-{MM}", file: "{YYYYMMDD}_{hhmmss}_{hash4}" },
+  { key: "org.presetKeepStructure", dir: "{relpath}", file: "{YYYYMMDD}_{hhmmss}_{hash4}" },
+  { key: "org.presetKeepStructureName", dir: "{relpath}", file: "{name}" },
+  { key: "org.presetByDevice", dir: "{camera}\\{YYYY}-{MM}", file: "{YYYYMMDD}_{hhmmss}_{hash4}" },
+] as const;
+
 /** Template thư mục + tên file, validate + render ví dụ REALTIME khi gõ. */
 function TemplateSettings() {
   const { t } = useTranslation();
@@ -121,6 +129,28 @@ function TemplateSettings() {
     <Section title={t("org.template")}>
       <p className="mb-2 text-xs text-neutral-500">{t("org.templateHint")}</p>
       <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-neutral-500">{t("org.presets")}:</span>
+          {TEMPLATE_PRESETS.map((p) => {
+            const active = dirVal === p.dir && fileVal === p.file;
+            return (
+              <button
+                key={p.key}
+                className={`rounded border px-2 py-0.5 ${
+                  active
+                    ? "border-emerald-700 bg-emerald-900/40 text-emerald-300"
+                    : "border-neutral-700 bg-neutral-900 text-neutral-300 hover:bg-neutral-800"
+                }`}
+                onClick={() => {
+                  setDir(p.dir);
+                  setFile(p.file);
+                }}
+              >
+                {t(p.key)}
+              </button>
+            );
+          })}
+        </div>
         <label className="flex items-center gap-2 text-sm text-neutral-400">
           <span className="w-28 shrink-0">{t("org.dirTemplate")}</span>
           <input
@@ -142,7 +172,7 @@ function TemplateSettings() {
         <div className="text-xs text-neutral-500">
           {t("org.tokens")}:{" "}
           <code className="text-neutral-400">
-            {"{YYYY} {MM} {DD} {YYYYMMDD} {hh} {mm} {ss} {hhmmss} {hash4} {hash8} {hash16} {camera}"}
+            {"{YYYY} {MM} {DD} {YYYYMMDD} {hh} {mm} {ss} {hhmmss} {hash4} {hash8} {hash16} {camera} {relpath} {folder} {name}"}
           </code>
         </div>
         <div className="text-xs text-neutral-500">{t("org.tokensHint")}</div>
@@ -303,6 +333,11 @@ function PreviewAndRun() {
             <Chip label={t("org.cCloud")} n={preview.skipCloud} />
             <Chip label={t("org.cUncertain")} n={preview.skipUncertain} />
             <Chip label={t("org.cPairBlocked")} n={preview.skipPairBlocked} />
+            <Chip
+              label={t("org.cPathTooLong")}
+              n={preview.skipPathTooLong}
+              tone="bg-red-900/50 text-red-300"
+            />
             <Chip label={t("org.cOther")} n={preview.skipOther} />
           </div>
           {preview.volumesMissingRoot.length > 0 && (

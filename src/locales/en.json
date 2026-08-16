@@ -39,7 +39,12 @@
     "dirTemplate": "Folders",
     "fileTemplate": "File name",
     "tokens": "Tokens",
-    "tokensHint": "Date/time tokens come from the photo's capture date. {hash4} {hash8} {hash16} = first 4/8/16 characters of the file's content fingerprint (keeps identical names apart). {camera} = camera model from EXIF, e.g. \"Apple iPhone 12\" - left empty when the file has none.",
+    "tokensHint": "Date/time tokens come from the photo's capture date. {hash4} {hash8} {hash16} = first 4/8/16 characters of the file's content fingerprint (keeps identical names apart). {camera} = camera model from EXIF, e.g. \"Apple iPhone 12\" - left empty when the file has none. {relpath} = the file's original subfolders under its watched folder (keeps your manual sorting, e.g. \"Bac Tuan\\Tet 2008\"); {folder} = just the closest folder name; both are folder-template only. {name} = the original file name without extension.",
+    "presets": "Presets",
+    "presetByDate": "By date",
+    "presetKeepStructure": "Keep folder structure",
+    "presetKeepStructureName": "Keep structure + original names",
+    "presetByDevice": "By device",
     "noHashTokenHint": "Without a {hash4}/{hash8}/{hash16} token, Organize cannot tell two files apart by content: a second import of the same photos lands as _2 copies instead of being reported as duplicates. Use Dedup afterwards to clean them up.",
     "sample": "Example",
     "settingsSaved": "Naming saved",
@@ -56,7 +61,7 @@
     "hashPreparedDone": "Content fingerprints prepared. Run Preview again.",
     "execute": "Organize {{n}} files",
     "confirm": "Move {{n}} files into your library folders? Every move is journaled and can be undone.",
-    "running": "Organizing…",
+    "running": "Busy - a scan/meta/fingerprint/organize job is running, wait for it to finish…",
     "cMoves": "will move",
     "cCopies": "will copy across drives",
     "cNeedsHash": "need fingerprint preparation",
@@ -65,6 +70,7 @@
     "cCloud": "cloud-only",
     "cUncertain": "uncertain date",
     "cPairBlocked": "Live Photo pair blocked",
+    "cPathTooLong": "path too long",
     "cOther": "other skips",
     "missingRoots": "Drives without a library folder yet: {{drives}}",
     "sampleCapped": "Showing first {{n}} rows",
@@ -104,10 +110,17 @@
       "HASH_MISMATCH": "{{n}} whose content doesn't match the kept copy",
       "CHANGED_ON_DISK": "{{n}} changed on disk since hashing - rescan and retry",
       "SURVIVOR_CHANGED": "{{n}} skipped because the kept copy changed on disk",
-      "NOT_IN_GROUP": "{{n}} not part of any duplicate group"
+      "NOT_IN_GROUP": "{{n}} not part of any duplicate group",
+      "CANCELLED": "{{n}} left untouched (you stopped the job)"
     },
     "keepGuard": "At least one copy must stay in every group",
-    "keys": "Space / click: mark for deletion · 1-9: keep that copy · Arrows: move · Enter: next group · Wheel: synced zoom"
+    "selectAll": "Select all",
+    "markGroup": "Mark the extra copies of this group (Shift+click for a range)",
+    "phaseQuick": "Quick scan",
+    "phaseVerify": "Verifying",
+    "live": "live",
+    "deleting": "Deleting {{done}} / {{total}}",
+    "keys": "Checkbox: mark for deletion · Shift+click: range · Ctrl+A / Ctrl+D: mark / clear all · Del: delete marked · Space, 1-9, arrows, Enter: within a group"
   },
   "sort": {
     "newest": "Newest first",
@@ -151,7 +164,19 @@
     "title": "Jobs",
     "none": "No running jobs",
     "stop": "stop",
-    "cancelled": "Job cancelled."
+    "cancelled": "Job cancelled.",
+    "paused": "paused",
+    "kind": {
+      "scan": "Folder scan",
+      "meta": "Metadata",
+      "hash": "Duplicate scan",
+      "org_hash": "Organize fingerprints",
+      "organize": "Organize",
+      "org_undo": "Undo organize",
+      "recovery": "Recovery",
+      "thumb_warm": "Background thumbnails",
+      "dedup_delete": "Deleting duplicates"
+    }
   },
   "status": {
     "files_one": "{{formatted}} file",
@@ -184,6 +209,8 @@
     "ERR_TPL_ABSOLUTE": "Folder template must be relative (no drive or leading \\)",
     "ERR_TPL_PARENT_REF": "\"..\" is not allowed in the folder template",
     "ERR_TPL_SEP_IN_FILE": "File name template can't contain \\ or /",
+    "ERR_TPL_DIR_ONLY": "{{{detail}}} works only in the folder template",
+    "ERR_SCHEMA_TOO_NEW": "This library index was created by a newer TidyMedia. Update the app ({{detail}})",
     "ERR_ORG_NO_LIBRARY_ROOT": "Pick a library folder first",
     "ERR_ORG_BUSY": "An organize or undo run is already in progress - wait for it to finish",
     "ERR_ORG_PREVIEW_STALE": "The library changed after the preview. Run Preview again.",

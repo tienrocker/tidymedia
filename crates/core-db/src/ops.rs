@@ -5,8 +5,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::models::{
-    DeleteContextRow, DupGroupRow, DupMemberRow, FileDetail, HashUpsert, JobRow, MediaSrc,
-    MetaUpsert, PendingHash, PendingMeta, RootInfo, ScanEntry,
+    DeleteContextRow, DupGroupRow, DupMemberBrief, DupMemberRow, FileDetail, HashUpsert, JobRow,
+    MediaSrc, MetaUpsert, PendingHash, PendingMeta, RootInfo, ScanEntry,
 };
 
 /// Bump khi đổi schema. Có migration tăng dần từ v2 trở đi (giữ index của
@@ -60,6 +60,15 @@ pub fn ensure_schema(conn: &mut Connection) -> Result<()> {
         tx.commit()?;
         tracing::info!("schema migrated v{version} -> v{SCHEMA_VERSION} (index giữ nguyên)");
         return Ok(());
+    }
+    // App CŨ mở data MỚI (downgrade/rollback) tuyệt đối không được rơi xuống
+    // nhánh wipe: mất index còn rebuild được, nhưng org_ops journal (undo +
+    // crash-recovery intents đang chờ) thì không. Từ chối mở, giữ nguyên data.
+    if version > SCHEMA_VERSION {
+        bail!(
+            "ERR_SCHEMA_TOO_NEW|index db v{version} > app v{SCHEMA_VERSION} — \
+             app cũ hơn dữ liệu; hãy cập nhật app (bảo vệ journal organize/undo)"
+        );
     }
     let tx = conn.transaction()?;
     // Wipe schema cũ (v0/v1). DROP TABLE tự kéo trigger + FTS shadow tables theo.
@@ -610,6 +619,24 @@ pub fn upsert_meta_batch(conn: &mut Connection, rows: &[MetaUpsert]) -> Result<(
 }
 
 /// Lookup cho protocol thumb:// / media://.
+/// Trang id file đang hiện diện (status=0) — job warm thumb nền duyệt tuần tự.
+pub fn select_present_ids(conn: &Connection, after_id: i64, limit: i64) -> Result<Vec<i64>> {
+    let mut st = conn
+        .prepare_cached("SELECT id FROM files WHERE status = 0 AND id > ?1 ORDER BY id LIMIT ?2")?;
+    let ids = st
+        .query_map(params![after_id, limit], |r| r.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ids)
+}
+
+pub fn count_present_files(conn: &Connection) -> Result<i64> {
+    Ok(
+        conn.query_row("SELECT COUNT(*) FROM files WHERE status = 0", [], |r| {
+            r.get(0)
+        })?,
+    )
+}
+
 pub fn get_media_src(conn: &Connection, file_id: i64) -> Result<Option<MediaSrc>> {
     Ok(conn
         .query_row(
@@ -994,6 +1021,38 @@ pub fn get_dup_group(conn: &Connection, group_id: i64) -> Result<Vec<DupMemberRo
                 height: r.get(8)?,
                 taken_at: r.get(9)?,
                 camera: r.get(10)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Member của MỌI nhóm exact trong 1 lượt — UI cần để tick "chọn tất cả" theo
+/// rule mà không phải mở lần lượt vài nghìn nhóm. Chỉ file còn present: file
+/// mất/placeholder không bao giờ được chọn làm bản giữ, mà cũng không đáng để
+/// đề nghị xóa. Cap 200k dòng: quá số này thì UI cũng không dùng nổi 1 payload.
+pub fn list_dup_members_brief(conn: &Connection) -> Result<Vec<DupMemberBrief>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT m.group_id, f.id, f.size, f.mtime, f.status, mm.width, mm.height, mm.taken_at
+         FROM dup_groups g
+         JOIN dup_members m ON m.group_id = g.id
+         JOIN files f ON f.id = m.file_id
+         LEFT JOIN media_meta mm ON mm.file_id = f.id
+         WHERE g.kind = 0 AND f.status = 0
+         ORDER BY m.group_id, f.id
+         LIMIT 200000",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(DupMemberBrief {
+                group_id: r.get(0)?,
+                file_id: r.get(1)?,
+                size: r.get(2)?,
+                mtime: r.get(3)?,
+                status: r.get(4)?,
+                width: r.get(5)?,
+                height: r.get(6)?,
+                taken_at: r.get(7)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;

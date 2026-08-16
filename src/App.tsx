@@ -69,6 +69,10 @@ export default function App() {
       });
     };
     startInitialMeta();
+    // Warm thumb nền (ưu tiên thấp nhất, tự nhường mọi thứ) — backend tự
+    // bỏ qua nếu đang chạy/không còn gì; recovery đang bận thì thôi, lượt
+    // meta xong sẽ kích lại.
+    api.startThumbWarm().catch(() => {});
 
     // index://changed: Rust đã giãn 2.5s khi đang scan; debounce JS 1500ms nữa
     // để gom event done+changed. Re-query GIỮ scroll (không đụng filterEpoch).
@@ -88,6 +92,10 @@ export default function App() {
         // Scan xong → trích meta cho file mới (idempotent, đang chạy thì thôi)
         if (e.payload.kind === "scan") {
           api.startMetaScan().catch((err) => console.error("start_meta_scan failed", err));
+        }
+        // Meta xong → warm thumb nền cho file mới (ưu tiên thấp nhất)
+        if (e.payload.kind === "meta") {
+          api.startThumbWarm().catch((err) => console.error("start_thumb_warm failed", err));
         }
         // Quét hash xong → refresh danh sách nhóm trùng
         if (e.payload.kind === "hash" || e.payload.kind === "org_hash") {
@@ -112,6 +120,12 @@ export default function App() {
         useStore.getState().onJobEnd(e.payload.jobId);
         void useStore.getState().refreshJobs();
         useStore.getState().showToast(errText(e.payload.error ?? "ERR_INTERNAL|"), true);
+      }),
+      // Nhóm trùng vừa được gom lại giữa chừng job hash — chỉ nạp khi user
+      // đang ở tab Dedup (backend đã throttle 8s nên không cần debounce nữa).
+      listen("dup://changed", () => {
+        if (useStore.getState().appMode !== "dedup") return;
+        void useStore.getState().loadDupData();
       }),
       listen("index://changed", () => {
         // Dry-run organize là snapshot. Bất kỳ thay đổi index/meta/hash nào

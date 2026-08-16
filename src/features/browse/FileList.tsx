@@ -61,8 +61,9 @@ export function FileList() {
             return (
               <div
                 key={vi.key}
-                className={`${GRID_COLS} absolute left-0 top-0 w-full border-b border-neutral-900 hover:bg-neutral-900`}
+                className={`${GRID_COLS} absolute left-0 top-0 w-full cursor-pointer border-b border-neutral-900 hover:bg-neutral-900`}
                 style={{ height: ROW_H, transform: `translateY(${vi.start}px)` }}
+                onClick={() => row && useStore.getState().openLightbox(vi.index)}
                 onDoubleClick={() => row && useStore.getState().openLightbox(vi.index)}
               >
                 {row ? (

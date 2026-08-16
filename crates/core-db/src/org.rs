@@ -104,7 +104,8 @@ pub fn select_org_candidates(
                 m.taken_at, m.date_source, m.camera,
                 h.full_hash, h.hashed_size, h.hashed_mtime,
                 pv.id, pd.path, pv.name, pv.ext, pv.status, pv.size, pv.mtime,
-                ph.full_hash, ph.hashed_size, ph.hashed_mtime
+                ph.full_hash, ph.hashed_size, ph.hashed_mtime,
+                f.original_name
          FROM files f
          JOIN dirs d ON d.id = f.dir_id
          LEFT JOIN media_meta m ON m.file_id = f.id
@@ -142,6 +143,8 @@ pub fn select_org_candidates(
             Ok(OrgCandidateRow {
                 file_id: r.get(0)?,
                 path: join_path(&dir, &name),
+                dir_path: dir,
+                original_name: r.get(24)?,
                 ext: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
                 kind: r.get(4)?,
                 size: r.get(5)?,

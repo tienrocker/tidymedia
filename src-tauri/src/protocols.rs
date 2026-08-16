@@ -13,7 +13,7 @@ use core_db::MediaSrc;
 use tauri::http::{Request, Response};
 use tauri::{AppHandle, Manager, UriSchemeResponder};
 
-use crate::state::AppState;
+use crate::state::{AppState, PoolTag};
 
 /// File media:// to hơn mức này → 404 thay vì nuốt RAM (ảnh hiển thị native
 /// không bao giờ tới cỡ đó; video đi đường Range riêng ở M3).
@@ -24,7 +24,7 @@ pub fn spawn_thumb(app: AppHandle, request: Request<Vec<u8>>, responder: UriSche
     let db = state.db.clone();
     let thumbs = state.thumbs.clone();
     let ffmpeg = state.ffmpeg.clone();
-    state.thumb_pool.spawn(move || {
+    state.thumb_pool.spawn(PoolTag::Thumb, move || {
         // Decoder panic với file hỏng (image crate, webp encode unwrap) mà lọt
         // ra ngoài task rayon là process::abort CẢ APP — và grid load lại đúng
         // thumb đó ở lần mở sau = crash-loop. Bắt lại, trả 404.
@@ -42,7 +42,7 @@ pub fn spawn_thumb(app: AppHandle, request: Request<Vec<u8>>, responder: UriSche
 pub fn spawn_media(app: AppHandle, request: Request<Vec<u8>>, responder: UriSchemeResponder) {
     let state = app.state::<AppState>();
     let db = state.db.clone();
-    state.thumb_pool.spawn(move || {
+    state.thumb_pool.spawn(PoolTag::Media, move || {
         let resp = std::panic::catch_unwind(AssertUnwindSafe(|| media_response(&db, &request)))
             .unwrap_or_else(|_| {
                 tracing::warn!(uri = %request.uri(), "media handler panicked — tra 404");

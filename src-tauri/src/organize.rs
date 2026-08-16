@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use core_db::{org, OrgCandidateRow};
+use core_db::{org, OrgCandidateRow, RootInfo};
 use core_ingest::date::{resolve_taken_with, timezone_offset_minutes};
 use core_ingest::planner::{
     plan_organize_incremental, ClaimStore, PairInfo, PlanAction, PlanEntry, PlanItem, TargetState,
@@ -30,7 +30,7 @@ use tauri::State;
 
 use crate::commands::{blocking, canonicalize_root, err, CmdResult, GateGuard};
 use crate::dedup::{fs_matches, unix_ms, volume_supports_recycle};
-use crate::state::AppState;
+use crate::state::{AppState, LifoPool};
 
 const CAND_BATCH: i64 = 256;
 const PREVIEW_SAMPLE_CAP: usize = 500;
@@ -138,10 +138,15 @@ fn load_templates(db: &core_db::Db) -> anyhow::Result<(Template, Template, Strin
 }
 
 fn sample_render(dir: &Template, file: &Template) -> String {
-    // 2019-06-14 15:30:22, hash mẫu — chỉ để user thấy hình dạng kết quả
+    // 2019-06-14 15:30:22, hash + nguồn mẫu — chỉ để user thấy hình dạng kết quả
     let ms = core_ingest::date::days_from_civil(2019, 6, 14) * core_ingest::date::MS_PER_DAY
         + (15 * 3600 + 30 * 60 + 22) * 1000;
-    let ctx = RenderCtx::from_taken(ms, "a3f81c92d4e5b6a7a3f81c92d4e5b6a7", Some("Canon EOS R5"));
+    let ctx = RenderCtx::from_taken(ms, "a3f81c92d4e5b6a7a3f81c92d4e5b6a7", Some("Canon EOS R5"))
+        .with_source(
+            Some(r"Bac Tuan\Tet 2008"),
+            Some("Tet 2008"),
+            Some("Picture 039"),
+        );
     let mut segs = dir.render_dir(&ctx);
     segs.push(format!("{}.jpg", file.render_file(&ctx, None)));
     segs.join("\\")
@@ -312,16 +317,77 @@ fn valid_pair_hash(p: &core_db::OrgPairRow) -> Option<Vec<u8>> {
     }
 }
 
+/// `dir` nằm tại/dưới `base`? Trả phần còn lại đã bỏ '\' đầu ("" nếu trùng).
+/// So không phân biệt hoa thường (fold to_uppercase như path_key); slice bằng
+/// get(..len) để không panic giữa ký tự unicode nhiều byte.
+fn rel_under<'a>(dir: &'a str, base: &str) -> Option<&'a str> {
+    let base = base.trim_end_matches('\\');
+    if base.is_empty() {
+        return None;
+    }
+    let head = dir.get(..base.len())?;
+    if head.to_uppercase() != base.to_uppercase() {
+        return None;
+    }
+    let rest = &dir[base.len()..];
+    if rest.is_empty() {
+        return Some("");
+    }
+    if !rest.starts_with('\\') {
+        return None; // "E:\images2" không phải con của "E:\images"
+    }
+    Some(rest.trim_start_matches('\\'))
+}
+
 fn build_items(
     cands: &[OrgCandidateRow],
     tz: &TimezoneSetting,
     now_ms: i64,
+    lib_root_path: &str,
+    watch_roots: &[RootInfo],
 ) -> (Vec<PlanItem>, HashMap<i64, ItemMeta>) {
     let mut metas = HashMap::new();
     let items = cands
         .iter()
         .map(|c| {
             let name = c.path.rsplit('\\').next().unwrap_or(&c.path);
+            // Gốc tính {relpath}: LIB ROOT TRƯỚC watch root — file đã organize
+            // phải render target == chính nó (SkipOrganized idempotent). Ưu
+            // tiên watch root bao ngoài kho sẽ lồng "Library\Library\..." thêm
+            // một tầng mỗi lần chạy. Không thuộc root nào (root đã remove sau
+            // scan) → None: {relpath} render rỗng, file về thẳng phần template
+            // còn lại thay vì đoán bừa.
+            let rel = rel_under(&c.dir_path, lib_root_path).or_else(|| {
+                watch_roots
+                    .iter()
+                    .find_map(|w| rel_under(&c.dir_path, &w.path))
+            });
+            let rel_dir = rel.filter(|r| !r.is_empty()).map(str::to_string);
+            let folder = match rel {
+                // File nằm ngay tại root: không lấy tên root làm {folder}
+                Some(r) => r
+                    .rsplit('\\')
+                    .next()
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string),
+                None => (c.dir_path.len() > 3)
+                    .then(|| {
+                        c.dir_path
+                            .rsplit('\\')
+                            .next()
+                            .unwrap_or_default()
+                            .to_string()
+                    })
+                    .filter(|s| !s.is_empty()),
+            };
+            let src_name = c.original_name.as_deref().unwrap_or(name);
+            let orig_stem = Some(
+                match src_name.rsplit_once('.') {
+                    Some((stem, _)) if !stem.is_empty() => stem, // ".foo" giữ cả tên
+                    _ => src_name,
+                }
+                .to_string(),
+            );
             let r = resolve_taken_with(
                 c.taken_at,
                 c.date_source,
@@ -368,6 +434,9 @@ fn build_items(
                 taken_source: r.source,
                 hash_hex: hash.as_deref().map(to_hex),
                 camera: c.camera.clone(),
+                rel_dir,
+                folder,
+                orig_stem,
                 pair,
             }
         })
@@ -428,6 +497,7 @@ fn validate_source_snapshots(items: &mut [PlanItem], metas: &HashMap<i64, ItemMe
 
 /// Full-hash items required by `{hashN}` or cross-volume verification. Only the explicit,
 /// cancellable preparation job calls this; Preview never reads file contents.
+#[allow(clippy::too_many_arguments)] // private, 1 call site — context thật của job
 fn ensure_required_hashes(
     db: &core_db::Db,
     items: &mut [PlanItem],
@@ -436,7 +506,19 @@ fn ensure_required_hashes(
     file_tpl: &Template,
     include_uncertain: bool,
     cancel: Option<&core_jobs::CancelFlag>,
+    thumb_pool: Option<&LifoPool>,
 ) -> anyhow::Result<u64> {
+    // Mỗi hash là 1 lượt đọc TOÀN BỘ file — user đang cuộn/nhìn grid thì
+    // nhường ổ đĩa trước (HDD bão hòa là grid đen xì). Backlog cũ không tính.
+    let yield_to_thumbs = || {
+        if let Some(pool) = thumb_pool {
+            while pool.active_within(std::time::Duration::from_secs(2))
+                && !cancel.is_some_and(|c| c.load(Ordering::Relaxed))
+            {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
+        }
+    };
     let lib_drive = lib_root.chars().next().map(|c| c.to_ascii_uppercase());
     let mut hashed = 0u64;
     let mut upserts = Vec::new();
@@ -460,6 +542,7 @@ fn ensure_required_hashes(
         if !fs_matches(&it.path, meta.size, meta.mtime) {
             continue;
         }
+        yield_to_thumbs();
         let Ok(h) = core_hash::full_blake3(Path::new(&it.path)) else {
             continue;
         };
@@ -498,6 +581,7 @@ fn ensure_required_hashes(
         if !fs_matches(&pair.path, meta.size, meta.mtime) {
             continue;
         }
+        yield_to_thumbs();
         let Ok(h) = core_hash::full_blake3(Path::new(&pair.path)) else {
             continue;
         };
@@ -581,6 +665,7 @@ pub struct OrgPreview {
     pub skip_cloud: i64,
     pub skip_uncertain: i64,
     pub skip_pair_blocked: i64,
+    pub skip_path_too_long: i64,
     pub skip_other: i64,
     /// chữ cái các ổ có media nhưng CHƯA đặt library root
     pub volumes_missing_root: Vec<String>,
@@ -671,6 +756,7 @@ fn action_name(a: &PlanAction) -> &'static str {
         PlanAction::SkipOrganized => "SKIP_ORGANIZED",
         PlanAction::SkipPairBlocked => "SKIP_PAIR_BLOCKED",
         PlanAction::SkipCollision => "SKIP_COLLISION",
+        PlanAction::SkipPathTooLong => "SKIP_PATH_TOO_LONG",
     }
 }
 
@@ -685,6 +771,7 @@ fn record_preview_entry(out: &mut OrgPreview, e: &PlanEntry) {
         PlanAction::SkipCloud => out.skip_cloud += 1,
         PlanAction::SkipUncertain => out.skip_uncertain += 1,
         PlanAction::SkipPairBlocked => out.skip_pair_blocked += 1,
+        PlanAction::SkipPathTooLong => out.skip_path_too_long += 1,
         _ => out.skip_other += 1,
     }
 
@@ -847,6 +934,7 @@ pub async fn start_org_hash_scan(
     }
     let db = state.db.clone();
     let jobs = state.jobs.clone();
+    let thumb_pool = state.thumb_pool.clone();
     let op_gate = state.index_op_gate.clone();
     let preview = state.org_preview.clone();
     let preview_cancel = state.org_preview_cancel.clone();
@@ -885,7 +973,14 @@ pub async fn start_org_hash_scan(
                 let events_run = events.clone();
                 let cancel_run = cancel.clone();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run_org_hash_job(&db, &cancel_run, job_id, &events_run, include_uncertain)
+                    run_org_hash_job(
+                        &db,
+                        Some(&thumb_pool),
+                        &cancel_run,
+                        job_id,
+                        &events_run,
+                        include_uncertain,
+                    )
                 }));
                 let final_event = match result {
                     Err(_) => JobEvent::Failed {
@@ -924,6 +1019,7 @@ pub async fn start_org_hash_scan(
 
 fn run_org_hash_job(
     db: &core_db::Db,
+    thumb_pool: Option<&LifoPool>,
     cancel: &core_jobs::CancelFlag,
     job_id: i64,
     events: &crossbeam_channel::Sender<JobEvent>,
@@ -936,15 +1032,27 @@ fn run_org_hash_job(
     if roots.is_empty() {
         anyhow::bail!("ERR_ORG_NO_LIBRARY_ROOT|");
     }
+    let watch_roots = db.pool.with(core_db::ops::list_roots)?;
     let total = roots.iter().try_fold(0u64, |sum, root| {
         db.pool
             .with(|c| org::count_org_candidates(c, root.volume_id))
             .map(|count| sum + count as u64)
     })?;
+    // UI thấy job ngay khi khởi động, kể cả khi đang yield cho thumb
+    let _ = events.send(JobEvent::Progress(JobProgress {
+        job_id,
+        kind: "org_hash".into(),
+        done: 0,
+        total: Some(total.max(1)),
+        message: Some("hash".into()),
+    }));
     let mut done = 0u64;
     let mut hashed = 0u64;
     let mut throttle = Throttle::new(200);
     let mut cancelled = false;
+    // Job này cũng full-hash hàng chục nghìn file — nhóm trùng nó lộ ra hiện
+    // dần trên tab Dedup thay vì đợi tới cuối (dùng chung helper với hash job).
+    let mut dups = crate::dedup::DupRefresher::new(crate::dedup::DUP_REFRESH_MS);
     'roots: for root in &roots {
         let mut cursor = 0i64;
         loop {
@@ -960,10 +1068,10 @@ fn run_org_hash_job(
             let Some(last) = cands.last() else { break };
             cursor = last.file_id;
             done += cands.len() as u64;
-            let (mut items, mut metas) = build_items(&cands, &tz, now);
+            let (mut items, mut metas) = build_items(&cands, &tz, now, &root.path, &watch_roots);
             validate_source_snapshots(&mut items, &metas);
             snapshot_pair_metas(&mut items, &mut metas, Some(cancel));
-            hashed += ensure_required_hashes(
+            let wrote = ensure_required_hashes(
                 db,
                 &mut items,
                 &mut metas,
@@ -971,7 +1079,11 @@ fn run_org_hash_job(
                 &file_tpl,
                 include_uncertain,
                 Some(cancel),
+                thumb_pool,
             )?;
+            hashed += wrote;
+            dups.mark(wrote as usize);
+            dups.refresh_if_due(db, events)?;
             if throttle.ready() {
                 let _ = events.send(JobEvent::Progress(JobProgress {
                     job_id,
@@ -984,7 +1096,8 @@ fn run_org_hash_job(
         }
     }
     if hashed > 0 {
-        db.writer.exec(core_db::ops::rebuild_dup_groups)?;
+        let (groups, waste) = db.writer.exec(core_db::ops::rebuild_dup_groups)?;
+        let _ = events.send(JobEvent::DupGroupsChanged { groups, waste });
     }
     if cancelled {
         return Ok(String::new());
@@ -1048,7 +1161,7 @@ fn compute_org_preview(
                 .with(|c| org::select_org_candidates(c, root.volume_id, cursor, CAND_BATCH))?;
             let Some(last) = cands.last() else { break };
             cursor = last.file_id;
-            let (mut items, mut metas) = build_items(&cands, &tz, now);
+            let (mut items, mut metas) = build_items(&cands, &tz, now, &root.path, &watch_roots);
             validate_source_snapshots(&mut items, &metas);
             snapshot_pair_metas(&mut items, &mut metas, cancel);
             let target_probe_error = std::cell::RefCell::new(None::<anyhow::Error>);
@@ -2018,7 +2131,7 @@ mod tests {
             .writer
             .exec(|c| core_db::ops::insert_job(c, "org_hash", None))
             .unwrap();
-        run_org_hash_job(db, &cancel, job_id, &tx, false).unwrap()
+        run_org_hash_job(db, None, &cancel, job_id, &tx, false).unwrap()
     }
 
     fn index_entries(db: &core_db::Db, root: &Path, rows: Vec<(String, i64, i64)>) {
@@ -2502,6 +2615,185 @@ mod tests {
             db.pool.with(core_db::ops::list_roots).unwrap()[0].file_count,
             1
         );
+    }
+
+    #[test]
+    fn build_items_source_fields_shapes() {
+        fn cand(id: i64, dir: &str, name: &str) -> OrgCandidateRow {
+            OrgCandidateRow {
+                file_id: id,
+                path: format!("{dir}\\{name}"),
+                dir_path: dir.into(),
+                original_name: None,
+                ext: "jpg".into(),
+                kind: 0,
+                size: 1,
+                mtime: 1,
+                status: 0,
+                taken_at: None,
+                date_source: None,
+                camera: None,
+                full_hash: None,
+                hashed_size: None,
+                hashed_mtime: None,
+                pair: None,
+            }
+        }
+        let tz = TimezoneSetting {
+            name: None,
+            fallback_offset_minutes: 0,
+        };
+        let roots = vec![RootInfo {
+            id: 1,
+            volume_id: 1,
+            path: r"E:\images".into(),
+            last_scan_at: None,
+            file_count: 0,
+        }];
+        let (items, _) = build_items(
+            &[
+                cand(1, r"E:\images", "a.jpg"),
+                cand(2, r"E:\images\Bac Tuan\Tet", "b.jpg"),
+                cand(3, r"E:\other\x", "c.jpg"),
+                cand(4, r"E:\Library\Bac Tuan", "d.jpg"),
+                cand(5, r"E:\IMAGES\Bac Tuan", "e.jpg"), // khác case với root
+            ],
+            &tz,
+            0,
+            r"E:\Library",
+            &roots,
+        );
+        // Ngay tại watch root: không lấy tên root làm folder
+        assert_eq!(items[0].rel_dir, None);
+        assert_eq!(items[0].folder, None);
+        assert_eq!(items[0].orig_stem.as_deref(), Some("a"));
+        // Trong cây watch root
+        assert_eq!(items[1].rel_dir.as_deref(), Some(r"Bac Tuan\Tet"));
+        assert_eq!(items[1].folder.as_deref(), Some("Tet"));
+        // Ngoài mọi root: relpath rỗng, folder = leaf
+        assert_eq!(items[2].rel_dir, None);
+        assert_eq!(items[2].folder.as_deref(), Some("x"));
+        // Trong LIB root: rel tính từ lib root (bất biến chống lồng Library\Library)
+        assert_eq!(items[3].rel_dir.as_deref(), Some("Bac Tuan"));
+        // Prefix match không phân biệt hoa thường
+        assert_eq!(items[4].rel_dir.as_deref(), Some("Bac Tuan"));
+    }
+
+    /// {relpath}+{name}: giữ nguyên cây thư mục + tên gốc; chạy lần 2 = 0 move
+    /// và path tuyệt đối KHÔNG đổi (tripwire chống lồng); undo về nguyên trạng.
+    #[test]
+    fn organize_relpath_keeps_structure_idempotent_and_undoable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = core_db::Db::open(&tmp.path().join("db")).unwrap();
+        let source = tmp.path().join("source");
+        let library = tmp.path().join("library");
+        seed_root(&db, &source, &library);
+        db.writer
+            .exec(|c| {
+                core_db::ops::kv_set(c, "org_dir_template", "{relpath}")?;
+                core_db::ops::kv_set(c, "org_file_template", "{name}")?;
+                Ok(())
+            })
+            .unwrap();
+
+        let nested = source.join("Bac Tuan").join("Tet 2008");
+        let f = nested.join("Picture 039.jpg");
+        let (size, mtime) = write_file(&f, b"anh bac Tuan");
+        index_entries(&db, &nested, vec![("Picture 039.jpg".into(), size, mtime)]);
+
+        let lock = Arc::new(Mutex::new(()));
+        let cancel = core_jobs::CancelFlag::default();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let jid = db
+            .writer
+            .exec(|c| core_db::ops::insert_job(c, "organize", None))
+            .unwrap();
+        // "Picture 039" không có ngày trong tên → mtime-uncertain → opt-in
+        let msg = run_organize_job(&db, &lock, &cancel, jid, &tx, true).unwrap();
+        assert!(msg.starts_with("moved 1"), "{msg}");
+
+        let dest = library
+            .join("Bac Tuan")
+            .join("Tet 2008")
+            .join("Picture 039.jpg");
+        assert!(!f.exists(), "nguon phai bien mat");
+        assert!(dest.exists(), "phai giu cay thu muc + ten goc: {dest:?}");
+
+        let msg2 = run_organize_job(&db, &lock, &cancel, jid, &tx, true).unwrap();
+        assert!(msg2.starts_with("moved 0"), "lan 2: {msg2}");
+        assert!(
+            dest.exists(),
+            "lan 2 file phai nam nguyen cho cu, khong duoc long them tang"
+        );
+
+        let undo_jid = db
+            .writer
+            .exec(|c| core_db::ops::insert_job(c, "org_undo", None))
+            .unwrap();
+        let msg3 = run_undo_job(&db, &lock, &cancel, undo_jid, jid).unwrap();
+        assert!(msg3.starts_with("moved 1"), "undo: {msg3}");
+        assert!(f.exists(), "undo phai tra ve cho cu");
+        assert!(!dest.exists());
+    }
+
+    /// Đổi template SAU khi đã organize: move đúng 1 lần theo template mới
+    /// (rel tính từ lib root nên giữ được cấp ngày), {name} khôi phục stem gốc
+    /// từ original_name; lần 3 = 0 move.
+    #[test]
+    fn organize_retemplate_moves_once_and_restores_original_stem() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = core_db::Db::open(&tmp.path().join("db")).unwrap();
+        let source = tmp.path().join("source");
+        let library = tmp.path().join("library");
+        seed_root(&db, &source, &library);
+
+        let f = source.join("IMG_20190614_153022.jpg");
+        let (size, mtime) = write_file(&f, b"anh co ngay trong ten");
+        index_entries(
+            &db,
+            &source,
+            vec![("IMG_20190614_153022.jpg".into(), size, mtime)],
+        );
+        assert!(prepare_hashes(&db).starts_with("prepared 1"));
+
+        let lock = Arc::new(Mutex::new(()));
+        let cancel = core_jobs::CancelFlag::default();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let jid = db
+            .writer
+            .exec(|c| core_db::ops::insert_job(c, "organize", None))
+            .unwrap();
+        let msg = run_organize_job(&db, &lock, &cancel, jid, &tx, false).unwrap();
+        assert!(msg.starts_with("moved 1"), "{msg}");
+        let month_dir = library.join("2019").join("2019-06");
+        assert_eq!(fs::read_dir(&month_dir).unwrap().count(), 1);
+
+        // Đổi sang giữ-cấu-trúc + tên gốc rồi chạy lại
+        db.writer
+            .exec(|c| {
+                core_db::ops::kv_set(c, "org_dir_template", "{relpath}")?;
+                core_db::ops::kv_set(c, "org_file_template", "{name}")?;
+                Ok(())
+            })
+            .unwrap();
+        let msg2 = run_organize_job(&db, &lock, &cancel, jid, &tx, false).unwrap();
+        assert!(msg2.starts_with("moved 1"), "retemplate: {msg2}");
+        let restored = month_dir.join("IMG_20190614_153022.jpg");
+        assert!(
+            restored.exists(),
+            "rel tu lib root giu cap ngay, {{name}} khoi phuc stem goc"
+        );
+
+        let msg3 = run_organize_job(&db, &lock, &cancel, jid, &tx, false).unwrap();
+        assert!(msg3.starts_with("moved 0"), "lan 3: {msg3}");
+
+        let orig: Option<String> = db
+            .pool
+            .with(|c| -> anyhow::Result<Option<String>> {
+                Ok(c.query_row("SELECT original_name FROM files LIMIT 1", [], |r| r.get(0))?)
+            })
+            .unwrap();
+        assert_eq!(orig.as_deref(), Some("IMG_20190614_153022.jpg"));
     }
 
     /// P0 review: std::fs::rename trên Windows GHI ĐÈ target — wrapper phải từ chối.

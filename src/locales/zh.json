@@ -39,7 +39,12 @@
     "dirTemplate": "文件夹",
     "fileTemplate": "文件名",
     "tokens": "令牌",
-    "tokensHint": "日期/时间令牌取自照片的拍摄时间。{hash4} {hash8} {hash16} = 文件内容指纹的前 4/8/16 个字符（同秒拍摄的不同照片也不会重名）。{camera} = EXIF 中的相机型号，如 \"Apple iPhone 12\"，文件没有则留空。",
+    "tokensHint": "日期/时间令牌取自照片的拍摄时间。{hash4} {hash8} {hash16} = 文件内容指纹的前 4/8/16 个字符（同秒拍摄的不同照片也不会重名）。{camera} = EXIF 中的相机型号，如 \"Apple iPhone 12\"，文件没有则留空。{relpath} = 文件在受监控文件夹下的原始子目录（保留你手工整理的分类，如 \"Bac Tuan\\Tet 2008\"）；{folder} = 仅最近一级文件夹名；两者仅用于文件夹模板。{name} = 不含扩展名的原始文件名。",
+    "presets": "预设",
+    "presetByDate": "按日期",
+    "presetKeepStructure": "保留文件夹结构",
+    "presetKeepStructureName": "保留结构 + 原文件名",
+    "presetByDevice": "按设备",
     "noHashTokenHint": "没有 {hash4}/{hash8}/{hash16} 令牌时，整理无法按内容区分文件：再次导入同一批照片会生成 _2 副本，而不会被判定为重复。之后需用查重功能清理。",
     "sample": "示例",
     "settingsSaved": "命名已保存",
@@ -56,7 +61,7 @@
     "hashPreparedDone": "内容指纹已准备完成。请重新运行预览。",
     "execute": "整理 {{n}} 个文件",
     "confirm": "将 {{n}} 个文件移入库文件夹？每一步都有日志且可撤销。",
-    "running": "整理中…",
+    "running": "正在执行其他任务（扫描/元数据/指纹/整理），请稍候…",
     "cMoves": "将移动",
     "cCopies": "将跨盘复制",
     "cNeedsHash": "需要准备内容指纹",
@@ -65,6 +70,7 @@
     "cCloud": "仅在云端",
     "cUncertain": "日期不确定",
     "cPairBlocked": "实况照片配对受阻",
+    "cPathTooLong": "路径过长",
     "cOther": "其他跳过",
     "missingRoots": "尚无库文件夹的磁盘：{{drives}}",
     "sampleCapped": "显示前 {{n}} 行",
@@ -104,10 +110,17 @@
       "HASH_MISMATCH": "{{n}} 个内容与保留副本不一致",
       "CHANGED_ON_DISK": "{{n}} 个在哈希后被修改 - 请重新扫描后重试",
       "SURVIVOR_CHANGED": "{{n}} 个因保留副本刚被修改而跳过",
-      "NOT_IN_GROUP": "{{n}} 个不属于任何重复组"
+      "NOT_IN_GROUP": "{{n}} 个不属于任何重复组",
+      "CANCELLED": "{{n}} 个保持原样（你中途停止了任务）"
     },
     "keepGuard": "每组必须至少保留一个副本",
-    "keys": "空格 / 点击：标记删除 · 1-9：保留该副本 · 方向键：切换 · 回车：下一组 · 滚轮：同步缩放"
+    "selectAll": "全选",
+    "markGroup": "标记该组的多余副本（Shift+点击可选范围）",
+    "phaseQuick": "快速扫描",
+    "phaseVerify": "校验中",
+    "live": "实时更新",
+    "deleting": "正在删除 {{done}} / {{total}}",
+    "keys": "复选框：标记删除 · Shift+点击：范围选择 · Ctrl+A / Ctrl+D：全选 / 全部取消 · Del：删除已标记 · 空格、1-9、方向键、回车：组内操作"
   },
   "sort": {
     "newest": "最新优先",
@@ -150,7 +163,19 @@
     "title": "任务",
     "none": "没有正在运行的任务",
     "stop": "停止",
-    "cancelled": "任务已取消。"
+    "cancelled": "任务已取消。",
+    "paused": "已暂让",
+    "kind": {
+      "scan": "扫描文件夹",
+      "meta": "元数据",
+      "hash": "重复扫描",
+      "org_hash": "整理指纹",
+      "organize": "整理入库",
+      "org_undo": "撤销整理",
+      "recovery": "恢复",
+      "thumb_warm": "后台缩略图",
+      "dedup_delete": "删除重复项"
+    }
   },
   "status": {
     "files_other": "{{formatted}} 个文件",
@@ -182,6 +207,8 @@
     "ERR_TPL_ABSOLUTE": "文件夹模板必须是相对路径（不能含盘符或开头的 \\）",
     "ERR_TPL_PARENT_REF": "文件夹模板中不允许使用 \"..\"",
     "ERR_TPL_SEP_IN_FILE": "文件名模板不能包含 \\ 或 /",
+    "ERR_TPL_DIR_ONLY": "{{{detail}}} 只能用于文件夹模板",
+    "ERR_SCHEMA_TOO_NEW": "此索引由更新版本的 TidyMedia 创建。请更新应用（{{detail}}）",
     "ERR_ORG_NO_LIBRARY_ROOT": "请先选择库文件夹",
     "ERR_ORG_BUSY": "已有整理或撤销任务在运行 - 请等它完成",
     "ERR_ORG_PREVIEW_STALE": "预览后媒体库已更改。请重新运行预览。",

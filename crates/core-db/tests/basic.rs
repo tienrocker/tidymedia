@@ -370,6 +370,40 @@ fn dedup_hash_pipeline_and_groups() {
         .unwrap();
     assert_eq!(members.len(), 3);
 
+    // Brief = nguyên liệu để UI tick "chọn tất cả" mà không mở từng nhóm:
+    // đúng nhóm đó, đúng 3 bản, kèm field cần cho rule.
+    let brief = db.pool.with(ops::list_dup_members_brief).unwrap();
+    assert_eq!(brief.len(), 3);
+    assert!(brief.iter().all(|b| b.group_id == stable_group_id));
+    assert!(brief.iter().all(|b| b.status == 0 && b.size == 1000));
+    let mut brief_ids: Vec<i64> = brief.iter().map(|b| b.file_id).collect();
+    brief_ids.sort_unstable();
+    let mut member_ids: Vec<i64> = members.iter().map(|m| m.file_id).collect();
+    member_ids.sort_unstable();
+    assert_eq!(brief_ids, member_ids);
+
+    // File mất (status != 0) không được đề nghị xóa lẫn chọn làm bản giữ
+    db.writer
+        .exec({
+            let gone = members[2].file_id;
+            move |c| {
+                c.execute("UPDATE files SET status = 1 WHERE id = ?1", [gone])?;
+                Ok(())
+            }
+        })
+        .unwrap();
+    let brief_present = db.pool.with(ops::list_dup_members_brief).unwrap();
+    assert_eq!(brief_present.len(), 2, "ban da mat bi loai khoi brief");
+    db.writer
+        .exec({
+            let gone = members[2].file_id;
+            move |c| {
+                c.execute("UPDATE files SET status = 0 WHERE id = ?1", [gone])?;
+                Ok(())
+            }
+        })
+        .unwrap();
+
     // Delete context phủ CẢ nhóm khi chỉ đưa 1 id
     let ctx = db
         .pool
@@ -605,4 +639,31 @@ fn schema_v5_migrates_recovery_terminal_state_columns() {
         .unwrap();
     assert!(names.iter().any(|name| name == "recovery_error"));
     assert!(names.iter().any(|name| name == "recovery_attempted_at"));
+}
+
+#[test]
+fn schema_newer_version_bails_instead_of_wiping() {
+    // App cũ mở data mới (downgrade) không được wipe — org_ops journal (undo +
+    // recovery intents) không rebuild lại được bằng rescan.
+    let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+    ops::ensure_schema(&mut conn).unwrap();
+    conn.execute_batch(
+        "INSERT INTO kv(key, value) VALUES('canary', 'still-here');
+         PRAGMA user_version = 7;",
+    )
+    .unwrap();
+
+    let err = ops::ensure_schema(&mut conn).unwrap_err().to_string();
+    assert!(err.contains("ERR_SCHEMA_TOO_NEW"), "{err}");
+
+    let version: i64 = conn
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 7);
+    let canary: String = conn
+        .query_row("SELECT value FROM kv WHERE key = 'canary'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(canary, "still-here");
 }

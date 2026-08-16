@@ -34,6 +34,13 @@ pub enum JobEvent {
         job_id: i64,
         kind: String,
     },
+    /// Nhóm trùng vừa được dựng lại GIỮA CHỪNG một job hash — UI nạp lại danh
+    /// sách nhóm ngay thay vì đợi job xong (quét 34k file trên HDD là hàng giờ).
+    /// Không gắn với job row nào: pump chỉ emit sự kiện, không ghi bảng jobs.
+    DupGroupsChanged {
+        groups: i64,
+        waste: i64,
+    },
 }
 
 /// Cờ hủy — job thread poll cờ này giữa các batch.

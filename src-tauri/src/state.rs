@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -40,15 +40,130 @@ impl QueryCache {
     }
 }
 
+/// Phân loại job trong pool — `clear()` xả THUMB khi rời grid mà không đụng
+/// MEDIA (video đang phát request Range liên tục, xả là khựng).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PoolTag {
+    Thumb,
+    Media,
+}
+
+type LifoJob = (PoolTag, Box<dyn FnOnce() + Send + 'static>);
+
+/// Pool LIFO cho thumb/media: job MỚI NHẤT chạy trước. Cuộn nhanh qua nghìn
+/// cell là nghìn request vào hàng; WebView hủy request của cell đã cuộn qua
+/// nhưng task Rust vẫn chạy hết — FIFO bắt cell ĐANG hiển thị xếp sau toàn bộ
+/// backlog (mỗi MOV là một lần spawn ffmpeg), kể cả cache hit cũng phải chờ.
+/// LIFO đảo lại: màn hình hiện tại luôn ưu tiên, backlog cũ chạy lúc rảnh và
+/// vẫn làm ấm cache.
+pub struct LifoPool {
+    shared: Arc<(Mutex<Vec<LifoJob>>, Condvar)>,
+    running: Arc<std::sync::atomic::AtomicUsize>,
+    /// epoch ms của lần spawn gần nhất — phân biệt nhu cầu TƯƠI (user đang
+    /// cuộn/nhìn) với backlog cũ đang xả nốt.
+    last_spawn_ms: Arc<std::sync::atomic::AtomicU64>,
+}
+
+fn epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+impl LifoPool {
+    pub fn new(threads: usize, name: &str) -> Self {
+        let shared: Arc<(Mutex<Vec<LifoJob>>, Condvar)> =
+            Arc::new((Mutex::new(Vec::new()), Condvar::new()));
+        let running = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let last_spawn_ms = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        for i in 0..threads.max(1) {
+            let shared = shared.clone();
+            let running = running.clone();
+            std::thread::Builder::new()
+                .name(format!("{name}-{i}"))
+                .spawn(move || loop {
+                    let job = {
+                        let (queue, ready) = &*shared;
+                        let mut q = queue.lock().unwrap_or_else(|p| p.into_inner());
+                        loop {
+                            if let Some((_, job)) = q.pop() {
+                                // Tăng NGAY trong lock: không có khoảnh khắc
+                                // queue rỗng + running=0 khi job sắp chạy.
+                                running.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                break job;
+                            }
+                            q = ready.wait(q).unwrap_or_else(|p| p.into_inner());
+                        }
+                    };
+                    // Handler đã catch_unwind; lưới thứ 2 này giữ worker sống.
+                    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).is_err() {
+                        tracing::error!("thumb pool task panicked (caught)");
+                    }
+                    running.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                })
+                .expect("spawn thumb pool worker");
+        }
+        Self {
+            shared,
+            running,
+            last_spawn_ms,
+        }
+    }
+
+    pub fn spawn(&self, tag: PoolTag, job: impl FnOnce() + Send + 'static) {
+        self.last_spawn_ms
+            .store(epoch_ms(), std::sync::atomic::Ordering::Relaxed);
+        let (queue, ready) = &*self.shared;
+        queue
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push((tag, Box::new(job)));
+        ready.notify_one();
+    }
+
+    /// Xả các job CHƯA chạy thuộc `tag` — gọi khi rời chế độ grid/đổi filter:
+    /// request tương ứng đã bị webview hủy từ lâu, giữ lại chỉ tổ giành I/O
+    /// với job nền. Trả số job đã bỏ.
+    pub fn clear(&self, tag: PoolTag) -> usize {
+        let (queue, _) = &*self.shared;
+        let mut q = queue.lock().unwrap_or_else(|p| p.into_inner());
+        let before = q.len();
+        q.retain(|(t, _)| *t != tag);
+        before - q.len()
+    }
+
+    /// Số job đang xếp hàng + đang chạy.
+    pub fn pending(&self) -> usize {
+        let (queue, _) = &*self.shared;
+        queue.lock().unwrap_or_else(|p| p.into_inner()).len()
+            + self.running.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Nhu cầu thumb TƯƠI: còn việc VÀ có request mới trong `window` gần đây.
+    /// Job nền (meta/hash) chỉ nhường đĩa khi user đang thực sự cuộn/nhìn —
+    /// backlog cũ (cell đã cuộn qua từ lâu) xả nốt ở nền, KHÔNG được phép
+    /// treo vô hạn một job user chủ động bấm.
+    pub fn active_within(&self, window: std::time::Duration) -> bool {
+        if self.pending() == 0 {
+            return false;
+        }
+        let last = self
+            .last_spawn_ms
+            .load(std::sync::atomic::Ordering::Relaxed);
+        epoch_ms().saturating_sub(last) < window.as_millis() as u64
+    }
+}
+
 pub struct AppState {
     pub db: Arc<Db>,
     pub jobs: Arc<JobManager>,
     pub queries: Arc<Mutex<QueryCache>>,
     /// Cache thumbnail WebP (thumbs.db, LRU 2GB) — mất là re-generate, không quý.
     pub thumbs: Arc<core_media::ThumbStore>,
-    /// Pool riêng cho decode thumb + đọc media — không bao giờ chiếm thread
-    /// webview hay tokio worker.
-    pub thumb_pool: Arc<rayon::ThreadPool>,
+    /// Pool riêng cho decode thumb + đọc media (LIFO, xem [`LifoPool`]) —
+    /// không bao giờ chiếm thread webview hay tokio worker.
+    pub thumb_pool: Arc<LifoPool>,
     /// ffmpeg cho HEIC/AVIF/JXL + keyframe video. None = hiện icon thay thumb.
     pub ffmpeg: Option<std::path::PathBuf>,
     /// ffprobe cho metadata video. None = video không có meta/duration (chờ tool).
@@ -58,6 +173,8 @@ pub struct AppState {
     pub meta_start_gate: Arc<std::sync::atomic::AtomicBool>,
     /// Gate tương tự cho hash job (M4 dedup).
     pub hash_start_gate: Arc<std::sync::atomic::AtomicBool>,
+    /// Gate cho job warm thumbnail nền (ưu tiên thấp nhất).
+    pub thumb_warm_gate: Arc<std::sync::atomic::AtomicBool>,
     /// Gate tương tự cho organize/undo job (M5).
     pub org_start_gate: Arc<std::sync::atomic::AtomicBool>,
     /// Serialize các bước chuyển trạng thái giữa scan, watched-root mutation
@@ -129,15 +246,7 @@ pub fn init(app: &AppHandle) -> Result<()> {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
-    let thumb_pool = Arc::new(
-        rayon::ThreadPoolBuilder::new()
-            .num_threads((cores / 2).clamp(2, 6))
-            .thread_name(|i| format!("thumb-{i}"))
-            // Lưới an toàn thứ 2 (handler đã catch_unwind): KHÔNG có handler thì
-            // rayon abort cả process khi task panic.
-            .panic_handler(|_| tracing::error!("thumb pool task panicked (caught)"))
-            .build()?,
-    );
+    let thumb_pool = Arc::new(LifoPool::new((cores / 2).clamp(2, 6), "thumb"));
     let ffmpeg = core_media::find_ffmpeg();
     let ffprobe = core_media::find_ffprobe();
     match &ffmpeg {
@@ -162,6 +271,7 @@ pub fn init(app: &AppHandle) -> Result<()> {
         ffprobe,
         meta_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         hash_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        thumb_warm_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         org_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         index_op_gate: index_op_gate.clone(),
         org_preview: Arc::new(Mutex::new(None)),
@@ -339,6 +449,15 @@ pub fn init(app: &AppHandle) -> Result<()> {
                         last_changed = None;
                         let _ = handle.emit("index://changed", ());
                     }
+                    // Nhóm trùng dựng lại giữa chừng: KHÔNG đụng bảng jobs, KHÔNG
+                    // invalidate org preview (không có file nào thay đổi) — chỉ báo
+                    // UI nạp lại danh sách nhóm.
+                    JobEvent::DupGroupsChanged { groups, waste } => {
+                        let _ = handle.emit(
+                            "dup://changed",
+                            &serde_json::json!({ "groups": groups, "waste": waste }),
+                        );
+                    }
                     JobEvent::Failed { job_id, kind, error } => {
                         invalidate_preview(&handle);
                         writer.exec_async({
@@ -370,4 +489,69 @@ pub fn init(app: &AppHandle) -> Result<()> {
         .expect("spawn job-event-pump");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lifo_pool_runs_newest_job_first() {
+        let pool = LifoPool::new(1, "test-thumb");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let order: Arc<Mutex<Vec<i32>>> = Arc::new(Mutex::new(Vec::new()));
+
+        // Job chặn giữ worker duy nhất bận trong lúc xếp 3 job sau vào hàng
+        pool.spawn(PoolTag::Thumb, move || {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        started_rx.recv().unwrap();
+        for i in 1..=3 {
+            let order = order.clone();
+            pool.spawn(PoolTag::Thumb, move || order.lock().unwrap().push(i));
+        }
+        release_tx.send(()).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while order.lock().unwrap().len() < 3 {
+            assert!(Instant::now() < deadline, "pool khong chay het job");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // Job vao SAU chay TRUOC — cell dang hien thi luon thang backlog
+        assert_eq!(*order.lock().unwrap(), vec![3, 2, 1]);
+    }
+
+    #[test]
+    fn lifo_pool_clear_drops_only_tagged_queued_jobs() {
+        let pool = LifoPool::new(1, "test-clear");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let order: Arc<Mutex<Vec<i32>>> = Arc::new(Mutex::new(Vec::new()));
+
+        pool.spawn(PoolTag::Thumb, move || {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        started_rx.recv().unwrap();
+        for i in 1..=2 {
+            let order = order.clone();
+            pool.spawn(PoolTag::Thumb, move || order.lock().unwrap().push(i));
+        }
+        let media_order = order.clone();
+        pool.spawn(PoolTag::Media, move || media_order.lock().unwrap().push(99));
+
+        // Xả thumb: 2 job thumb đang xếp hàng bị bỏ, media giữ nguyên
+        assert_eq!(pool.clear(PoolTag::Thumb), 2);
+        release_tx.send(()).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while order.lock().unwrap().is_empty() {
+            assert!(Instant::now() < deadline, "media job phai chay");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(*order.lock().unwrap(), vec![99]);
+        assert_eq!(pool.clear(PoolTag::Thumb), 0);
+    }
 }

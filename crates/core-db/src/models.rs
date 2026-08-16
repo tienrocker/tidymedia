@@ -190,6 +190,22 @@ pub struct DupMemberRow {
     pub camera: Option<String>,
 }
 
+/// Bản rút gọn của MỌI member trong MỌI nhóm trùng — vừa đủ field để UI chạy
+/// rule "giữ bản nào" hàng loạt mà không phải mở từng nhóm (không kèm
+/// name/dir/camera: 13k dòng thì mấy chuỗi đó mới là phần nặng của payload).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DupMemberBrief {
+    pub group_id: i64,
+    pub file_id: i64,
+    pub size: i64,
+    pub mtime: i64,
+    pub status: i64,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub taken_at: Option<i64>,
+}
+
 /// Context verify trước khi xóa: mọi member của mọi group dính tới đợt xóa.
 #[derive(Debug, Clone)]
 pub struct DeleteContextRow {
@@ -225,6 +241,10 @@ pub struct LibraryRootRow {
 pub struct OrgCandidateRow {
     pub file_id: i64,
     pub path: String,
+    /// thư mục chứa file (dirs.path) — nguồn tính token {relpath}/{folder}
+    pub dir_path: String,
+    /// tên trước khi organize (files.original_name) — nguồn token {name}
+    pub original_name: Option<String>,
     pub ext: String,
     pub kind: i64,
     pub size: i64,

@@ -28,9 +28,12 @@ Index cả ổ cứng, gõ là ra kết quả, dọn 15 năm ảnh vứt lung tu
 - ⚡ **Nhanh thật sự** - 218.000 file trên ổ cứng thật index trong **chưa tới 10 giây**; tìm kiếm trả lời trong **20-40 ms** *ngay trong lúc đang scan*.
 - 🔎 **Tìm kiếm dễ tính** - substring, không phân biệt dấu (`anh tet` ra `Ảnh Tết`), lọc theo loại / dung lượng / ngày / độ phân giải.
 - 🖼️ **Lưới thumbnail & lightbox** - grid ảo hóa hoàn toàn, cuộn mượt qua cả triệu item, cache thumbnail WebP (LRU 2 GB), zoom/pan quanh con trỏ, panel EXIF (ngày chụp, máy ảnh, kích thước). HEIC/AVIF qua ffmpeg.
+- 🐌 **Tử tế với ổ cứng chậm** - chỉ xin thumb cho đúng phần đang nhìn thấy và xử lý cái mới nhất trước, nên cuộn nhanh trên ổ HDD không để lại hàng nghìn request rác; job warm nền chạy ở ưu tiên thấp nhất và tự nhường mọi thao tác của bạn.
 - 🎬 **Video hạng nhất** - thumbnail keyframe, lọc theo thời lượng/codec, phát ngay trong app seek tức thì, Live Photo (HEIC+MOV) là một đơn vị ở mọi nơi.
 - ♻️ **Dedup đáng tin** - nhóm sort theo dung lượng lãng phí, so 2-4 bản cạnh nhau với **zoom đồng bộ** (soi cùng một vùng pixel trên mọi bản), review thuần bàn phím, rule tự chọn bản giữ override được từng ô. Mọi lệnh xóa re-verify trên đĩa ở mili-giây cuối và vào Thùng rác.
+- ☑️ **Dọn vài nghìn nhóm không phải bấm vài nghìn lần** - checkbox tường minh (bấm vào row không bao giờ tự đánh dấu xóa), chọn tất cả theo rule, Shift+click chọn cả dải kiểu Gmail, phím tắt `Ctrl+A` / `Ctrl+D` / `Del`, và lệnh xóa hàng loạt chạy như một job có tiến độ + nút Dừng. Nhóm trùng còn hiện dần **ngay trong lúc** đang quét.
 - 🗂️ **Gom kho theo ý bạn** - thư mục nào cũng làm kho được (mỗi ổ một cái, tên tùy ý), cấu trúc thư mục + tên file là **template** (`{YYYY}\{YYYY}-{MM}`, `{YYYYMMDD}_{hhmmss}_{hash4}`, `{camera}`…), dry-run bắt buộc, move cùng ổ là rename atomic, mọi đợt đều ghi sổ và undo được.
+- 📁 **Giữ nguyên phân loại bạn đã làm bằng tay** - token `{relpath}`, `{folder}`, `{name}` (kèm preset 1 click) gom nhiều ổ về một kho mà **không** làm phẳng những thư mục bạn phân loại bao năm; chạy lại lần nữa thì không file nào bị di chuyển.
 - 🌥️ **An toàn với cloud** - placeholder OneDrive/iCloud được index nhưng **không bao giờ bị hydrate**: app không âm thầm kéo hàng GB từ cloud về.
 - 🕐 **Đúng múi giờ** - chọn múi giờ ngay lần chạy đầu; filter ngày và tên file thư viện theo đúng múi giờ đó.
 - 🌍 **English · Tiếng Việt · 中文** sẵn trong app.
@@ -62,8 +65,8 @@ Năm bất biến mà mọi đường code phá hủy đều phải qua - luật
 | M1 | Index cả ổ, tìm kiếm tức thì, duyệt ảo hóa | ✅ |
 | M2 | Lưới thumbnail, lightbox + EXIF, HEIC, job metadata | ✅ |
 | M3 | Video: thumb keyframe, phát trong app, ghép cặp Live Photo, bundle ffmpeg | ✅ |
-| M4 | Dedup exact: hash phân tầng, UI so 2-4 ảnh cạnh nhau, review bằng bàn phím | ✅ |
-| M5 | Gom thư viện: thư mục đích tự chọn, đặt tên theo template, move atomic, nhật ký undo | ✅ |
+| M4 | Dedup exact: hash phân tầng, UI so 2-4 ảnh cạnh nhau, chọn hàng loạt bằng checkbox, review bằng bàn phím, xóa hàng loạt hủy được | ✅ |
+| M5 | Gom thư viện: thư mục đích tự chọn, đặt tên theo template (giữ được cấu trúc thư mục sẵn có), move atomic, nhật ký undo | ✅ |
 | M6 | Import iPhone / SD qua WPD/MTP, nhớ "đã import" incremental | 🔜 |
 | M7 | So trùng perceptual, tag, album, phân tích dung lượng | ⏳ |
 | M8 | Scan nhanh NTFS MFT/USN - rescan cả ổ trong vài giây | ⏳ |

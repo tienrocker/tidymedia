@@ -71,6 +71,21 @@ impl ThumbStore {
         Some(data)
     }
 
+    /// Đã có thumb hợp lệ (đúng src_mtime) chưa — KHÔNG đọc blob, không touch
+    /// last_used. Job warm nền dùng để bỏ qua nhanh file đã có sẵn.
+    pub fn has(&self, file_id: i64, s: u32, src_mtime: i64) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM thumbs WHERE file_id = ?1 AND s = ?2 AND src_mtime = ?3",
+            params![file_id, s, src_mtime],
+            |_| Ok(()),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .is_some()
+    }
+
     pub fn put(&self, file_id: i64, s: u32, src_mtime: i64, data: &[u8]) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let old: Option<i64> = conn

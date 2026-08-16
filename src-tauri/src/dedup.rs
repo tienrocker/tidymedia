@@ -18,7 +18,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::commands::{blocking, err, CmdResult, GateGuard};
-use crate::state::AppState;
+use crate::state::{AppState, LifoPool};
 
 /// Batch full hash nhỏ: mỗi file là 1 lượt đọc TOÀN BỘ nội dung (ảnh 5-50MB).
 const QUICK_BATCH: i64 = 256;
@@ -51,6 +51,7 @@ pub async fn start_hash_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
     }
     let db = state.db.clone();
     let jobs = state.jobs.clone();
+    let thumb_pool = state.thumb_pool.clone();
     let op_gate = state.index_op_gate.clone();
     let preview = state.org_preview.clone();
     let preview_cancel = state.org_preview_cancel.clone();
@@ -87,7 +88,7 @@ pub async fn start_hash_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
                 let events_run = events.clone();
                 let cancel_run = cancel.clone();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run_hash_job(&db, &cancel_run, job_id, &events_run)
+                    run_hash_job(&db, &thumb_pool, &cancel_run, job_id, &events_run)
                 }));
                 let final_event = match result {
                     Err(_) => JobEvent::Failed {
@@ -124,17 +125,103 @@ pub async fn start_hash_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
     .await
 }
 
+/// Nhường I/O cho thumb interactive: user ĐANG cuộn/nhìn grid (có request thumb
+/// trong 2s gần nhất) thì job nền không giành ổ đĩa (HDD bão hòa là thumb đen
+/// xì hàng phút). Backlog thumb cũ không tính — không được treo job vô hạn.
+pub(crate) fn yield_to_thumbs(thumb_pool: &LifoPool, cancel: &core_jobs::CancelFlag) {
+    while thumb_pool.active_within(std::time::Duration::from_secs(2))
+        && !cancel.load(Ordering::Relaxed)
+    {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+}
+
+/// Nhịp dựng lại nhóm trùng giữa chừng job hash. 8s là đủ "sống" cho mắt người
+/// mà không biến writer thành cối xay.
+pub(crate) const DUP_REFRESH_MS: u64 = 8_000;
+
+/// Gom nhóm trùng GIỮA CHỪNG job hash thay vì chỉ một lần lúc xong: quét 34k
+/// file trên HDD mất hàng giờ, không ai muốn nhìn màn hình câm suốt.
+///
+/// `rebuild_dup_groups` là full recompute nhưng (a) giữ nguyên group id nên UI
+/// không nhảy lung tung và selection không bị prune oan, (b) DB nằm ở app-data
+/// chứ không phải ổ media đang bị cày → vài chục ms mỗi lượt.
+pub(crate) struct DupRefresher {
+    throttle: Throttle,
+    dirty: bool,
+}
+
+impl DupRefresher {
+    pub(crate) fn new(interval_ms: u64) -> Self {
+        Self {
+            throttle: Throttle::new(interval_ms),
+            dirty: false,
+        }
+    }
+
+    /// Vừa ghi thêm hash → lượt refresh tới mới có gì để gom.
+    pub(crate) fn mark(&mut self, wrote: usize) {
+        self.dirty |= wrote > 0;
+    }
+
+    /// Thuần (test được): chỉ chạy khi CÓ hash mới và đã hết cửa sổ throttle.
+    /// Short-circuit có chủ đích — chưa dirty thì không đụng vào đồng hồ, batch
+    /// đầu tiên có hash mới được rebuild ngay lập tức.
+    fn due(&mut self) -> bool {
+        self.dirty && self.throttle.ready()
+    }
+
+    pub(crate) fn refresh_if_due(
+        &mut self,
+        db: &core_db::Db,
+        events: &crossbeam_channel::Sender<JobEvent>,
+    ) -> anyhow::Result<()> {
+        if !self.due() {
+            return Ok(());
+        }
+        self.refresh(db, events)
+    }
+
+    pub(crate) fn refresh(
+        &mut self,
+        db: &core_db::Db,
+        events: &crossbeam_channel::Sender<JobEvent>,
+    ) -> anyhow::Result<()> {
+        self.dirty = false;
+        let (groups, waste) = db.writer.exec(core_db::ops::rebuild_dup_groups)?;
+        let _ = events.send(JobEvent::DupGroupsChanged { groups, waste });
+        Ok(())
+    }
+}
+
 fn run_hash_job(
     db: &core_db::Db,
+    thumb_pool: &LifoPool,
     cancel: &core_jobs::CancelFlag,
     job_id: i64,
     events: &crossbeam_channel::Sender<JobEvent>,
 ) -> anyhow::Result<String> {
     let mut throttle = Throttle::new(200);
     let mut done: u64 = 0;
+    let mut dups = DupRefresher::new(DUP_REFRESH_MS);
 
-    // Phase 1: quick hash (xxh3 8KB) cho mọi file trong nhóm cùng size
+    // Lượt quét trước bị hủy giữa phase 2 để lại full hash CHƯA từng được gom
+    // nhóm — dựng lại ngay lúc bấm Scan thay vì bắt user đợi hết job mới thấy.
+    dups.refresh(db, events)?;
+
+    // Phase 1: quick hash (xxh3 8KB) cho mọi file trong nhóm cùng size.
+    // Tổng phải gồm CẢ phase 2 ngay từ đầu: quick thường đã xong sạch từ lượt
+    // trước (=0), lấy mỗi nó rồi max(1) là UI hiện "0 / 1" treo hàng chục phút.
     let quick_total = db.pool.with(core_db::ops::count_pending_quick)? as u64;
+    let full_estimate = db.pool.with(core_db::ops::count_pending_full)? as u64;
+    // UI phải thấy job NGAY khi bấm — không đợi batch đầu (có thể đang yield)
+    let _ = events.send(JobEvent::Progress(JobProgress {
+        job_id,
+        kind: "hash".into(),
+        done: 0,
+        total: Some(quick_total + full_estimate),
+        message: Some(if quick_total > 0 { "quick" } else { "verify" }.into()),
+    }));
     let mut cursor = 0i64;
     loop {
         if cancel.load(Ordering::Relaxed) {
@@ -145,7 +232,14 @@ fn run_hash_job(
             .with(|c| core_db::ops::select_pending_quick(c, cursor, QUICK_BATCH))?;
         let Some(last) = batch.last() else { break };
         cursor = last.file_id;
-        let ups: Vec<HashUpsert> = batch.par_iter().filter_map(hash_one_quick).collect();
+        let mut ups: Vec<HashUpsert> = Vec::with_capacity(batch.len());
+        for chunk in batch.chunks(64) {
+            yield_to_thumbs(thumb_pool, cancel);
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            ups.par_extend(chunk.par_iter().filter_map(hash_one_quick));
+        }
         done += batch.len() as u64;
         if !ups.is_empty() {
             db.writer
@@ -156,17 +250,32 @@ fn run_hash_job(
                 job_id,
                 kind: "hash".into(),
                 done,
-                total: Some(quick_total.max(done)),
+                total: Some((quick_total + full_estimate).max(done)),
                 message: Some("quick".into()),
             }));
         }
     }
 
-    // Phase 2: BLAKE3 full — chỉ trong nhóm (size, quick64) nghi trùng
+    // Phase 2: BLAKE3 full — chỉ trong nhóm (size, quick64) nghi trùng.
+    // Đếm lại sau phase 1: quick vừa chạy có thể lộ ra ứng viên mới.
     let full_total = db.pool.with(core_db::ops::count_pending_full)? as u64;
     let grand_total = quick_total.max(done) + full_total;
+    // Bắn ngay, không đợi throttle: batch full đầu tiên trên HDD có thể mất cả
+    // phút (16 file đọc trọn nội dung), UI không được đứng số cũ suốt ngần ấy.
+    let _ = events.send(JobEvent::Progress(JobProgress {
+        job_id,
+        kind: "hash".into(),
+        done,
+        total: Some(grand_total.max(done)),
+        message: Some("verify".into()),
+    }));
     cursor = 0;
     loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(String::new());
+        }
+        // Mỗi file phase 2 là 1 lượt đọc TOÀN BỘ nội dung — nhường thumb trước
+        yield_to_thumbs(thumb_pool, cancel);
         if cancel.load(Ordering::Relaxed) {
             return Ok(String::new());
         }
@@ -177,10 +286,13 @@ fn run_hash_job(
         cursor = last.file_id;
         let ups: Vec<HashUpsert> = batch.par_iter().filter_map(hash_one_full).collect();
         done += batch.len() as u64;
+        dups.mark(ups.len());
         if !ups.is_empty() {
             db.writer
                 .exec(move |c| core_db::ops::upsert_hash_batch(c, &ups))?;
         }
+        // Nhóm trùng vừa lộ ra hiện luôn trên UI, không đợi hết job
+        dups.refresh_if_due(db, events)?;
         if throttle.ready() {
             let _ = events.send(JobEvent::Progress(JobProgress {
                 job_id,
@@ -192,8 +304,9 @@ fn run_hash_job(
         }
     }
 
-    // Phase 3: rebuild nhóm trùng từ full_hash
+    // Phase 3: rebuild nhóm trùng từ full_hash (chốt trạng thái cuối)
     let (groups, waste) = db.writer.exec(core_db::ops::rebuild_dup_groups)?;
+    let _ = events.send(JobEvent::DupGroupsChanged { groups, waste });
     Ok(format!("{groups} groups, waste {waste}"))
 }
 
@@ -257,6 +370,21 @@ pub async fn get_dup_group(
     blocking(move || {
         db.pool
             .with(|c| core_db::ops::get_dup_group(c, group_id))
+            .map_err(err)
+    })
+    .await
+}
+
+/// Member rút gọn của MỌI nhóm — UI cần để tick "chọn tất cả" theo rule mà
+/// không phải mở lần lượt vài nghìn nhóm.
+#[tauri::command]
+pub async fn list_dup_members_brief(
+    state: State<'_, AppState>,
+) -> CmdResult<Vec<core_db::DupMemberBrief>> {
+    let db = state.db.clone();
+    blocking(move || {
+        db.pool
+            .with(core_db::ops::list_dup_members_brief)
             .map_err(err)
     })
     .await
@@ -523,6 +651,7 @@ pub async fn delete_dup_files(
     crate::organize::invalidate_org_preview(&state);
     let db = state.db.clone();
     let lock = state.delete_lock.clone();
+    let jobs = state.jobs.clone();
     blocking(move || {
         use std::collections::{HashMap, HashSet};
         let _hash_gate = guard;
@@ -632,12 +761,29 @@ pub async fn delete_dup_files(
             .exec(move |c| core_db::ops::insert_job(c, "dedup_delete", Some(&journal)))
             .map_err(err)?;
 
+        // Dọn cả kho là hàng nghìn lệnh IFileOperation (~30ms/file) → phải hiện
+        // tiến độ và hủy được, không thì UI như treo cả chục phút. Hủy = "không
+        // trash thêm nữa"; những gì đã trash vẫn được dọn khỏi DB như thường.
+        let cancel = jobs.register(jid, "dedup_delete", None);
+        let events = jobs.sender();
+        let total_work = (intent.len() as u64).max(1);
+        let mut progress = Throttle::new(200);
+        let mut trashed: u64 = 0;
+        let _ = events.send(JobEvent::Progress(JobProgress {
+            job_id: jid,
+            kind: "dedup_delete".into(),
+            done: 0,
+            total: Some(total_work),
+            message: Some("trash".into()),
+        }));
+
         // Trash theo TỪNG NHÓM: survivor re-verify ngay trước victims của nhóm
         // đó, candidate re-check fs ngay trước từng lệnh trash — cửa sổ TOCTOU
         // tính bằng mili-giây thay vì phút.
         let mut deleted_ids: Vec<i64> = Vec::new();
         let mut freed: i64 = 0;
         let mut recycle_cache: HashMap<char, bool> = HashMap::new();
+        let mut cancelled = false;
         for g in &plans {
             if !fs_matches(&g.survivor.path, g.survivor.size, g.survivor.mtime) {
                 for v in &g.victims {
@@ -650,6 +796,15 @@ pub async fn delete_dup_files(
                 continue;
             }
             for v in &g.victims {
+                if cancelled || cancel.load(Ordering::Relaxed) {
+                    cancelled = true;
+                    skipped.push(SkippedFile {
+                        file_id: v.file_id,
+                        name: file_name(&v.path),
+                        reason: "CANCELLED".into(),
+                    });
+                    continue;
+                }
                 match trash_one(&v.path, v.size, v.mtime, &mut recycle_cache) {
                     Ok(()) => {
                         deleted_ids.push(v.file_id);
@@ -661,6 +816,16 @@ pub async fn delete_dup_files(
                         reason: reason.into(),
                     }),
                 }
+                trashed += 1;
+                if progress.ready() {
+                    let _ = events.send(JobEvent::Progress(JobProgress {
+                        job_id: jid,
+                        kind: "dedup_delete".into(),
+                        done: trashed,
+                        total: Some(total_work.max(trashed)),
+                        message: Some("trash".into()),
+                    }));
+                }
             }
         }
         // Pair chỉ trash khi ảnh chủ THỰC SỰ đã xóa và không còn ảnh sống nào
@@ -669,6 +834,15 @@ pub async fn delete_dup_files(
         let pairs_final =
             filter_pairs_for_trash(&pairs, &deleted_set, &|pid| pair_refs.get(&pid).cloned());
         for p in &pairs_final {
+            if cancelled || cancel.load(Ordering::Relaxed) {
+                cancelled = true;
+                skipped.push(SkippedFile {
+                    file_id: p.victim.file_id,
+                    name: file_name(&p.victim.path),
+                    reason: "CANCELLED".into(),
+                });
+                continue;
+            }
             // Survivor MOV re-check sát lệnh trash giống survivor ảnh. Hash đã
             // được đối chiếu trong plan; size+mtime đảm bảo đúng snapshot hash.
             if !fs_matches(&p.survivor.path, p.survivor.size, p.survivor.mtime) {
@@ -695,21 +869,51 @@ pub async fn delete_dup_files(
                     reason: reason.into(),
                 }),
             }
+            trashed += 1;
+            if progress.ready() {
+                let _ = events.send(JobEvent::Progress(JobProgress {
+                    job_id: jid,
+                    kind: "dedup_delete".into(),
+                    done: trashed,
+                    total: Some(total_work.max(trashed)),
+                    message: Some("trash".into()),
+                }));
+            }
         }
 
-        // Chốt journal + dọn DB
+        // Dọn DB cho những file THỰC SỰ đã vào Thùng rác (kể cả khi bị hủy giữa
+        // chừng — bỏ qua bước này là index còn trỏ vào file không còn ở đó).
         let n = deleted_ids.len();
         let ids2 = deleted_ids.clone();
-        db.writer
-            .exec(move |c| {
-                core_db::ops::update_job_progress(c, jid, n as i64, Some(n as i64), None)?;
-                core_db::ops::finish_job(c, jid, "done", None)?;
-                if !ids2.is_empty() {
-                    core_db::ops::remove_deleted_files(c, &ids2)?;
-                }
-                Ok(())
-            })
-            .map_err(err)?;
+        if let Err(e) = db.writer.exec(move |c| {
+            if !ids2.is_empty() {
+                core_db::ops::remove_deleted_files(c, &ids2)?;
+            }
+            Ok(())
+        }) {
+            // Job đã register: lỗi cũng phải có event kết thúc, không thì
+            // Jobs panel treo một job ma không bao giờ tắt.
+            let msg = err(e);
+            let _ = events.send(JobEvent::Failed {
+                job_id: jid,
+                kind: "dedup_delete".into(),
+                error: msg.clone(),
+            });
+            return Err(msg);
+        }
+        // Journal chốt qua pump (nó lo finish_job + unregister + job://done)
+        let _ = events.send(if cancelled {
+            JobEvent::Cancelled {
+                job_id: jid,
+                kind: "dedup_delete".into(),
+            }
+        } else {
+            JobEvent::Done {
+                job_id: jid,
+                kind: "dedup_delete".into(),
+                message: Some(format!("trashed {n} files")),
+            }
+        });
 
         Ok(DeleteResult {
             deleted: deleted_ids.len(),
@@ -833,6 +1037,18 @@ mod tests {
     }
     fn ok_all(_: &DeleteContextRow) -> bool {
         true
+    }
+
+    #[test]
+    fn dup_refresher_needs_new_hashes_then_throttles() {
+        let mut r = DupRefresher::new(60_000);
+        assert!(!r.due(), "chua hash duoc gi thi khong rebuild");
+        r.mark(0);
+        assert!(!r.due(), "batch khong ghi duoc hash nao cung khong tinh");
+        r.mark(5);
+        assert!(r.due(), "co hash moi -> rebuild ngay lan dau, khong doi 8s");
+        r.mark(5);
+        assert!(!r.due(), "trong cua so throttle thi thoi");
     }
 
     #[test]

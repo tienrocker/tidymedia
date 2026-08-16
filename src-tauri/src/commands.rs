@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use serde::Serialize;
 use tauri::State;
 
-use crate::state::AppState;
+use crate::state::{AppState, LifoPool};
 
 pub(crate) type CmdResult<T> = Result<T, String>;
 
@@ -279,6 +279,243 @@ impl Drop for GateGuard {
     }
 }
 
+/// Xả hàng đợi thumb CHƯA chạy — UI gọi khi rời chế độ grid/đổi filter: mọi
+/// request cũ đã bị webview hủy, giữ lại chỉ tổ giành I/O với job nền.
+#[tauri::command]
+pub fn clear_thumb_queue(state: State<'_, AppState>) -> usize {
+    let dropped = state.thumb_pool.clear(crate::state::PoolTag::Thumb);
+    if dropped > 0 {
+        tracing::debug!(dropped, "cleared stale thumb queue");
+    }
+    dropped
+}
+
+/// Job warm thumbnail nền — ƯU TIÊN THẤP NHẤT toàn app: tạo sẵn thumb lưới
+/// cho cả kho, nhưng ngủ khi (a) còn bất kỳ thumb interactive nào đang chờ
+/// (kể cả backlog) hoặc (b) BẤT KỲ job nào khác đang chạy. Chỉ ăn I/O lúc
+/// app rảnh hoàn toàn; hủy được như mọi job.
+#[tauri::command]
+pub async fn start_thumb_warm(state: State<'_, AppState>) -> CmdResult<Option<i64>> {
+    if state.recovery_active.load(Ordering::Acquire) {
+        return Err("ERR_RECOVERY_BUSY|".into());
+    }
+    let gate = state.thumb_warm_gate.clone();
+    if gate
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Ok(state.jobs.active_job_of_kind("thumb_warm"));
+    }
+    let guard = GateGuard(gate);
+    if let Some(id) = state.jobs.active_job_of_kind("thumb_warm") {
+        return Ok(Some(id));
+    }
+    let db = state.db.clone();
+    let jobs = state.jobs.clone();
+    let thumbs = state.thumbs.clone();
+    let ffmpeg = state.ffmpeg.clone();
+    let thumb_pool = state.thumb_pool.clone();
+    blocking(move || {
+        let _gate = guard;
+        let total = db
+            .pool
+            .with(core_db::ops::count_present_files)
+            .map_err(err)?;
+        if total == 0 {
+            return Ok(None);
+        }
+        let job_id = db
+            .writer
+            .exec(|c| core_db::ops::insert_job(c, "thumb_warm", None))
+            .map_err(err)?;
+        let cancel = jobs.register(job_id, "thumb_warm", None);
+        let events = jobs.sender();
+        let writer_cleanup = db.writer.clone();
+        let jobs_run = jobs.clone();
+        std::thread::Builder::new()
+            .name(format!("thumb-warm-{job_id}"))
+            .spawn(move || {
+                let events_run = events.clone();
+                let cancel_run = cancel.clone();
+                let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    run_thumb_warm_job(
+                        &db,
+                        &thumbs,
+                        ffmpeg.as_deref(),
+                        &thumb_pool,
+                        &jobs_run,
+                        &cancel_run,
+                        job_id,
+                        total as u64,
+                        &events_run,
+                    )
+                }));
+                let final_event = match result {
+                    Err(_) => JobEvent::Failed {
+                        job_id,
+                        kind: "thumb_warm".into(),
+                        error: "ERR_INTERNAL|thumb warm thread panicked".into(),
+                    },
+                    Ok(Ok(_)) if cancel.load(Ordering::Relaxed) => JobEvent::Cancelled {
+                        job_id,
+                        kind: "thumb_warm".into(),
+                    },
+                    Ok(Ok(made)) => JobEvent::Done {
+                        job_id,
+                        kind: "thumb_warm".into(),
+                        message: Some(format!("warmed +{made} thumbs")),
+                    },
+                    Ok(Err(e)) => JobEvent::Failed {
+                        job_id,
+                        kind: "thumb_warm".into(),
+                        error: format!("{e:#}"),
+                    },
+                };
+                let _ = events.send(final_event);
+            })
+            .map_err(|e| {
+                jobs.unregister(job_id);
+                writer_cleanup.exec_async(move |c| {
+                    core_db::ops::finish_job(c, job_id, "failed", Some("ERR_INTERNAL|spawn failed"))
+                });
+                format!("ERR_INTERNAL|spawn: {e}")
+            })?;
+        Ok(Some(job_id))
+    })
+    .await
+}
+
+#[allow(clippy::too_many_arguments)] // private, 1 call site — context thật của job
+fn run_thumb_warm_job(
+    db: &core_db::Db,
+    thumbs: &core_media::ThumbStore,
+    ffmpeg: Option<&std::path::Path>,
+    thumb_pool: &LifoPool,
+    jobs: &core_jobs::JobManager,
+    cancel: &core_jobs::CancelFlag,
+    job_id: i64,
+    total: u64,
+    events: &crossbeam_channel::Sender<JobEvent>,
+) -> anyhow::Result<u64> {
+    // Cỡ thumb lưới — khớp THUMB_GRID phía frontend (?s=256).
+    const GRID_S: u32 = 256;
+    const OTHER_JOBS: &[&str] = &[
+        "scan",
+        "meta",
+        "hash",
+        "org_hash",
+        "organize",
+        "org_undo",
+        "recovery",
+        "dedup_delete",
+    ];
+    let _ = events.send(JobEvent::Progress(JobProgress {
+        job_id,
+        kind: "thumb_warm".into(),
+        done: 0,
+        total: Some(total.max(1)),
+        message: Some("warm".into()),
+    }));
+    let mut done = 0u64;
+    let mut made = 0u64;
+    let mut throttle = Throttle::new(500);
+    let mut cursor = 0i64;
+    // Đang nhường đường hay không — chỉ bắn event lúc trạng thái ĐỔI.
+    let mut paused = false;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(made);
+        }
+        let ids = db
+            .pool
+            .with(|c| core_db::ops::select_present_ids(c, cursor, 256))?;
+        let Some(&last) = ids.last() else { break };
+        cursor = last;
+        for id in ids {
+            // ƯU TIÊN THẤP NHẤT: còn thumb interactive (kể cả backlog) hay
+            // job khác đang chạy → ngủ, tuyệt đối không đụng đĩa.
+            loop {
+                if cancel.load(Ordering::Relaxed) {
+                    return Ok(made);
+                }
+                let other_active = OTHER_JOBS
+                    .iter()
+                    .any(|k| jobs.active_job_of_kind(k).is_some());
+                if thumb_pool.pending() == 0 && !other_active {
+                    break;
+                }
+                // Đứng im hàng giờ mà UI không nói gì thì nhìn y như treo —
+                // báo trạng thái ĐÚNG LÚC ĐỔI (không spam mỗi 250ms).
+                if !paused {
+                    paused = true;
+                    let _ = events.send(JobEvent::Progress(JobProgress {
+                        job_id,
+                        kind: "thumb_warm".into(),
+                        done,
+                        total: Some(total.max(done)),
+                        message: Some("paused".into()),
+                    }));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+            if paused {
+                paused = false;
+                let _ = events.send(JobEvent::Progress(JobProgress {
+                    job_id,
+                    kind: "thumb_warm".into(),
+                    done,
+                    total: Some(total.max(done)),
+                    message: Some("warm".into()),
+                }));
+            }
+            done += 1;
+            let Some(src) = db.pool.with(|c| core_db::ops::get_media_src(c, id))? else {
+                continue;
+            };
+            if src.status != 0 || thumbs.has(id, GRID_S, src.mtime) {
+                continue;
+            }
+            // Guard như protocol: placeholder cấm đọc, snapshot phải khớp đĩa
+            let md = match std::fs::metadata(&src.path) {
+                Ok(md) if !core_media::is_cloud_placeholder(&md) => md,
+                _ => continue,
+            };
+            if md.len() as i64 != src.size || crate::dedup::unix_ms(md.modified().ok()) != src.mtime
+            {
+                continue;
+            }
+            let path = std::path::Path::new(&src.path);
+            let ext = src.ext.as_deref().unwrap_or("");
+            // Decoder panic với file hỏng không được giết job — bỏ qua file đó
+            let generated = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                if src.kind == 1 {
+                    match ffmpeg {
+                        Some(ff) => core_media::make_video_thumb(ff, path, GRID_S, src.duration_ms),
+                        None => anyhow::bail!("no ffmpeg"),
+                    }
+                } else {
+                    core_media::make_thumb(path, ext, GRID_S, ffmpeg)
+                }
+            }));
+            if let Ok(Ok(data)) = generated {
+                if thumbs.put(id, GRID_S, src.mtime, &data).is_ok() {
+                    made += 1;
+                }
+            }
+            if throttle.ready() {
+                let _ = events.send(JobEvent::Progress(JobProgress {
+                    job_id,
+                    kind: "thumb_warm".into(),
+                    done,
+                    total: Some(total.max(done)),
+                    message: Some("warm".into()),
+                }));
+            }
+        }
+    }
+    Ok(made)
+}
+
 /// Meta job: trích dimensions + EXIF cho mọi ảnh chưa có meta. Idempotent —
 /// gọi lúc nào cũng được (sau scan, lúc mở app): đang chạy → trả job id đang
 /// chạy; không còn gì để làm → None (không tạo job row rác).
@@ -302,6 +539,7 @@ pub async fn start_meta_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
     }
     let db = state.db.clone();
     let jobs = state.jobs.clone();
+    let thumb_pool = state.thumb_pool.clone();
     let ctx = MetaCtx {
         ffprobe: state.ffprobe.clone(),
     };
@@ -331,7 +569,15 @@ pub async fn start_meta_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
                 let events_progress = events.clone();
                 let cancel_run = cancel.clone();
                 let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    run_meta_job(&db, &ctx, &cancel_run, job_id, total, &events_progress)
+                    run_meta_job(
+                        &db,
+                        &ctx,
+                        &thumb_pool,
+                        &cancel_run,
+                        job_id,
+                        total,
+                        &events_progress,
+                    )
                 }));
                 let final_event = match result {
                     Err(_) => JobEvent::Failed {
@@ -343,11 +589,22 @@ pub async fn start_meta_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
                         job_id,
                         kind: "meta".into(),
                     },
-                    Ok(Ok(done)) => JobEvent::Done {
-                        job_id,
-                        kind: "meta".into(),
-                        message: Some(format!("meta {done}")),
-                    },
+                    Ok(Ok(done)) => {
+                        // "+N (M left)": N của RIÊNG lượt này (job incremental,
+                        // restart là chia lượt) + M còn thiếu toàn kho — tránh
+                        // hiểu nhầm "meta 13238" là tổng đã trích của cả thư viện.
+                        let left = db
+                            .pool
+                            .with(|c| core_db::ops::count_pending_meta(c, ctx.ffprobe.is_some()));
+                        JobEvent::Done {
+                            job_id,
+                            kind: "meta".into(),
+                            message: Some(match left {
+                                Ok(left) => format!("meta +{done} ({left} left)"),
+                                Err(_) => format!("meta +{done}"),
+                            }),
+                        }
+                    }
                     Ok(Err(e)) => JobEvent::Failed {
                         job_id,
                         kind: "meta".into(),
@@ -378,6 +635,7 @@ struct MetaCtx {
 fn run_meta_job(
     db: &core_db::Db,
     ctx: &MetaCtx,
+    thumb_pool: &LifoPool,
     cancel: &core_jobs::CancelFlag,
     job_id: i64,
     total: i64,
@@ -395,6 +653,14 @@ fn run_meta_job(
     let mut done: u64 = 0;
     let mut cursor: i64 = 0;
     let mut throttle = Throttle::new(200);
+    // UI thấy job ngay khi khởi động, kể cả khi batch đầu đang yield cho thumb
+    let _ = events.send(JobEvent::Progress(JobProgress {
+        job_id,
+        kind: "meta".into(),
+        done: 0,
+        total: Some(total.max(1) as u64),
+        message: None,
+    }));
     loop {
         if cancel.load(Ordering::Relaxed) {
             return Ok(done);
@@ -409,10 +675,22 @@ fn run_meta_job(
         cursor = last.file_id;
         // Ảnh: header-only read; video: ffprobe — song song trên global rayon pool.
         // None = file không đọc được (ổ rút...) → không ghi row, job sau thử lại.
-        let metas: Vec<MetaUpsert> = batch
-            .par_iter()
-            .filter_map(|p| extract_one_meta(p, ctx, timezone.as_deref(), tz_offset_min))
-            .collect();
+        // Chia chunk nhỏ + NHƯỜNG ĐĨA: kho trên HDD mà meta cày EXIF song song
+        // là thumb user đang nhìn chết đói I/O (đen xì hàng phút). Có thumb
+        // đang chờ → meta đứng lại tới khi pool rảnh; SSD gần như không bao
+        // giờ phải chờ vì thumb xong trong vài ms.
+        let mut metas: Vec<MetaUpsert> = Vec::with_capacity(batch.len());
+        for chunk in batch.chunks(16) {
+            crate::dedup::yield_to_thumbs(thumb_pool, cancel);
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            metas.par_extend(
+                chunk
+                    .par_iter()
+                    .filter_map(|p| extract_one_meta(p, ctx, timezone.as_deref(), tz_offset_min)),
+            );
+        }
         let n = batch.len() as u64;
         if !metas.is_empty() {
             db.writer

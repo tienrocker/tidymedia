@@ -28,9 +28,12 @@ Photos and videos pile up for years - iPhone syncs through a dozen different app
 - ⚡ **Fast for real** - 218,000 files on a real drive indexed in **under 10 seconds**; search answers in **20-40 ms** *while the scan is still running*.
 - 🔎 **Search that forgives** - substring, accent-insensitive (`anh tet` finds `Ảnh Tết`), filters for kind / size / date / resolution.
 - 🖼️ **Thumbnail grid & lightbox** - fully virtualized grid that scrolls smoothly through a million items, WebP thumbnail cache (2 GB LRU), cursor-anchored zoom & pan, EXIF info panel (taken date, camera, dimensions). HEIC/AVIF via ffmpeg.
+- 🐌 **Kind to slow drives** - thumbnails are requested only for what is actually on screen and served newest-first, so a fast scroll on a spinning disk never queues thousands of stale reads; a background warm job fills the cache at the lowest priority and steps aside for anything you do.
 - 🎬 **Video, first-class** - keyframe thumbnails, duration/codec filters, in-app playback with instant seek, Live Photos (HEIC+MOV) paired as one item everywhere.
 - ♻️ **Dedup you can trust** - groups sorted by wasted bytes, 2-4-up compare with **synchronized zoom** (inspect the same pixels on every copy), keyboard-first review, auto-select rules you can override per file. Every deletion is re-verified on disk at the last millisecond and goes to the Recycle Bin.
+- ☑️ **Clean thousands of groups without clicking thousands of times** - explicit checkboxes (never "click a row and it's marked"), select-all by rule, Gmail-style Shift+click ranges, `Ctrl+A` / `Ctrl+D` / `Del` shortcuts, and a mass delete that runs as a job with live progress and a Stop button. Duplicate groups also appear *while* the scan is still hashing.
 - 🗂️ **Organize on your terms** - any folder can be your library (one per drive, any name), folder layout and file names are **templates** (`{YYYY}\{YYYY}-{MM}`, `{YYYYMMDD}_{hhmmss}_{hash4}`, `{camera}`…), dry-run is mandatory, same-drive moves are atomic renames, and every batch is journaled and undoable.
+- 📁 **Keeps the sorting you already did by hand** - `{relpath}`, `{folder}` and `{name}` tokens (with one-click presets) consolidate scattered drives *without* flattening the folders you curated over the years, and re-running organize moves nothing.
 - 🧯 **Interruption-proof** - the dry-run is a frozen snapshot, so nothing is decided twice; content fingerprints are prepared by a separate cancellable job instead of stalling the preview; and if the app dies mid-move, the next launch replays the journal as a visible, cancellable recovery job that verifies by hash before touching anything.
 - 🌥️ **Cloud-safe** - OneDrive/iCloud placeholders are indexed but **never hydrated**: TidyMedia will not silently pull gigabytes down from the cloud.
 - 🕐 **Timezone-aware** - you pick your timezone on first run; date filters and library file names respect it, not whatever the OS guesses.
@@ -63,8 +66,8 @@ Five invariants every destructive code path must pass - not guidelines, hard rul
 | M1 | Whole-drive index, instant search, virtualized browse | ✅ |
 | M2 | Thumbnail grid, lightbox + EXIF, HEIC, metadata jobs | ✅ |
 | M3 | Video: keyframe thumbs, in-app playback, Live Photo pairing, bundled ffmpeg | ✅ |
-| M4 | Exact dedup: tiered hashing, 2-4-up compare UI, keyboard-first review | ✅ |
-| M5 | Organize: user-chosen library folder, template naming, atomic moves, undo journal | ✅ |
+| M4 | Exact dedup: tiered hashing, 2-4-up compare UI, bulk checkbox selection, keyboard-first review, cancellable mass delete | ✅ |
+| M5 | Organize: user-chosen library folder, template naming (incl. keeping your existing folder structure), atomic moves, undo journal | ✅ |
 | M6 | iPhone / SD import via WPD/MTP, incremental "already imported" | 🔜 |
 | M7 | Perceptual similarity, tags, albums, storage analytics | ⏳ |
 | M8 | NTFS MFT/USN fast scan - full drive rescan in seconds | ⏳ |

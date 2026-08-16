@@ -56,6 +56,9 @@ pub enum PlanAction {
     SkipPairBlocked,
     /// hết đường tránh đụng độ (thực tế không xảy ra)
     SkipCollision,
+    /// mọi ứng viên tên đều cho đường dẫn đích vượt MAX_PATH — cần template
+    /// ngắn hơn hoặc library root nông hơn
+    SkipPathTooLong,
 }
 
 /// MOV đi kèm ảnh Live Photo
@@ -86,6 +89,12 @@ pub struct PlanItem {
     /// hex BLAKE3 full (64 ký tự) nếu đã hash + còn hợp lệ
     pub hash_hex: Option<String>,
     pub camera: Option<String>,
+    /// thư mục nguồn tương đối root (token {relpath}) — None = không xác định
+    pub rel_dir: Option<String>,
+    /// tên thư mục cha trực tiếp (token {folder})
+    pub folder: Option<String>,
+    /// stem tên file gốc (token {name})
+    pub orig_stem: Option<String>,
     pub pair: Option<PairInfo>,
 }
 
@@ -126,8 +135,15 @@ fn join_target(lib_root: &str, segs: &[String], file: &str, ext: &str) -> String
     out
 }
 
+/// So sánh path không phân biệt hoa thường — CÙNG phép fold Unicode với claim
+/// key (to_uppercase), không phải ASCII-only: tên thư mục có dấu ("Bác Tuấn"
+/// vs "BÁC TUẤN") phải nhận ra nhau ở check SkipOrganized, lệch là file bị
+/// re-plan sang tên escalate dù đang nằm đúng chỗ.
 fn eq_ci(a: &str, b: &str) -> bool {
-    a.eq_ignore_ascii_case(b)
+    if a.eq_ignore_ascii_case(b) {
+        return true;
+    }
+    a.to_uppercase() == b.to_uppercase()
 }
 
 /// Lập kế hoạch organize cho 1 nhóm file cùng đích `lib_root`.
@@ -206,7 +222,11 @@ pub fn plan_organize_incremental<C: ClaimStore + ?Sized>(
         let needs_hash =
             (it.hash_hex.is_none() && (file_tpl.has_hash || !same_vol)) || pair_needs_hash;
         let hash_hex = it.hash_hex.clone().unwrap_or_default();
-        let ctx = RenderCtx::from_taken(it.taken_ms, &hash_hex, it.camera.as_deref());
+        let ctx = RenderCtx::from_taken(it.taken_ms, &hash_hex, it.camera.as_deref()).with_source(
+            it.rel_dir.as_deref(),
+            it.folder.as_deref(),
+            it.orig_stem.as_deref(),
+        );
         let segs = dir_tpl.render_dir(&ctx);
         if needs_hash {
             // đường dự kiến chỉ để hiển thị dry-run
@@ -231,6 +251,7 @@ pub fn plan_organize_incremental<C: ClaimStore + ?Sized>(
         }
 
         let mut planned: Option<PlanEntry> = None;
+        let mut saw_too_long = false;
         for name in &cands {
             let target = join_target(lib_root, &segs, name, &it.ext);
             let pair_target = it
@@ -254,6 +275,19 @@ pub fn plan_organize_incremental<C: ClaimStore + ?Sized>(
                 }
                 planned = Some(e);
                 break;
+            }
+            // MAX_PATH: đích quá dài thì thử ứng viên tên khác (KHÔNG break —
+            // độ dài không đơn điệu: {hash16} mặc định DÀI HƠN bản escalate
+            // hash8). Hết thang → SkipPathTooLong, lý do thật hiện ở preview
+            // thay vì MKDIR_FAILED/MOVE_FAILED mờ mịt lúc execute.
+            const MAX_TARGET_UTF16: usize = 259; // MAX_PATH 260 gồm NUL
+            let too_long = target.encode_utf16().count() > MAX_TARGET_UTF16
+                || pair_target
+                    .as_deref()
+                    .is_some_and(|pt| pt.encode_utf16().count() > MAX_TARGET_UTF16);
+            if too_long {
+                saw_too_long = true;
+                continue;
             }
             let key = target.to_uppercase();
             let claimed_here = claimed.get_claim(&key)?;
@@ -306,7 +340,16 @@ pub fn plan_organize_incremental<C: ClaimStore + ?Sized>(
             planned = Some(e);
             break;
         }
-        out.push(planned.unwrap_or_else(|| entry(PlanAction::SkipCollision, None)));
+        out.push(planned.unwrap_or_else(|| {
+            entry(
+                if saw_too_long {
+                    PlanAction::SkipPathTooLong
+                } else {
+                    PlanAction::SkipCollision
+                },
+                None,
+            )
+        }));
     }
     Ok(out)
 }
@@ -337,6 +380,9 @@ mod tests {
             taken_source: SRC_EXIF,
             hash_hex: hash.map(|s| s.to_string()),
             camera: None,
+            rel_dir: None,
+            folder: None,
+            orig_stem: None,
             pair: None,
         }
     }
@@ -656,5 +702,157 @@ mod tests {
             .as_deref()
             .unwrap()
             .ends_with("20190614_153022_2.jpg"));
+    }
+
+    fn src_item(
+        id: i64,
+        path: &str,
+        hash: Option<&str>,
+        rel: Option<&str>,
+        stem: Option<&str>,
+    ) -> PlanItem {
+        let mut it = item(id, path, hash);
+        it.rel_dir = rel.map(str::to_string);
+        it.folder = rel.and_then(|r| r.rsplit('\\').next()).map(str::to_string);
+        it.orig_stem = stem.map(str::to_string);
+        it
+    }
+
+    #[test]
+    fn relpath_segs_are_stable_across_name_escalation() {
+        let d = parse_template("{relpath}", TemplateKind::Dir).unwrap();
+        let f = parse_template(DEFAULT_FILE_TEMPLATE, TemplateKind::File).unwrap();
+        // cùng giây, hash4 đều "aaaa" -> file 2 escalate hash8 nhưng THƯ MỤC giữ nguyên
+        let items = [
+            src_item(
+                1,
+                r"D:\mess\a.jpg",
+                Some(H1),
+                Some(r"Bac Tuan\Tet 2008"),
+                None,
+            ),
+            src_item(
+                2,
+                r"D:\mess\b.jpg",
+                Some(H2),
+                Some(r"Bac Tuan\Tet 2008"),
+                None,
+            ),
+        ];
+        let plan = plan_organize(&items, r"D:\L", &d, &f, false, &all_free);
+        assert_eq!(
+            plan[0].new_path.as_deref(),
+            Some(r"D:\L\Bac Tuan\Tet 2008\20190614_153022_aaaa.jpg")
+        );
+        assert_eq!(
+            plan[1].new_path.as_deref(),
+            Some(r"D:\L\Bac Tuan\Tet 2008\20190614_153022_aaaa2222.jpg")
+        );
+    }
+
+    #[test]
+    fn name_token_collision_uses_counter_never_fake_duplicate() {
+        // {name} không hash + cùng volume → không bắt hash; 2 file KHÁC nội dung
+        // trùng stem phải ra _2 (hành vi chấp nhận: trùng NỘI DUNG thật thì đã
+        // có dedup — planner không được phán SkipDuplicate khi không có hash khớp)
+        let d = parse_template(DEFAULT_DIR_TEMPLATE, TemplateKind::Dir).unwrap();
+        let f = parse_template("{name}", TemplateKind::File).unwrap();
+        let items = [
+            src_item(
+                1,
+                r"D:\x\Picture 039.jpg",
+                Some(H1),
+                None,
+                Some("Picture 039"),
+            ),
+            src_item(
+                2,
+                r"D:\y\Picture 039.jpg",
+                Some(H2),
+                None,
+                Some("Picture 039"),
+            ),
+        ];
+        let plan = plan_organize(&items, r"D:\L", &d, &f, false, &all_free);
+        assert_eq!(plan[0].action, PlanAction::Rename);
+        assert_eq!(plan[1].action, PlanAction::Rename);
+        assert!(plan[0]
+            .new_path
+            .as_deref()
+            .unwrap()
+            .ends_with(r"\Picture 039.jpg"));
+        assert!(plan[1]
+            .new_path
+            .as_deref()
+            .unwrap()
+            .ends_with(r"\Picture 039_2.jpg"));
+    }
+
+    #[test]
+    fn relpath_file_already_in_library_is_skip_organized() {
+        // Bất biến chống lồng: file đã organize (rel tính từ LIB ROOT) render
+        // target == chính nó → SkipOrganized, tuyệt đối không move lần 2
+        let d = parse_template("{relpath}", TemplateKind::Dir).unwrap();
+        let f = parse_template("{name}", TemplateKind::File).unwrap();
+        let items = [src_item(
+            1,
+            r"D:\L\Bac Tuan\Tet 2008\Picture 039.jpg",
+            Some(H1),
+            Some(r"Bac Tuan\Tet 2008"),
+            Some("Picture 039"),
+        )];
+        let plan = plan_organize(&items, r"D:\L", &d, &f, false, &all_free);
+        assert_eq!(plan[0].action, PlanAction::SkipOrganized);
+    }
+
+    #[test]
+    fn skip_organized_matches_unicode_case_insensitively() {
+        // Path trên đĩa khác case Ở KÝ TỰ CÓ DẤU so với render — eq_ci ASCII-only
+        // cũ sẽ trượt SkipOrganized rồi re-plan file đang nằm đúng chỗ
+        let d = parse_template("{relpath}", TemplateKind::Dir).unwrap();
+        let f = parse_template("{name}", TemplateKind::File).unwrap();
+        let items = [src_item(
+            1,
+            r"D:\L\BÁC TUẤN\Ảnh.jpg",
+            Some(H1),
+            Some("Bác Tuấn"),
+            Some("Ảnh"),
+        )];
+        let plan = plan_organize(&items, r"D:\L", &d, &f, false, &all_free);
+        assert_eq!(plan[0].action, PlanAction::SkipOrganized);
+    }
+
+    #[test]
+    fn overlong_target_reports_skip_path_too_long() {
+        let d = parse_template(DEFAULT_DIR_TEMPLATE, TemplateKind::Dir).unwrap();
+        let f = parse_template("{YYYYMMDD}_{hhmmss}", TemplateKind::File).unwrap();
+        let lib = format!(r"D:\{}", "L".repeat(300));
+        let items = [item(1, r"D:\x\a.jpg", Some(H1))];
+        let plan = plan_organize(&items, &lib, &d, &f, false, &all_free);
+        assert_eq!(plan[0].action, PlanAction::SkipPathTooLong);
+        assert!(plan[0].new_path.is_none());
+    }
+
+    #[test]
+    fn overlong_default_name_still_fits_via_shorter_hash_escalation() {
+        // Độ dài ứng viên KHÔNG đơn điệu: {hash16} mặc định (16 ký tự) tràn
+        // nhưng bản escalate hash8 (8 ký tự) vừa — phải Rename chứ không skip
+        let d = parse_template(DEFAULT_DIR_TEMPLATE, TemplateKind::Dir).unwrap();
+        let f = parse_template("{hash16}", TemplateKind::File).unwrap();
+        // target = lib + "\2019\2019-06\" + name + ".jpg" = (3+N) + 14 + len(name) + 4
+        // N=225: hash16 → 262 (>259), hash8 → 254 (vừa)
+        let lib = format!(r"D:\{}", "L".repeat(225));
+        let items = [item(1, r"D:\x\a.jpg", Some(H1))];
+        let plan = plan_organize(&items, &lib, &d, &f, false, &all_free);
+        assert_eq!(plan[0].action, PlanAction::Rename);
+        let name = plan[0]
+            .new_path
+            .as_deref()
+            .unwrap()
+            .rsplit('\\')
+            .next()
+            .unwrap()
+            .to_string();
+        assert_eq!(name, format!("{}.jpg", &H1[..8]));
     }
 }

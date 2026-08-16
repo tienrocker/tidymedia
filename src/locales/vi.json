@@ -39,7 +39,12 @@
     "dirTemplate": "Thư mục",
     "fileTemplate": "Tên file",
     "tokens": "Token",
-    "tokensHint": "Token ngày/giờ lấy từ ngày chụp của ảnh. {hash4} {hash8} {hash16} = 4/8/16 ký tự đầu của vân tay nội dung file (2 ảnh khác nhau chụp cùng giây vẫn ra tên khác). {camera} = tên máy ảnh từ EXIF, ví dụ \"Apple iPhone 12\" - file không có thì để trống.",
+    "tokensHint": "Token ngày/giờ lấy từ ngày chụp của ảnh. {hash4} {hash8} {hash16} = 4/8/16 ký tự đầu của vân tay nội dung file (2 ảnh khác nhau chụp cùng giây vẫn ra tên khác). {camera} = tên máy ảnh từ EXIF, ví dụ \"Apple iPhone 12\" - file không có thì để trống. {relpath} = cây thư mục con gốc của file dưới thư mục theo dõi (giữ nguyên phân loại tay của mày, vd \"Bac Tuan\\Tet 2008\"); {folder} = chỉ tên thư mục sát file; cả hai chỉ dùng cho template thư mục. {name} = tên file gốc không có đuôi.",
+    "presets": "Mẫu sẵn",
+    "presetByDate": "Theo ngày",
+    "presetKeepStructure": "Giữ cấu trúc thư mục",
+    "presetKeepStructureName": "Giữ cấu trúc + tên gốc",
+    "presetByDevice": "Theo thiết bị",
     "noHashTokenHint": "Không có token {hash4}/{hash8}/{hash16} thì Organize không phân biệt được nội dung: gom lần 2 từ cùng nguồn sẽ tạo bản _2 thay vì báo là trùng. Phải dùng Dedup dọn sau.",
     "sample": "Ví dụ",
     "settingsSaved": "Đã lưu cách đặt tên",
@@ -56,7 +61,7 @@
     "hashPreparedDone": "Đã chuẩn bị xong vân tay nội dung. Hãy chạy Xem trước lại.",
     "execute": "Gom {{n}} file",
     "confirm": "Chuyển {{n}} file vào thư mục kho? Mọi bước đều ghi sổ và undo được.",
-    "running": "Đang gom…",
+    "running": "Đang bận job khác (scan/meta/vân tay/gom) - chờ chạy xong đã…",
     "cMoves": "sẽ chuyển",
     "cCopies": "sẽ copy xuyên ổ",
     "cNeedsHash": "cần chuẩn bị vân tay",
@@ -65,6 +70,7 @@
     "cCloud": "chỉ có trên cloud",
     "cUncertain": "không chắc ngày",
     "cPairBlocked": "cặp Live Photo bị chặn",
+    "cPathTooLong": "đường dẫn quá dài",
     "cOther": "bỏ qua khác",
     "missingRoots": "Ổ chưa có thư mục kho: {{drives}}",
     "sampleCapped": "Hiện {{n}} dòng đầu",
@@ -104,10 +110,17 @@
       "HASH_MISMATCH": "{{n}} nội dung không khớp bản giữ lại",
       "CHANGED_ON_DISK": "{{n}} đã đổi trên đĩa sau khi hash - quét lại rồi thử tiếp",
       "SURVIVOR_CHANGED": "{{n}} bỏ qua vì bản giữ lại vừa đổi trên đĩa",
-      "NOT_IN_GROUP": "{{n}} không thuộc nhóm trùng nào"
+      "NOT_IN_GROUP": "{{n}} không thuộc nhóm trùng nào",
+      "CANCELLED": "{{n}} còn nguyên (mày bấm dừng giữa chừng)"
     },
     "keepGuard": "Mỗi nhóm phải giữ lại ít nhất 1 bản",
-    "keys": "Space / click: đánh dấu xóa · 1-9: giữ bản đó · Mũi tên: chuyển · Enter: nhóm kế · Lăn chuột: zoom đồng bộ"
+    "selectAll": "Chọn tất cả",
+    "markGroup": "Đánh dấu các bản thừa của nhóm này (Shift+click để chọn cả dải)",
+    "phaseQuick": "Quét nhanh",
+    "phaseVerify": "Đối chiếu",
+    "live": "đang cập nhật",
+    "deleting": "Đang xóa {{done}} / {{total}}",
+    "keys": "Checkbox: đánh dấu xóa · Shift+click: chọn cả dải · Ctrl+A / Ctrl+D: đánh dấu / bỏ hết · Del: xóa bản đã đánh dấu · Space, 1-9, mũi tên, Enter: trong 1 nhóm"
   },
   "sort": {
     "newest": "Mới nhất",
@@ -150,7 +163,19 @@
     "title": "Tác vụ",
     "none": "Không có tác vụ nào đang chạy",
     "stop": "dừng",
-    "cancelled": "Đã hủy tác vụ."
+    "cancelled": "Đã hủy tác vụ.",
+    "paused": "tạm nhường",
+    "kind": {
+      "scan": "Quét thư mục",
+      "meta": "Metadata",
+      "hash": "Quét trùng lặp",
+      "org_hash": "Vân tay để gom kho",
+      "organize": "Gom kho",
+      "org_undo": "Hoàn tác gom kho",
+      "recovery": "Khôi phục",
+      "thumb_warm": "Thumb nền",
+      "dedup_delete": "Xóa bản trùng"
+    }
   },
   "status": {
     "files_other": "{{formatted}} file",
@@ -182,6 +207,8 @@
     "ERR_TPL_ABSOLUTE": "Template thư mục phải là đường tương đối (không có ổ đĩa hay \\ đầu)",
     "ERR_TPL_PARENT_REF": "Không được dùng \"..\" trong template thư mục",
     "ERR_TPL_SEP_IN_FILE": "Template tên file không được chứa \\ hay /",
+    "ERR_TPL_DIR_ONLY": "{{{detail}}} chỉ dùng được trong template thư mục",
+    "ERR_SCHEMA_TOO_NEW": "Index này do bản TidyMedia mới hơn tạo ra. Hãy cập nhật app ({{detail}})",
     "ERR_ORG_NO_LIBRARY_ROOT": "Chọn thư mục kho trước đã",
     "ERR_ORG_BUSY": "Đang có đợt gom/hoàn tác chạy dở - chờ xong đã",
     "ERR_ORG_PREVIEW_STALE": "Thư viện đã thay đổi sau dry-run. Hãy chạy Xem trước lại.",

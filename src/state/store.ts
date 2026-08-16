@@ -16,6 +16,7 @@ import {
   OrgPreview,
   OrgSettings,
 } from "../lib/ipc";
+import { DedupRule, RuleMember, rangeIds, ruleChecked } from "../lib/dedupRule";
 import { errText } from "../lib/errors";
 import {
   systemTimeZone,
@@ -45,30 +46,56 @@ interface ToastMsg {
 
 export type ViewMode = "grid" | "list";
 export type AppMode = "browse" | "dedup" | "organize";
-export type DedupRule = "res" | "oldest" | "newest";
 
-/** Rule tự đánh dấu: giữ bản tốt nhất, mark xóa phần còn lại. */
-export function ruleChecked(members: DupMemberRow[], rule: DedupRule): Set<number> {
-  if (members.length < 2) return new Set();
-  const score = (m: DupMemberRow): number => {
-    // File không còn present không bao giờ được chọn làm bản giữ
-    if (m.status !== 0) return Number.NEGATIVE_INFINITY;
-    if (rule === "res") return (m.width ?? 0) * (m.height ?? 0) * 1e6 + m.size;
-    const t = m.takenAt ?? m.mtime;
-    return rule === "oldest" ? -t : t;
-  };
-  let keep = members[0];
-  for (const m of members) {
-    if (score(m) > score(keep)) keep = m;
-  }
-  return new Set(members.filter((m) => m.fileId !== keep.fileId).map((m) => m.fileId));
+// Logic thuần nằm ở lib/dedupRule (test được độc lập); re-export để các
+// import cũ khỏi đổi.
+export type { DedupRule, RuleMember } from "../lib/dedupRule";
+export { groupCheckState, rangeIds, ruleChecked } from "../lib/dedupRule";
+
+/** Nạp MỘT lần member rút gọn của mọi nhóm (cache trong store). null = lỗi,
+ *  caller không được đánh dấu gì cả. Gộp các lần gọi chồng nhau: user bấm
+ *  liên tiếp trong lúc đang tải không được bắn nhiều lượt 1MB. */
+let briefInFlight: Promise<Map<number, RuleMember[]> | null> | null = null;
+
+function ensureDupBrief(
+  get: () => AppStore,
+  set: (partial: Partial<AppStore>) => void,
+): Promise<Map<number, RuleMember[]> | null> {
+  const cached = get().dupBrief;
+  if (cached != null) return Promise.resolve(cached);
+  if (briefInFlight != null) return briefInFlight;
+  set({ dupMarking: true });
+  briefInFlight = api
+    .listDupMembersBrief()
+    .then((rows) => {
+      const byGroup = new Map<number, RuleMember[]>();
+      for (const r of rows) {
+        const list = byGroup.get(r.groupId);
+        if (list) list.push(r);
+        else byGroup.set(r.groupId, [r]);
+      }
+      set({ dupBrief: byGroup });
+      return byGroup;
+    })
+    .catch((e) => {
+      get().showToast(errText(e), true);
+      return null;
+    })
+    .finally(() => {
+      briefInFlight = null;
+      set({ dupMarking: false });
+    });
+  return briefInFlight;
 }
 
 function initialViewMode(): ViewMode {
+  // Mặc định LIST: hiện tức thì từ DB, không đụng đĩa — kho trên HDD chậm mà
+  // mặc định grid thì màn hình đầu toàn ô đen chờ thumb. Ai thích grid bấm ▦
+  // một lần là được nhớ.
   try {
-    return localStorage.getItem("viewMode") === "list" ? "list" : "grid";
+    return localStorage.getItem("viewMode") === "grid" ? "grid" : "list";
   } catch {
-    return "grid";
+    return "list";
   }
 }
 
@@ -110,6 +137,13 @@ interface AppStore {
   groupMembersFor: number | null;
   /** groupId -> set fileId đánh dấu XÓA (ngữ nghĩa cố định, không đảo). */
   dupChecked: Map<number, Set<number>>;
+  /** Cache member rút gọn của MỌI nhóm cho thao tác tick hàng loạt (nạp 1 lần,
+   *  xóa mỗi lần loadDupData). Không có nó thì tick dải 500 nhóm = 500 IPC. */
+  dupBrief: Map<number, RuleMember[]> | null;
+  /** Nhóm của lần tick gần nhất — mốc cho Shift+click. */
+  dupAnchor: number | null;
+  /** Đang nạp brief / áp rule hàng loạt (disable checkbox trong lúc đó). */
+  dupMarking: boolean;
   dedupRule: DedupRule;
   dupDeleting: boolean;
 
@@ -139,6 +173,10 @@ interface AppStore {
   toggleDupChecked: (groupId: number, fileId: number) => void;
   keepOnly: (groupId: number, fileId: number) => void;
   setDedupRule: (r: DedupRule) => void;
+  /** Tick/bỏ tick 1 nhóm theo rule; shift = áp cho cả dải từ lần tick trước. */
+  setGroupChecked: (groupId: number, checked: boolean, shift?: boolean) => Promise<void>;
+  /** Tick/bỏ tick TẤT CẢ nhóm theo rule đang chọn. */
+  setAllChecked: (checked: boolean) => Promise<void>;
   deleteChecked: () => Promise<void>;
 
   setViewMode: (m: ViewMode) => void;
@@ -189,6 +227,9 @@ export const useStore = create<AppStore>((set, get) => ({
   groupMembers: [],
   groupMembersFor: null,
   dupChecked: new Map(),
+  dupBrief: null,
+  dupAnchor: null,
+  dupMarking: false,
   dedupRule: "res",
 
   orgSettings: null,
@@ -337,7 +378,14 @@ export const useStore = create<AppStore>((set, get) => ({
 
   setAppMode: (m) => {
     set({ appMode: m });
-    if (m === "dedup" && get().dupGroups == null) void get().loadDupData();
+    if (m === "dedup") {
+      // Đang quét thì số nhóm thay đổi liên tục → vào tab là nạp lại cho tươi
+      // (dup://changed chỉ nạp khi ĐANG ở tab dedup, tránh IPC thừa).
+      const hashing = [...get().activeJobs.values()].some(
+        (j) => j.kind === "hash" || j.kind === "org_hash",
+      );
+      if (get().dupGroups == null || hashing) void get().loadDupData();
+    }
     if (m === "organize" && get().orgSettings == null) void get().loadOrgData();
   },
 
@@ -355,6 +403,9 @@ export const useStore = create<AppStore>((set, get) => ({
         dupGroups: groups,
         dupStats: stats,
         dupChecked: pruned,
+        // Nhóm vừa đổi (xóa xong / quét thêm) → brief cũ nói dối, nạp lại khi cần
+        dupBrief: null,
+        dupAnchor: null,
         // Nhóm đang mở biến mất sau đợt xóa/rescan → bỏ chọn
         activeGroupId: cur != null && valid.has(cur) ? cur : null,
       });
@@ -414,14 +465,62 @@ export const useStore = create<AppStore>((set, get) => ({
 
   setDedupRule: (r) => {
     set({ dedupRule: r });
-    // Áp lại cho nhóm đang mở - CHỈ khi members đã thuộc đúng nhóm đó
+    const checked = new Map(get().dupChecked);
+    // Áp lại cho MỌI nhóm đang được đánh dấu (brief đã nạp thì có đủ dữ liệu;
+    // chưa nạp nghĩa là user chưa tick hàng loạt bao giờ).
+    const brief = get().dupBrief;
+    if (brief != null) {
+      for (const gid of [...checked.keys()]) {
+        const members = brief.get(gid);
+        if (members != null) checked.set(gid, ruleChecked(members, r));
+      }
+    }
+    // Nhóm đang mở dùng members đầy đủ - CHỈ khi chúng thuộc đúng nhóm đó
     // (đang fetch nhóm mới thì members cũ không được ghi vào nhóm mới)
     const id = get().activeGroupId;
     if (id != null && get().groupMembersFor === id) {
-      const checked = new Map(get().dupChecked);
       checked.set(id, ruleChecked(get().groupMembers, r));
-      set({ dupChecked: checked });
     }
+    set({ dupChecked: checked });
+  },
+
+  setGroupChecked: async (groupId, checked, shift = false) => {
+    const groups = get().dupGroups ?? [];
+    const ordered = groups.map((g) => g.id);
+    const ids = shift ? rangeIds(get().dupAnchor, groupId, ordered) : [groupId];
+    if (ids.length === 0) return;
+    const next = new Map(get().dupChecked);
+    if (checked) {
+      const brief = await ensureDupBrief(get, set);
+      if (brief == null) return;
+      const rule = get().dedupRule;
+      for (const gid of ids) {
+        const members = brief.get(gid);
+        // Nhóm không còn bản nào present thì không có gì an toàn để xóa
+        if (members != null) next.set(gid, ruleChecked(members, rule));
+      }
+    } else {
+      for (const gid of ids) next.delete(gid);
+    }
+    set({ dupChecked: next, dupAnchor: groupId });
+  },
+
+  setAllChecked: async (checked) => {
+    if (!checked) {
+      set({ dupChecked: new Map(), dupAnchor: null });
+      return;
+    }
+    const groups = get().dupGroups ?? [];
+    if (groups.length === 0) return;
+    const brief = await ensureDupBrief(get, set);
+    if (brief == null) return;
+    const rule = get().dedupRule;
+    const next = new Map(get().dupChecked);
+    for (const g of groups) {
+      const members = brief.get(g.id);
+      if (members != null) next.set(g.id, ruleChecked(members, rule));
+    }
+    set({ dupChecked: next, dupAnchor: null });
   },
 
   dupDeleting: false,
@@ -439,7 +538,12 @@ export const useStore = create<AppStore>((set, get) => ({
       set({ dupDeleting: false });
     }
     // Reset lựa chọn + reload mọi thứ dính tới file đã xóa
-    set({ dupChecked: new Map(), groupMembers: [], activeGroupId: null });
+    set({
+      dupChecked: new Map(),
+      dupAnchor: null,
+      groupMembers: [],
+      activeGroupId: null,
+    });
     await get().loadDupData();
     void get().runQuery();
     void get().loadRoots();
