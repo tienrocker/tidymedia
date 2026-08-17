@@ -263,6 +263,27 @@
     "ERR_DB_NO_WAL": "索引存储位置不支持快速模式：{{detail}}",
     "ERR_FILE_GONE": "文件已不在磁盘上：{{detail}}",
     "ERR_FILE_CLOUD": "文件是云端占位符 - 请先下载：{{detail}}",
-    "ERR_INTERNAL": "内部错误：{{detail}}"
+    "ERR_INTERNAL": "内部错误：{{detail}}",
+    "ERR_EXPORT_DEST": "那不是文件夹",
+    "ERR_EXPORT_SAME_DIR": "那正是应用当前使用的文件夹 - 请另选一个",
+    "ERR_EXPORT_EXISTS": "该文件夹已存在一份导出 - 请选择空文件夹",
+    "ERR_IMPORT_NO_INDEX": "该文件夹中没有 index.db",
+    "ERR_IMPORT_UNREADABLE": "无法读取该 index.db：{{detail}}",
+    "ERR_IMPORT_NOT_TIDYMEDIA": "该文件不是 TidyMedia 索引",
+    "ERR_IMPORT_SAME_DIR": "那正是应用当前使用的文件夹",
+    "ERR_IMPORT_COPY": "无法复制导出内容：{{detail}}"
+  },
+  "transfer": {
+    "title": "迁移数据",
+    "hint": "开发版与安装版使用各自独立的数据库。在这边导出、那边导入 - 无需重扫，无需重新计算哈希。",
+    "export": "导出…",
+    "import": "导入…",
+    "exportPick": "选择一个空文件夹用于导出",
+    "importPick": "选择存放导出内容的文件夹",
+    "exportDone": "已导出 {{size}} 到 {{dir}}",
+    "importBusy": "请先等待或停止正在运行的任务",
+    "withThumbs": "包含缩略图。",
+    "noThumbs": "此导出不含缩略图 - 本地缓存将被清空并在后台重建。",
+    "importConfirm": "用该导出替换全部索引数据？\n\n{{files}} 个文件\n监视的文件夹：\n  {{roots}}\n共 {{size}}。{{thumbs}}\n\n当前索引（监视文件夹、指纹、整理历史）将被替换，旁边会保留一份 .bak。应用将重启以完成。"
   }
 }

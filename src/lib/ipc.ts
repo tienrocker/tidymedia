@@ -36,6 +36,22 @@ export interface FileDetail {
   metaState: number | null;
 }
 
+export interface ExportResult {
+  indexBytes: number;
+  thumbsBytes: number;
+}
+
+export interface ImportInfo {
+  schemaVersion: number;
+  appSchemaVersion: number;
+  files: number;
+  roots: string[];
+  indexBytes: number;
+  thumbsBytes: number;
+  compatible: boolean;
+  reason: string | null;
+}
+
 export interface RootInfo {
   id: number;
   volumeId: number;
@@ -200,6 +216,11 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (timezone: string, tzOffsetMinutes: number, setupDone: boolean) =>
     invoke<void>("set_settings", { timezone, tzOffsetMinutes, setupDone }),
+  exportData: (dest: string, includeThumbs: boolean) =>
+    invoke<ExportResult>("export_data", { dest, includeThumbs }),
+  inspectImport: (src: string) => invoke<ImportInfo>("inspect_import", { src }),
+  // Không bao giờ resolve: backend khởi động lại app ngay sau khi dàn file.
+  applyImport: (src: string) => invoke<void>("apply_import", { src }),
   getExcludedPaths: () => invoke<string[]>("get_excluded_paths"),
   setExcludedPaths: (paths: string[]) => invoke<void>("set_excluded_paths", { paths }),
   startMetaScan: () => invoke<number | null>("start_meta_scan"),

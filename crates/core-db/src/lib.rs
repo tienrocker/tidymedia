@@ -44,4 +44,15 @@ impl Db {
             path: db_path,
         })
     }
+
+    /// Chép index sang 1 file mới, gộp luôn WAL nên bản xuất ra là MỘT file
+    /// tự đủ (không cần kèm -wal/-shm). Chạy trên connection đọc: `VACUUM INTO`
+    /// không sửa gì nguồn, và đích phải chưa tồn tại — SQLite tự từ chối đè.
+    pub fn vacuum_into(&self, dest: &Path) -> Result<()> {
+        let dest = dest.to_string_lossy().to_string();
+        self.pool.with(move |c| {
+            c.execute("VACUUM INTO ?1", [dest.as_str()])?;
+            Ok(())
+        })
+    }
 }

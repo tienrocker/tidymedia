@@ -6,6 +6,7 @@ mod organize;
 mod protocols;
 mod similar;
 mod state;
+mod transfer;
 
 fn main() {
     tracing_subscriber::fmt()
@@ -52,6 +53,9 @@ fn main() {
             dedup::get_dup_group,
             commands::pause_job,
             similar::start_phash_scan,
+            transfer::export_data,
+            transfer::inspect_import,
+            transfer::apply_import,
             similar::delete_similar_files,
             dedup::list_dup_members_brief,
             dedup::dedup_stats,

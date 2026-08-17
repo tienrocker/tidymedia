@@ -37,6 +37,7 @@ Index cả ổ cứng, gõ là ra kết quả, dọn 15 năm ảnh vứt lung tu
 - 🌥️ **An toàn với cloud** - placeholder OneDrive/iCloud được index nhưng **không bao giờ bị hydrate**: app không âm thầm kéo hàng GB từ cloud về.
 - 🕐 **Đúng múi giờ** - chọn múi giờ ngay lần chạy đầu; filter ngày và tên file thư viện theo đúng múi giờ đó.
 - 🌍 **English · Tiếng Việt · 中文** sẵn trong app.
+- 🚚 **Mang theo cả index** - Xuất ghi ra một bản sao tự đủ của cơ sở dữ liệu (kèm cache thumbnail) vào thư mục mày chọn; Nhập tráo nó vào ở lần khởi động sau và giữ lại một đời `.bak`. Chuyển giữa bản dev và bản cài chỉ tốn một lần chép thư mục thay vì quét lại từ đầu.
 - 📦 **App native gọn nhẹ** - Tauri 2 + Rust, không Electron. Installer NSIS, MSI, và bản portable ZIP lưu data ngay cạnh exe.
 
 ## 🚀 Bắt đầu

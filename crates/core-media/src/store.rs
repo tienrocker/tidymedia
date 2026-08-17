@@ -44,6 +44,15 @@ impl ThumbStore {
         })
     }
 
+    /// Chép cache sang 1 file mới, gộp luôn WAL — dùng cho Export.
+    /// `VACUUM INTO` chạy trên DB đang mở bình thường và không khoá ghi lâu;
+    /// đích PHẢI chưa tồn tại (SQLite tự từ chối, không đè file của ai cả).
+    pub fn vacuum_into(&self, dest: &Path) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("VACUUM INTO ?1", [dest.to_string_lossy().as_ref()])?;
+        Ok(())
+    }
+
     /// Cache hit chỉ khi src_mtime khớp — file bị sửa/thay là miss, caller
     /// regenerate rồi `put` đè. Touch last_used thưa (>1h) để đọc không thành ghi.
     pub fn get(&self, file_id: i64, s: u32, src_mtime: i64) -> Option<Vec<u8>> {

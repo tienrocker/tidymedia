@@ -320,6 +320,56 @@ fn similar_groups_are_stable_and_measure_reclaimable_bytes() {
     assert_eq!(ctx.len(), 2);
 }
 
+/// Export = `VACUUM INTO`: bản xuất phải là MỘT file tự đủ (gộp WAL, không cần
+/// kèm -wal/-shm) và không bao giờ đè lên file có sẵn.
+#[test]
+fn vacuum_into_writes_a_self_contained_copy_and_never_overwrites() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(tmp.path()).unwrap();
+    db.writer
+        .exec(|c| ops::upsert_root(c, "D:\\Photos"))
+        .unwrap();
+    let entries = vec![entry("D:\\Photos", "a.jpg", "jpg", 0, 10, 1)];
+    db.writer
+        .exec(move |c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(c, 1, 1, &entries, &mut cache)
+        })
+        .unwrap();
+
+    // Ghi vừa xong còn nằm trong WAL — bản xuất phải có nó
+    let out = tmp.path().join("export").join("index.db");
+    std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+    db.vacuum_into(&out).unwrap();
+    assert!(out.is_file());
+    assert!(
+        !out.with_extension("db-wal").exists(),
+        "ban xuat phai tu du, khong keo theo WAL"
+    );
+
+    let copy = Db::open(out.parent().unwrap()).unwrap();
+    let roots = copy.pool.with(ops::list_roots).unwrap();
+    assert_eq!(roots.len(), 1);
+    assert_eq!(roots[0].path, "D:\\Photos");
+    assert_eq!(
+        roots[0].file_count, 0,
+        "file_count chi cap nhat khi scan xong"
+    );
+    let n: i64 = copy
+        .pool
+        .with(|c| -> anyhow::Result<i64> {
+            Ok(c.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?)
+        })
+        .unwrap();
+    assert_eq!(n, 1, "du lieu trong WAL phai theo sang ban xuat");
+
+    // Đích đã tồn tại: SQLite tự từ chối, không đè file của ai cả
+    assert!(
+        db.vacuum_into(&out).is_err(),
+        "khong duoc de len file da co"
+    );
+}
+
 /// Id nhóm phải sống sót qua rebuild kể cả khi thành viên NHỎ NHẤT rời nhóm.
 /// Khóa cũ là `MIN(file_id)` nên mất đúng member đó là nhóm nhận id mới, UI
 /// tưởng nhóm biến mất và vứt sạch tick user vừa đánh dấu.

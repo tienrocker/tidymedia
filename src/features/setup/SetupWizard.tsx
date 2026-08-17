@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { LANGS } from "../../i18n";
 import { api } from "../../lib/ipc";
+import { fmtCount, fmtSize } from "../../lib/format";
 import { systemTimeZone, tzOptions } from "../../lib/time";
 import { runSafe, useStore } from "../../state/store";
 
@@ -11,6 +12,89 @@ const LANG_LABELS: Record<string, string> = {
   vi: "Tiếng Việt",
   zh: "中文",
 };
+
+/** Chép kho dữ liệu giữa hai bản cài (bản dev và bản chính thức ghi vào hai
+ *  thư mục tách hẳn nhau, nên chuyển bản = quét lại từ đầu nếu không có cái này).
+ *  Nhập là THAY THẾ toàn bộ index nên phải soi trước rồi user tự xác nhận. */
+function DataTransfer() {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState(false);
+  const jobsRunning = useStore((s) => s.activeJobs.size > 0);
+
+  const onExport = () =>
+    runSafe(async () => {
+      const dir = await open({ directory: true, title: t("transfer.exportPick") });
+      if (typeof dir !== "string") return;
+      setBusy(true);
+      try {
+        const r = await api.exportData(dir, true);
+        useStore
+          .getState()
+          .showToast(
+            t("transfer.exportDone", {
+              size: fmtSize(r.indexBytes + r.thumbsBytes),
+              dir,
+            }),
+            false,
+          );
+      } finally {
+        setBusy(false);
+      }
+    });
+
+  const onImport = () =>
+    runSafe(async () => {
+      const dir = await open({ directory: true, title: t("transfer.importPick") });
+      if (typeof dir !== "string") return;
+      setBusy(true);
+      try {
+        const info = await api.inspectImport(dir);
+        if (!info.compatible) {
+          useStore.getState().showToast(t(`errors.${info.reason}`), true);
+          return;
+        }
+        const ok = window.confirm(
+          t("transfer.importConfirm", {
+            files: fmtCount(info.files),
+            roots: info.roots.join("\n  ") || "-",
+            size: fmtSize(info.indexBytes + info.thumbsBytes),
+            thumbs: info.thumbsBytes > 0 ? t("transfer.withThumbs") : t("transfer.noThumbs"),
+          }),
+        );
+        if (!ok) return;
+        // Backend khởi động lại app ngay - lời gọi này không bao giờ trả về
+        await api.applyImport(dir);
+      } finally {
+        setBusy(false);
+      }
+    });
+
+  return (
+    <>
+      <label className="mt-4 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+        {t("transfer.title")}
+      </label>
+      <p className="mt-1 text-xs text-neutral-600">{t("transfer.hint")}</p>
+      <div className="mt-2 flex gap-2">
+        <button
+          onClick={onExport}
+          disabled={busy}
+          className="flex-1 rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
+        >
+          {t("transfer.export")}
+        </button>
+        <button
+          onClick={onImport}
+          disabled={busy || jobsRunning}
+          title={jobsRunning ? t("transfer.importBusy") : undefined}
+          className="flex-1 rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
+        >
+          {t("transfer.import")}
+        </button>
+      </div>
+    </>
+  );
+}
 
 /** Dùng cho cả first-run (bắt buộc, không đóng được) lẫn chỉnh sửa từ nút ⚙. */
 export function SettingsDialog({
@@ -216,6 +300,9 @@ export function SettingsDialog({
             </div>
           ))}
         </div>
+
+        {/* First-run chưa có gì để xuất, mà nhập lúc đó là ghi đè kho vừa tạo */}
+        {!firstRun && <DataTransfer />}
 
         <button
           onClick={onSave}

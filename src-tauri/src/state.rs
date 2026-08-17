@@ -156,6 +156,9 @@ impl LifoPool {
 }
 
 pub struct AppState {
+    /// Thư mục chứa index.db + thumbs.db. Export/Import cần để (a) không cho
+    /// xuất đè lên chính nó, (b) dàn file nhập vào đúng chỗ.
+    pub data_dir: std::path::PathBuf,
     pub db: Arc<Db>,
     pub jobs: Arc<JobManager>,
     pub queries: Arc<Mutex<QueryCache>>,
@@ -217,6 +220,11 @@ fn resolve_data_dir(app: &AppHandle) -> Result<std::path::PathBuf> {
 
 pub fn init(app: &AppHandle) -> Result<()> {
     let data_dir = resolve_data_dir(app)?;
+    // TRƯỚC khi mở bất kỳ connection nào: bản nhập đã dàn sẵn từ lượt chạy
+    // trước được tráo vào đây. Đổi file SQLite dưới chân connection đang mở là
+    // hỏng dữ liệu, nên đây là chỗ duy nhất làm được việc này.
+    std::fs::create_dir_all(&data_dir)?;
+    crate::transfer::apply_staged_import(&data_dir);
     tracing::info!(dir = %data_dir.display(), "opening index db");
     let db = Arc::new(Db::open(&data_dir)?);
 
@@ -264,6 +272,7 @@ pub fn init(app: &AppHandle) -> Result<()> {
     let delete_lock = Arc::new(std::sync::Mutex::new(()));
     let recovery_active = Arc::new(std::sync::atomic::AtomicBool::new(true));
     app.manage(AppState {
+        data_dir: data_dir.clone(),
         db: db.clone(),
         jobs: jobs.clone(),
         queries: Arc::new(Mutex::new(QueryCache::new())),

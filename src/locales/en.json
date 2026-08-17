@@ -265,6 +265,27 @@
     "ERR_DB_NO_WAL": "Index database location doesn't support fast mode: {{detail}}",
     "ERR_FILE_GONE": "File no longer exists on disk: {{detail}}",
     "ERR_FILE_CLOUD": "File is a cloud placeholder - download it first: {{detail}}",
-    "ERR_INTERNAL": "Internal error: {{detail}}"
+    "ERR_INTERNAL": "Internal error: {{detail}}",
+    "ERR_EXPORT_DEST": "That is not a folder",
+    "ERR_EXPORT_SAME_DIR": "That is the folder the app is using right now - pick a different one",
+    "ERR_EXPORT_EXISTS": "That folder already holds an export - pick an empty folder",
+    "ERR_IMPORT_NO_INDEX": "No index.db in that folder",
+    "ERR_IMPORT_UNREADABLE": "That index.db cannot be read: {{detail}}",
+    "ERR_IMPORT_NOT_TIDYMEDIA": "That file is not a TidyMedia index",
+    "ERR_IMPORT_SAME_DIR": "That is the folder the app is using right now",
+    "ERR_IMPORT_COPY": "Could not copy the export: {{detail}}"
+  },
+  "transfer": {
+    "title": "Move your data",
+    "hint": "The dev build and the installed build keep separate databases. Export here, import there - no rescan, no re-hashing.",
+    "export": "Export…",
+    "import": "Import…",
+    "exportPick": "Pick an empty folder for the export",
+    "importPick": "Pick the folder holding the export",
+    "exportDone": "Exported {{size}} to {{dir}}",
+    "importBusy": "Finish or stop the running job first",
+    "withThumbs": "Thumbnails are included.",
+    "noThumbs": "No thumbnails in this export - the local cache will be cleared and rebuilt in the background.",
+    "importConfirm": "Replace ALL indexed data with this export?\n\n{{files}} files\nWatched folders:\n  {{roots}}\n{{size}} total. {{thumbs}}\n\nYour current index (watched folders, fingerprints, organize history) is replaced. A single .bak copy is kept next to it. The app restarts to finish."
   }
 }

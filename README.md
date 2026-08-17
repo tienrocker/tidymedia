@@ -38,6 +38,7 @@ Photos and videos pile up for years - iPhone syncs through a dozen different app
 - 🌥️ **Cloud-safe** - OneDrive/iCloud placeholders are indexed but **never hydrated**: TidyMedia will not silently pull gigabytes down from the cloud.
 - 🕐 **Timezone-aware** - you pick your timezone on first run; date filters and library file names respect it, not whatever the OS guesses.
 - 🌍 **English · Tiếng Việt · 中文** out of the box.
+- 🚚 **Take your index with you** - Export writes a single self-contained copy of the database (plus the thumbnail cache) into a folder you pick; Import swaps it in on the next launch, keeping one `.bak` generation. Moving between the dev build and the installed one costs a folder copy instead of a full rescan.
 - 📦 **Tiny native app** - Tauri 2 + Rust, no Electron. NSIS installer, MSI, and a portable ZIP that keeps its data next to the exe.
 
 ## 🚀 Getting started

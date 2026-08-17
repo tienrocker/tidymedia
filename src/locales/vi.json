@@ -263,6 +263,27 @@
     "ERR_DB_NO_WAL": "Vị trí lưu index không hỗ trợ chế độ nhanh: {{detail}}",
     "ERR_FILE_GONE": "File không còn trên đĩa: {{detail}}",
     "ERR_FILE_CLOUD": "File đang là placeholder cloud - tải về trước đã: {{detail}}",
-    "ERR_INTERNAL": "Lỗi nội bộ: {{detail}}"
+    "ERR_INTERNAL": "Lỗi nội bộ: {{detail}}",
+    "ERR_EXPORT_DEST": "Đó không phải thư mục",
+    "ERR_EXPORT_SAME_DIR": "Đó đúng là thư mục app đang dùng — chọn chỗ khác",
+    "ERR_EXPORT_EXISTS": "Thư mục đó đã có sẵn một bản xuất — chọn thư mục trống",
+    "ERR_IMPORT_NO_INDEX": "Thư mục đó không có index.db",
+    "ERR_IMPORT_UNREADABLE": "Không đọc được index.db đó: {{detail}}",
+    "ERR_IMPORT_NOT_TIDYMEDIA": "File đó không phải index của TidyMedia",
+    "ERR_IMPORT_SAME_DIR": "Đó đúng là thư mục app đang dùng",
+    "ERR_IMPORT_COPY": "Không chép được bản xuất: {{detail}}"
+  },
+  "transfer": {
+    "title": "Chuyển dữ liệu",
+    "hint": "Bản dev và bản cài dùng hai kho dữ liệu tách hẳn. Xuất ở bên này, nhập ở bên kia — khỏi quét lại, khỏi hash lại.",
+    "export": "Xuất…",
+    "import": "Nhập…",
+    "exportPick": "Chọn một thư mục trống để xuất ra",
+    "importPick": "Chọn thư mục chứa bản đã xuất",
+    "exportDone": "Đã xuất {{size}} sang {{dir}}",
+    "importBusy": "Chờ job đang chạy xong hoặc dừng nó trước đã",
+    "withThumbs": "Có kèm thumbnail.",
+    "noThumbs": "Bản này không kèm thumbnail — cache hiện tại sẽ bị xóa và tạo lại chạy nền.",
+    "importConfirm": "Thay TOÀN BỘ dữ liệu đã lập chỉ mục bằng bản này?\n\n{{files}} file\nThư mục theo dõi:\n  {{roots}}\nTổng {{size}}. {{thumbs}}\n\nIndex hiện tại (thư mục theo dõi, hash, lịch sử organize) sẽ bị thay. Máy giữ lại một bản .bak ngay cạnh. App sẽ khởi động lại để hoàn tất."
   }
 }
