@@ -7,6 +7,8 @@
 //! mtime rải 2010–2025. Với --dupe-sets, tạo các bộ file nội dung giống hệt
 //! nằm rải rác + ghi manifest `dupes-manifest.jsonl` ở root để test M4.
 
+mod geo;
+
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -40,6 +42,7 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         Some("gen-tree") => gen_tree(&args[1..]),
         Some("bench-scan") => bench_scan(&args[1..]),
+        Some("gen-geo") => geo::gen_geo(&args[1..]),
         _ => {
             eprintln!(
                 "usage:\n  devtool gen-tree --root <path> --files <n> [--dupe-sets <n>]\n  devtool bench-scan --root <path> --db <dir>"
@@ -155,7 +158,7 @@ fn bench_scan(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn flag(args: &[String], name: &str) -> Option<String> {
+pub(crate) fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter()
         .position(|a| a == name)
         .and_then(|i| args.get(i + 1).cloned())

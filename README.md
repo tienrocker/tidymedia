@@ -140,4 +140,6 @@ All UI strings live in `src/locales/{en,vi,zh}.json` (react-i18next). New string
 
 ## 📄 License
 
+Place names come from the [GeoNames](https://www.geonames.org/) `cities1000` dump plus Vietnam's administrative dump, used under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) and shipped inside the binary - lookups are fully offline, no coordinate ever leaves your machine.
+
 [MIT](LICENSE) © [tienrocker](https://github.com/tienrocker)

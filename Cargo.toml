@@ -8,6 +8,7 @@ members = [
   "crates/core-media",
   "crates/core-ingest",
   "crates/core-jobs",
+  "crates/core-geo",
   "crates/devtool",
 ]
 
@@ -23,6 +24,7 @@ core-hash = { path = "crates/core-hash" }
 core-media = { path = "crates/core-media" }
 core-ingest = { path = "crates/core-ingest" }
 core-jobs = { path = "crates/core-jobs" }
+core-geo = { path = "crates/core-geo" }
 
 rusqlite = { version = "0.37", features = ["bundled", "array", "backup"] }
 jwalk = "0.8"

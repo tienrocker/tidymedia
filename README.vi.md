@@ -139,4 +139,6 @@ Mọi chuỗi UI nằm trong `src/locales/{en,vi,zh}.json` (react-i18next). Chu�
 
 ## 📄 Giấy phép
 
+Tên địa điểm lấy từ bộ `cities1000` của [GeoNames](https://www.geonames.org/) kèm dump hành chính Việt Nam, dùng theo [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) và nhúng sẵn trong binary — tra cứu hoàn toàn offline, không toạ độ nào rời khỏi máy mày.
+
 [MIT](LICENSE) © [tienrocker](https://github.com/tienrocker)

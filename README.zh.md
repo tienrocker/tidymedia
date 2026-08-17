@@ -133,4 +133,6 @@ cargo run -p devtool --release -- bench-scan --root <path> --db <dir>
 
 ## 📄 许可证
 
+地名数据来自 [GeoNames](https://www.geonames.org/) 的 `cities1000` 转储以及越南行政区划转储，依 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 使用并随二进制文件一同分发 - 查询完全离线，坐标绝不离开你的电脑。
+
 [MIT](LICENSE) © [tienrocker](https://github.com/tienrocker)
