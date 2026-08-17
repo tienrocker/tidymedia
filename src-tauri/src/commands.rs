@@ -328,7 +328,7 @@ pub async fn start_thumb_warm(state: State<'_, AppState>) -> CmdResult<Option<i6
             .writer
             .exec(|c| core_db::ops::insert_job(c, "thumb_warm", None))
             .map_err(err)?;
-        let cancel = jobs.register(job_id, "thumb_warm", None);
+        let (cancel, pause) = jobs.register_pausable(job_id, "thumb_warm", None);
         let events = jobs.sender();
         let writer_cleanup = db.writer.clone();
         let jobs_run = jobs.clone();
@@ -345,6 +345,7 @@ pub async fn start_thumb_warm(state: State<'_, AppState>) -> CmdResult<Option<i6
                         &thumb_pool,
                         &jobs_run,
                         &cancel_run,
+                        &pause,
                         job_id,
                         total as u64,
                         &events_run,
@@ -393,6 +394,7 @@ fn run_thumb_warm_job(
     thumb_pool: &LifoPool,
     jobs: &core_jobs::JobManager,
     cancel: &core_jobs::CancelFlag,
+    pause: &core_jobs::PauseFlag,
     job_id: i64,
     total: u64,
     events: &crossbeam_channel::Sender<JobEvent>,
@@ -432,6 +434,19 @@ fn run_thumb_warm_job(
         let Some(&last) = ids.last() else { break };
         cursor = last;
         for id in ids {
+            // User bấm ⏸ → ngủ hẳn, không đụng đĩa cho tới khi bấm ▶
+            if !crate::dedup::hold_if_paused(
+                pause,
+                cancel,
+                job_id,
+                "thumb_warm",
+                done,
+                Some(total.max(done)),
+                Some("warm"),
+                events,
+            ) {
+                return Ok(made);
+            }
             // ƯU TIÊN THẤP NHẤT: còn thumb interactive (kể cả backlog) hay
             // job khác đang chạy → ngủ, tuyệt đối không đụng đĩa.
             loop {
@@ -559,7 +574,7 @@ pub async fn start_meta_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
             .writer
             .exec(|c| core_db::ops::insert_job(c, "meta", None))
             .map_err(err)?;
-        let cancel = jobs.register(job_id, "meta", None);
+        let (cancel, pause) = jobs.register_pausable(job_id, "meta", None);
         let events = jobs.sender();
         let writer_cleanup = db.writer.clone();
 
@@ -574,6 +589,7 @@ pub async fn start_meta_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
                         &ctx,
                         &thumb_pool,
                         &cancel_run,
+                        &pause,
                         job_id,
                         total,
                         &events_progress,
@@ -632,11 +648,13 @@ struct MetaCtx {
     ffprobe: Option<std::path::PathBuf>,
 }
 
+#[allow(clippy::too_many_arguments)] // private, 1 call site — context thật của job
 fn run_meta_job(
     db: &core_db::Db,
     ctx: &MetaCtx,
     thumb_pool: &LifoPool,
     cancel: &core_jobs::CancelFlag,
+    pause: &core_jobs::PauseFlag,
     job_id: i64,
     total: i64,
     events: &crossbeam_channel::Sender<JobEvent>,
@@ -662,7 +680,16 @@ fn run_meta_job(
         message: None,
     }));
     loop {
-        if cancel.load(Ordering::Relaxed) {
+        if !crate::dedup::hold_if_paused(
+            pause,
+            cancel,
+            job_id,
+            "meta",
+            done,
+            Some(total.max(done as i64) as u64),
+            None,
+            events,
+        ) {
             return Ok(done);
         }
         // Video batch nhỏ hơn: mỗi file là 1 process ffprobe (~50-100ms)
@@ -871,6 +898,14 @@ fn resolve_present_path(db: &core_db::Db, file_id: i64) -> CmdResult<String> {
 #[tauri::command]
 pub async fn cancel_job(state: State<'_, AppState>, job_id: i64) -> CmdResult<bool> {
     Ok(state.jobs.cancel(job_id))
+}
+
+/// Tạm dừng / chạy tiếp job nền. `false` = job không còn hoặc kind không được
+/// phép dừng (job đụng file thật ôm khóa, xem `core_jobs::PAUSABLE_KINDS`) —
+/// UI chỉ cần bỏ qua, không phải lỗi.
+#[tauri::command]
+pub async fn pause_job(state: State<'_, AppState>, job_id: i64, paused: bool) -> CmdResult<bool> {
+    Ok(state.jobs.set_paused(job_id, paused))
 }
 
 #[tauri::command]

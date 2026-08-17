@@ -3,13 +3,19 @@ import { runSafe, useStore } from "../../state/store";
 import { fmtCount } from "../../lib/format";
 import { errText } from "../../lib/errors";
 
-/** Message do backend gửi là CODE ổn định; chỉ dịch cái mình biết, còn lại
- *  hiện nguyên văn (vd "warmed +120 thumbs"). */
+/** Job nền tạm dừng được. Job đụng file thật (organize/org_undo/dedup_delete/
+ *  recovery) cố tình KHÔNG có ⏸ — chúng ôm fs_lock/delete_lock, dừng giữa
+ *  chừng là chặn mọi thứ khác. Danh sách này khớp core_jobs::PAUSABLE_KINDS. */
+const PAUSABLE = new Set(["hash", "meta", "org_hash", "thumb_warm"]);
+
+/** Message backend gửi là CODE ổn định; chỉ dịch cái mình biết, còn lại hiện
+ *  nguyên văn (vd "warmed +120 thumbs"). */
 function jobNote(message: string | null | undefined, t: (k: string) => string): string {
   if (!message) return "";
+  if (message === "user_paused") return t("jobs.userPaused");
+  if (message === "user_pausing") return t("jobs.pausing");
   if (message === "paused") return t("jobs.paused");
-  if (message === "quick" || message === "verify" || message === "warm") return "";
-  if (message === "trash" || message === "hash") return "";
+  if (["quick", "verify", "warm", "trash", "hash"].includes(message)) return "";
   return message;
 }
 
@@ -45,14 +51,19 @@ export function JobsPanel() {
       )}
       {[...active.values()].map((j) => {
         const note = jobNote(j.message, t);
-        const paused = j.message === "paused";
+        // "đang dừng" đã đổi nút sang ▶ (lệnh đã gửi) nhưng CHƯA làm job trông
+        // như đứng im — nó vẫn đang chạy nốt batch dở.
+        const pauseRequested =
+          j.message === "user_paused" || j.message === "user_pausing";
+        const idle = j.message === "user_paused" || j.message === "paused";
+        const pausable = PAUSABLE.has(j.kind);
         const pct =
           j.total != null && Number(j.total) > 0
             ? Math.min(100, (Number(j.done) / Number(j.total)) * 100)
             : null;
         return (
           <div key={j.jobId} className="px-1 py-1">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <span className="min-w-0 flex-1 truncate text-xs text-neutral-300">
                 {kindLabel(j.kind)}
                 {note && <span className="text-neutral-500"> · {note}</span>}
@@ -63,11 +74,25 @@ export function JobsPanel() {
               </span>
               <span
                 className={`h-2 w-2 shrink-0 rounded-full ${
-                  paused ? "bg-neutral-600" : "animate-pulse bg-emerald-500"
+                  idle ? "bg-neutral-600" : "animate-pulse bg-emerald-500"
                 }`}
               />
+              {pausable && (
+                <button
+                  className="shrink-0 rounded px-1 text-xs text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+                  title={pauseRequested ? t("jobs.resumeHint") : t("jobs.pauseHint")}
+                  onClick={() =>
+                    runSafe(() =>
+                      useStore.getState().pauseJob(j.jobId, !pauseRequested),
+                    )
+                  }
+                >
+                  {pauseRequested ? "▶" : "⏸"}
+                </button>
+              )}
               <button
                 className="shrink-0 rounded px-1 text-xs text-red-400 hover:bg-neutral-800"
+                title={pausable ? t("jobs.cancelHintResumable") : t("jobs.cancelHintRestart")}
                 onClick={() => runSafe(() => useStore.getState().cancelJob(j.jobId))}
               >
                 {t("jobs.stop")}
@@ -75,7 +100,7 @@ export function JobsPanel() {
             </div>
             <div className="mt-1 h-0.5 w-full overflow-hidden rounded bg-neutral-800">
               <div
-                className={`h-full ${paused ? "bg-neutral-600" : "bg-emerald-600"}`}
+                className={`h-full ${idle ? "bg-neutral-600" : "bg-emerald-600"}`}
                 style={{ width: pct != null ? `${pct}%` : "100%" }}
               />
             </div>

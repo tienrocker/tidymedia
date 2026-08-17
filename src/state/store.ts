@@ -192,6 +192,7 @@ interface AppStore {
   removeRoot: (id: number) => Promise<void>;
   scanRoot: (id: number) => Promise<void>;
   cancelJob: (jobId: number) => Promise<void>;
+  pauseJob: (jobId: number, paused: boolean) => Promise<void>;
   onJobProgress: (p: JobProgress) => void;
   onJobEnd: (jobId: number) => void;
   loadSettings: () => Promise<void>;
@@ -731,6 +732,19 @@ export const useStore = create<AppStore>((set, get) => ({
 
   cancelJob: async (jobId) => {
     await api.cancelJob(jobId);
+  },
+
+  pauseJob: async (jobId, paused) => {
+    // Backend mới là nguồn sự thật: nó bắn "user_paused" khi job THẬT SỰ ngủ.
+    // Job có thể đang giữa một batch dài (video vài GB) nên ở đây chỉ đánh dấu
+    // "đang dừng" — nói "đã dừng" trong lúc đĩa vẫn quay là nói dối user.
+    const ok = await api.pauseJob(jobId, paused);
+    if (!ok) return;
+    const cur = get().activeJobs.get(jobId);
+    if (cur == null) return;
+    const activeJobs = new Map(get().activeJobs);
+    activeJobs.set(jobId, { ...cur, message: paused ? "user_pausing" : null });
+    set({ activeJobs });
   },
 
   onJobProgress: (p) => {

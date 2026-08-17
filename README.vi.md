@@ -68,8 +68,18 @@ Năm bất biến mà mọi đường code phá hủy đều phải qua - luật
 | M4 | Dedup exact: hash phân tầng, UI so 2-4 ảnh cạnh nhau, chọn hàng loạt bằng checkbox, review bằng bàn phím, xóa hàng loạt hủy được | ✅ |
 | M5 | Gom thư viện: thư mục đích tự chọn, đặt tên theo template (giữ được cấu trúc thư mục sẵn có), move atomic, nhật ký undo | ✅ |
 | M6 | Import iPhone / SD qua WPD/MTP, nhớ "đã import" incremental | 🔜 |
-| M7 | So trùng perceptual, tag, album, phân tích dung lượng | ⏳ |
+| M7 | So trùng perceptual (cùng ảnh nhưng nén lại / thu nhỏ), album + tag thủ công, phân tích dung lượng | ⏳ |
 | M8 | Scan nhanh NTFS MFT/USN - rescan cả ổ trong vài giây | ⏳ |
+| M9 | Places: index GPS, bản đồ thế giới offline, cụm ảnh theo địa điểm, zoom để lọc thư viện | ⏳ |
+| M10 | Trips: tự gom chuyến đi theo khoảng trống thời gian + khoảng cách GPS (thuật toán thuần, không AI) | ⏳ |
+| — | People / gom theo khuôn mặt: đang cân nhắc - cần model ONNX ~50-100 MB và một lượt quét CPU toàn kho, nên không hứa mốc | 🔬 |
+
+> Vì sao M7 phải dùng perceptual hash, đo trên kho thật 34k file: cùng một tấm ảnh xuất ba đường -
+> `icloud\IMG_1463.JPEG` (3024², 1.90 MB), `iphone\2018_08_02_…JPG` (3024², 0.79 MB) và bản thu nhỏ
+> `anh\2019\IMG_1463.JPEG` (1772², 0.87 MB) - **đúng là một ảnh** (PSNR 42.6 và 38.7 dB) nhưng
+> **không cặp nào trùng byte**, nên dedup tuyệt đối bỏ qua cả ba là đúng. Gom theo tên file cũng
+> không phải lối tắt: 8 cặp trùng tên `IMG_####` lấy mẫu giữa hai thư mục thì 4 là cùng ảnh
+> (32-40 dB), 4 là ảnh hoàn toàn khác nhau (9-11 dB).
 
 ## ⚙️ Hiệu năng
 

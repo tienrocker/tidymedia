@@ -187,6 +187,8 @@ export const api = {
   removeRoot: (rootId: number) => invoke<void>("remove_root", { rootId }),
   startScan: (rootId: number) => invoke<number>("start_scan", { rootId }),
   cancelJob: (jobId: number) => invoke<boolean>("cancel_job", { jobId }),
+  pauseJob: (jobId: number, paused: boolean) =>
+    invoke<boolean>("pause_job", { jobId, paused }),
   listJobs: () => invoke<JobRow[]>("list_jobs"),
   listActiveJobs: () => invoke<JobProgress[]>("list_active_jobs"),
   queryFiles: (filter: FileFilter) => invoke<QueryResult>("query_files", { filter }),

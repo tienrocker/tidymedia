@@ -495,6 +495,18 @@ fn validate_source_snapshots(items: &mut [PlanItem], metas: &HashMap<i64, ItemMe
     }
 }
 
+/// BLAKE3 full nhưng kiểm cờ hủy giữa các chunk 1 MiB: một video vài GB không
+/// được làm nút Stop chết cứng hàng phút. `None` = lỗi đọc HOẶC vừa bị hủy —
+/// cả hai đều xử lý như nhau: bỏ file đó, lượt sau hash lại.
+fn hash_full_interruptible(path: &str, cancel: Option<&core_jobs::CancelFlag>) -> Option<[u8; 32]> {
+    match cancel {
+        Some(c) => core_hash::full_blake3_cancellable(Path::new(path), c)
+            .ok()
+            .flatten(),
+        None => core_hash::full_blake3(Path::new(path)).ok(),
+    }
+}
+
 /// Full-hash items required by `{hashN}` or cross-volume verification. Only the explicit,
 /// cancellable preparation job calls this; Preview never reads file contents.
 #[allow(clippy::too_many_arguments)] // private, 1 call site — context thật của job
@@ -543,7 +555,7 @@ fn ensure_required_hashes(
             continue;
         }
         yield_to_thumbs();
-        let Ok(h) = core_hash::full_blake3(Path::new(&it.path)) else {
+        let Some(h) = hash_full_interruptible(&it.path, cancel) else {
             continue;
         };
         upserts.push(core_db::HashUpsert {
@@ -582,7 +594,7 @@ fn ensure_required_hashes(
             continue;
         }
         yield_to_thumbs();
-        let Ok(h) = core_hash::full_blake3(Path::new(&pair.path)) else {
+        let Some(h) = hash_full_interruptible(&pair.path, cancel) else {
             continue;
         };
         upserts.push(core_db::HashUpsert {
@@ -956,7 +968,7 @@ pub async fn start_org_hash_scan(
             .writer
             .exec(|c| core_db::ops::insert_job(c, "org_hash", None))
             .map_err(err)?;
-        let cancel = jobs.register(job_id, "org_hash", None);
+        let (cancel, pause) = jobs.register_pausable(job_id, "org_hash", None);
         if let Some(active_preview) = preview_cancel
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -977,6 +989,7 @@ pub async fn start_org_hash_scan(
                         &db,
                         Some(&thumb_pool),
                         &cancel_run,
+                        &pause,
                         job_id,
                         &events_run,
                         include_uncertain,
@@ -1017,10 +1030,12 @@ pub async fn start_org_hash_scan(
     .await
 }
 
+#[allow(clippy::too_many_arguments)] // private, 1 call site — context thật của job
 fn run_org_hash_job(
     db: &core_db::Db,
     thumb_pool: Option<&LifoPool>,
     cancel: &core_jobs::CancelFlag,
+    pause: &core_jobs::PauseFlag,
     job_id: i64,
     events: &crossbeam_channel::Sender<JobEvent>,
     include_uncertain: bool,
@@ -1056,7 +1071,16 @@ fn run_org_hash_job(
     'roots: for root in &roots {
         let mut cursor = 0i64;
         loop {
-            if cancel.load(Ordering::Relaxed) {
+            if !crate::dedup::hold_if_paused(
+                pause,
+                cancel,
+                job_id,
+                "org_hash",
+                done,
+                Some(total.max(done)),
+                Some("hash"),
+                events,
+            ) {
                 // Hashes computed so far are already persisted; break out instead of
                 // returning so the duplicate groups they revealed still get rebuilt.
                 cancelled = true;
@@ -2126,12 +2150,13 @@ mod tests {
 
     fn prepare_hashes(db: &core_db::Db) -> String {
         let cancel = core_jobs::CancelFlag::default();
+        let pause = core_jobs::PauseFlag::default();
         let (tx, _rx) = crossbeam_channel::unbounded();
         let job_id = db
             .writer
             .exec(|c| core_db::ops::insert_job(c, "org_hash", None))
             .unwrap();
-        run_org_hash_job(db, None, &cancel, job_id, &tx, false).unwrap()
+        run_org_hash_job(db, None, &cancel, &pause, job_id, &tx, false).unwrap()
     }
 
     fn index_entries(db: &core_db::Db, root: &Path, rows: Vec<(String, i64, i64)>) {

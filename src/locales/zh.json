@@ -165,6 +165,12 @@
     "stop": "停止",
     "cancelled": "任务已取消。",
     "paused": "已暂让",
+    "userPaused": "已暂停",
+    "pausing": "正在暂停，先跑完当前批次…",
+    "pauseHint": "暂停 — 任务仍占用位置；要跑别的请彻底停止",
+    "resumeHint": "从暂停处继续",
+    "cancelHintResumable": "彻底停止 — 随时可重新开始，已完成的部分会保留",
+    "cancelHintRestart": "彻底停止 — 需要重新预览 / 重新选择",
     "kind": {
       "scan": "扫描文件夹",
       "meta": "元数据",

@@ -69,8 +69,18 @@ Five invariants every destructive code path must pass - not guidelines, hard rul
 | M4 | Exact dedup: tiered hashing, 2-4-up compare UI, bulk checkbox selection, keyboard-first review, cancellable mass delete | ✅ |
 | M5 | Organize: user-chosen library folder, template naming (incl. keeping your existing folder structure), atomic moves, undo journal | ✅ |
 | M6 | iPhone / SD import via WPD/MTP, incremental "already imported" | 🔜 |
-| M7 | Perceptual similarity, tags, albums, storage analytics | ⏳ |
+| M7 | Perceptual similarity (same photo, re-encoded or resized), manual albums + tags, storage analytics | ⏳ |
 | M8 | NTFS MFT/USN fast scan - full drive rescan in seconds | ⏳ |
+| M9 | Places: GPS index, offline world map, photo clusters per place, zoom to filter the library | ⏳ |
+| M10 | Trips: auto-group a journey from time gaps + GPS distance (plain algorithm, no ML) | ⏳ |
+| — | People / face grouping: under consideration - needs a ~50-100 MB ONNX model and a full-library CPU pass, so no milestone promised | 🔬 |
+
+> Why M7 needs perceptual hashing, measured on a real 34k-file library: the same photo exported
+> three ways - `icloud\IMG_1463.JPEG` (3024², 1.90 MB), `iphone\2018_08_02_…JPG` (3024², 0.79 MB)
+> and a resized `anh\2019\IMG_1463.JPEG` (1772², 0.87 MB) - is **the same picture** (PSNR 42.6 and
+> 38.7 dB) yet **no two share a single byte**, so exact dedup correctly leaves all three alone.
+> Matching by file name is not a shortcut either: of 8 sampled `IMG_####` name collisions between
+> two folders, 4 were the same photo (32-40 dB) and 4 were completely unrelated shots (9-11 dB).
 
 ## ⚙️ Performance
 

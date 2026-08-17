@@ -165,6 +165,12 @@
     "stop": "dừng",
     "cancelled": "Đã hủy tác vụ.",
     "paused": "tạm nhường",
+    "userPaused": "đã tạm dừng",
+    "pausing": "đang dừng, chạy nốt phần dở…",
+    "pauseHint": "Tạm dừng — vẫn giữ chỗ trong hàng đợi, muốn chạy việc khác thì bấm dừng hẳn",
+    "resumeHint": "Chạy tiếp từ đúng chỗ đang dừng",
+    "cancelHintResumable": "Dừng hẳn — chạy lại lúc nào cũng được, phần đã làm vẫn giữ",
+    "cancelHintRestart": "Dừng hẳn — phải xem trước / chọn lại từ đầu",
     "kind": {
       "scan": "Quét thư mục",
       "meta": "Metadata",

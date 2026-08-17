@@ -70,7 +70,7 @@ pub async fn start_hash_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
             .writer
             .exec(|c| core_db::ops::insert_job(c, "hash", None))
             .map_err(err)?;
-        let cancel = jobs.register(job_id, "hash", None);
+        let (cancel, pause) = jobs.register_pausable(job_id, "hash", None);
         if let Some(active_preview) = preview_cancel
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -88,7 +88,7 @@ pub async fn start_hash_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
                 let events_run = events.clone();
                 let cancel_run = cancel.clone();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run_hash_job(&db, &thumb_pool, &cancel_run, job_id, &events_run)
+                    run_hash_job(&db, &thumb_pool, &cancel_run, &pause, job_id, &events_run)
                 }));
                 let final_event = match result {
                     Err(_) => JobEvent::Failed {
@@ -194,10 +194,44 @@ impl DupRefresher {
     }
 }
 
+/// Ngủ khi user bấm ⏸, báo trạng thái đúng lúc ĐỔI (không spam). Trả false =
+/// job phải dừng hẳn (đã bị hủy trong lúc đang dừng).
+#[allow(clippy::too_many_arguments)] // context của 1 progress event, không tách được cho gọn hơn
+pub(crate) fn hold_if_paused(
+    pause: &core_jobs::PauseFlag,
+    cancel: &core_jobs::CancelFlag,
+    job_id: i64,
+    kind: &str,
+    done: u64,
+    total: Option<u64>,
+    running_msg: Option<&str>,
+    events: &crossbeam_channel::Sender<JobEvent>,
+) -> bool {
+    if !pause.load(Ordering::Relaxed) {
+        return !cancel.load(Ordering::Relaxed);
+    }
+    let progress = |message: Option<&str>| {
+        let _ = events.send(JobEvent::Progress(JobProgress {
+            job_id,
+            kind: kind.into(),
+            done,
+            total,
+            message: message.map(str::to_string),
+        }));
+    };
+    progress(Some("user_paused"));
+    let alive = core_jobs::wait_while_paused(pause, cancel);
+    if alive {
+        progress(running_msg);
+    }
+    alive
+}
+
 fn run_hash_job(
     db: &core_db::Db,
     thumb_pool: &LifoPool,
     cancel: &core_jobs::CancelFlag,
+    pause: &core_jobs::PauseFlag,
     job_id: i64,
     events: &crossbeam_channel::Sender<JobEvent>,
 ) -> anyhow::Result<String> {
@@ -224,7 +258,16 @@ fn run_hash_job(
     }));
     let mut cursor = 0i64;
     loop {
-        if cancel.load(Ordering::Relaxed) {
+        if !hold_if_paused(
+            pause,
+            cancel,
+            job_id,
+            "hash",
+            done,
+            Some((quick_total + full_estimate).max(done)),
+            Some("quick"),
+            events,
+        ) {
             return Ok(String::new());
         }
         let batch = db
@@ -271,7 +314,16 @@ fn run_hash_job(
     }));
     cursor = 0;
     loop {
-        if cancel.load(Ordering::Relaxed) {
+        if !hold_if_paused(
+            pause,
+            cancel,
+            job_id,
+            "hash",
+            done,
+            Some(grand_total.max(done)),
+            Some("verify"),
+            events,
+        ) {
             return Ok(String::new());
         }
         // Mỗi file phase 2 là 1 lượt đọc TOÀN BỘ nội dung — nhường thumb trước
@@ -284,7 +336,10 @@ fn run_hash_job(
             .with(|c| core_db::ops::select_pending_full(c, cursor, FULL_BATCH))?;
         let Some(last) = batch.last() else { break };
         cursor = last.file_id;
-        let ups: Vec<HashUpsert> = batch.par_iter().filter_map(hash_one_full).collect();
+        let ups: Vec<HashUpsert> = batch
+            .par_iter()
+            .filter_map(|p| hash_one_full(p, cancel))
+            .collect();
         done += batch.len() as u64;
         dups.mark(ups.len());
         if !ups.is_empty() {
@@ -335,9 +390,12 @@ fn hash_one_quick(p: &PendingHash) -> Option<HashUpsert> {
     })
 }
 
-fn hash_one_full(p: &PendingHash) -> Option<HashUpsert> {
+/// Đọc theo chunk 1 MiB + poll cờ hủy: một file video 2 GB không được làm nút
+/// Stop chết cứng hàng phút. Hủy giữa chừng → None, file vẫn nằm trong hàng
+/// chờ nên lượt sau hash lại từ đầu, không mất gì.
+fn hash_one_full(p: &PendingHash, cancel: &core_jobs::CancelFlag) -> Option<HashUpsert> {
     check_fs_matches(p)?;
-    let h = core_hash::full_blake3(Path::new(&p.path)).ok()?;
+    let h = core_hash::full_blake3_cancellable(Path::new(&p.path), cancel).ok()??;
     Some(HashUpsert {
         file_id: p.file_id,
         quick64: None, // COALESCE giữ quick cũ

@@ -45,9 +45,35 @@ pub enum JobEvent {
 
 /// Cờ hủy — job thread poll cờ này giữa các batch.
 pub type CancelFlag = Arc<AtomicBool>;
+/// Cờ tạm dừng — job ngủ tại chỗ, KHÔNG mất phần đã làm và vẫn nằm trong panel.
+pub type PauseFlag = Arc<AtomicBool>;
+
+/// Job được phép tạm dừng: chỉ job nền đọc-là-chính. Job đụng file thật
+/// (organize/org_undo/dedup_delete/recovery) cố tình KHÔNG pausable — chúng ôm
+/// fs_lock/delete_lock, dừng giữa chừng là chặn mọi thứ khác vô thời hạn mà
+/// nhìn như app treo.
+pub const PAUSABLE_KINDS: &[&str] = &["hash", "meta", "org_hash", "thumb_warm"];
+
+pub fn is_pausable(kind: &str) -> bool {
+    PAUSABLE_KINDS.contains(&kind)
+}
+
+/// Ngủ trong lúc bị pause. Trả `false` nghĩa là job phải dừng hẳn (đã bị hủy) —
+/// caller thoát vòng lặp như gặp cancel. Poll cả 2 cờ nên bấm ✕ lúc đang pause
+/// vẫn thoát trong ≤1 nhịp, không bao giờ kẹt luồng.
+pub fn wait_while_paused(pause: &PauseFlag, cancel: &CancelFlag) -> bool {
+    while pause.load(Ordering::Relaxed) {
+        if cancel.load(Ordering::Relaxed) {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    !cancel.load(Ordering::Relaxed)
+}
 
 struct JobInfo {
     flag: CancelFlag,
+    pause: PauseFlag,
     kind: String,
     root_id: Option<i64>,
 }
@@ -75,16 +101,40 @@ impl JobManager {
     }
 
     pub fn register(&self, job_id: i64, kind: &str, root_id: Option<i64>) -> CancelFlag {
+        self.register_pausable(job_id, kind, root_id).0
+    }
+
+    /// Như `register` nhưng trả thêm cờ pause cho job nền tự poll.
+    pub fn register_pausable(
+        &self,
+        job_id: i64,
+        kind: &str,
+        root_id: Option<i64>,
+    ) -> (CancelFlag, PauseFlag) {
         let flag: CancelFlag = Arc::new(AtomicBool::new(false));
+        let pause: PauseFlag = Arc::new(AtomicBool::new(false));
         self.active.lock().unwrap().insert(
             job_id,
             JobInfo {
                 flag: flag.clone(),
+                pause: pause.clone(),
                 kind: kind.to_string(),
                 root_id,
             },
         );
-        flag
+        (flag, pause)
+    }
+
+    /// Bật/tắt pause. Trả false khi job không tồn tại hoặc kind không được phép
+    /// tạm dừng — caller chỉ cần bỏ qua, không phải lỗi.
+    pub fn set_paused(&self, job_id: i64, paused: bool) -> bool {
+        match self.active.lock().unwrap().get(&job_id) {
+            Some(info) if is_pausable(&info.kind) => {
+                info.pause.store(paused, Ordering::Relaxed);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Đăng ký scan ATOMIC: check scan-đang-chạy + insert trong CÙNG một lần
@@ -104,6 +154,7 @@ impl JobManager {
             job_id,
             JobInfo {
                 flag: flag.clone(),
+                pause: Arc::new(AtomicBool::new(false)),
                 kind: "scan".to_string(),
                 root_id: Some(root_id),
             },
@@ -235,5 +286,41 @@ mod tests {
         assert_eq!(snapshot[1].kind, "recovery");
         jobs.unregister(9);
         assert_eq!(jobs.active_jobs().len(), 1);
+    }
+
+    #[test]
+    fn pause_only_applies_to_background_kinds() {
+        let jobs = JobManager::new();
+        jobs.register(1, "hash", None);
+        jobs.register(2, "dedup_delete", None);
+        assert!(jobs.set_paused(1, true), "job nen phai pause duoc");
+        assert!(
+            !jobs.set_paused(2, true),
+            "job dung file that khong duoc pause (om lock)"
+        );
+        assert!(!jobs.set_paused(99, true), "job khong ton tai");
+    }
+
+    #[test]
+    fn wait_while_paused_returns_immediately_when_idle() {
+        let pause: PauseFlag = Arc::new(AtomicBool::new(false));
+        let cancel: CancelFlag = Arc::new(AtomicBool::new(false));
+        assert!(wait_while_paused(&pause, &cancel));
+        cancel.store(true, Ordering::Relaxed);
+        assert!(!wait_while_paused(&pause, &cancel), "da huy -> dung han");
+    }
+
+    #[test]
+    fn cancel_during_pause_unblocks_the_job() {
+        let pause: PauseFlag = Arc::new(AtomicBool::new(true));
+        let cancel: CancelFlag = Arc::new(AtomicBool::new(false));
+        let (p2, c2) = (pause.clone(), cancel.clone());
+        let waiter = std::thread::spawn(move || wait_while_paused(&p2, &c2));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        cancel.store(true, Ordering::Relaxed);
+        assert!(
+            !waiter.join().unwrap(),
+            "bam huy luc dang pause phai thoat, khong ket luong"
+        );
     }
 }

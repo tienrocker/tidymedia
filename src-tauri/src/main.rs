@@ -49,6 +49,7 @@ fn main() {
             dedup::start_hash_scan,
             dedup::list_dup_groups,
             dedup::get_dup_group,
+            commands::pause_job,
             dedup::list_dup_members_brief,
             dedup::dedup_stats,
             dedup::delete_dup_files,
