@@ -6,7 +6,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::models::{
     DeleteContextRow, DupGroupRow, DupMemberBrief, DupMemberRow, FileDetail, HashUpsert, JobRow,
-    MediaSrc, MetaUpsert, PendingHash, PendingMeta, RootInfo, ScanEntry,
+    MediaSrc, MetaUpsert, PendingHash, PendingMeta, PendingPhash, PhashUpsert, RootInfo, ScanEntry,
 };
 
 /// Bump khi đổi schema. Có migration tăng dần từ v2 trở đi (giữ index của
@@ -962,19 +962,22 @@ pub fn rebuild_dup_groups(conn: &mut Connection) -> Result<(i64, i64)> {
 
 /// List nhóm trùng, lãng phí nhiều nhất trước. Cap 10k nhóm (UI ảo hóa được
 /// nhưng IPC 1 phát 10k row ~ 1MB là trần hợp lý).
-pub fn list_dup_groups(conn: &Connection) -> Result<Vec<DupGroupRow>> {
+/// `kind`: 0 = trùng tuyệt đối (byte y hệt), 1 = gần giống (perceptual).
+/// Với nhóm gần giống các bản KHÔNG cùng dung lượng nên "dọn được" tính bằng
+/// tổng mọi bản trừ bản nặng nhất, chứ không phải (n-1) * size.
+pub fn list_dup_groups(conn: &Connection, kind: i64) -> Result<Vec<DupGroupRow>> {
     let mut stmt = conn.prepare_cached(
-        "SELECT g.id, COUNT(*), MAX(f.size), (COUNT(*) - 1) * MAX(f.size),
+        "SELECT g.id, COUNT(*), MAX(f.size), SUM(f.size) - MAX(f.size),
                 substr(GROUP_CONCAT(f.id || ':' || f.mtime ORDER BY f.id), 1, 120)
          FROM dup_groups g
          JOIN dup_members m ON m.group_id = g.id
          JOIN files f ON f.id = m.file_id
-         WHERE g.kind = 0 AND f.status = 0
+         WHERE g.kind = ?1 AND f.status = 0
          GROUP BY g.id HAVING COUNT(*) >= 2
          ORDER BY 4 DESC LIMIT 10000",
     )?;
     let rows = stmt
-        .query_map([], |r| {
+        .query_map(params![kind], |r| {
             let concat: String = r.get(4)?;
             let samples = concat
                 .split(',')
@@ -1027,23 +1030,225 @@ pub fn get_dup_group(conn: &Connection, group_id: i64) -> Result<Vec<DupMemberRo
     Ok(rows)
 }
 
+// ---------- perceptual dedup: dhash + nhóm gần giống (M7) ----------
+
+/// `phashes.kind`: 0 = dhash ảnh (dùng để gom nhóm).
+pub const PHASH_KIND_DHASH: i64 = 0;
+/// 3 = "đã quét, không có hash dùng được" (ảnh phẳng / không decode nổi).
+/// Row bia này giữ cho job hội tụ thay vì đọc lại file đó mỗi lượt.
+pub const PHASH_KIND_NONE: i64 = 3;
+
+const PHASH_PENDING_WHERE: &str = "f.kind = 0 AND f.status = 0
+    AND NOT EXISTS(SELECT 1 FROM phashes p WHERE p.file_id = f.id
+                   AND p.kind IN (0, 3) AND p.seq = 0)";
+
+pub fn count_pending_phash(conn: &Connection) -> Result<i64> {
+    Ok(conn.query_row(
+        &format!("SELECT COUNT(*) FROM files f WHERE {PHASH_PENDING_WHERE}"),
+        [],
+        |r| r.get(0),
+    )?)
+}
+
+pub fn select_pending_phash(
+    conn: &Connection,
+    after_id: i64,
+    limit: i64,
+) -> Result<Vec<PendingPhash>> {
+    let mut stmt = conn.prepare_cached(&format!(
+        "SELECT f.id, d.path, f.name, f.ext, f.mtime, f.size
+         FROM files f JOIN dirs d ON d.id = f.dir_id
+         WHERE {PHASH_PENDING_WHERE} AND f.id > ?1
+         ORDER BY f.id LIMIT ?2"
+    ))?;
+    let rows = stmt
+        .query_map(params![after_id, limit], |r| {
+            let dir: String = r.get(1)?;
+            let name: String = r.get(2)?;
+            Ok(PendingPhash {
+                file_id: r.get(0)?,
+                path: join_path(&dir, &name),
+                ext: r.get(3)?,
+                mtime: r.get(4)?,
+                size: r.get(5)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Ghi hash với guard mtime+size như meta: file đổi nội dung giữa lúc job đang
+/// decode thì hash vừa tính là của bản CŨ — bỏ, lượt sau tính lại.
+pub fn upsert_phash_batch(conn: &mut Connection, rows: &[PhashUpsert]) -> Result<()> {
+    let tx = conn.transaction()?;
+    {
+        let mut ins = tx.prepare_cached(
+            "INSERT INTO phashes(file_id, kind, seq, hash64)
+             SELECT ?1, ?2, 0, ?3
+             WHERE EXISTS(SELECT 1 FROM files WHERE id = ?1 AND mtime = ?4 AND size = ?5)
+             ON CONFLICT(file_id, kind, seq) DO UPDATE SET hash64 = excluded.hash64",
+        )?;
+        for r in rows {
+            let (kind, hash) = match r.hash64 {
+                Some(h) => (PHASH_KIND_DHASH, h),
+                None => (PHASH_KIND_NONE, 0),
+            };
+            ins.execute(params![r.file_id, kind, hash, r.src_mtime, r.src_size])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Gom cụm THUẦN (test được, không đụng DB): union-find trên các cặp có
+/// Hamming ≤ `max_dist` VÀ tỉ lệ khung hình xấp xỉ nhau. Tỉ lệ là chốt chặn
+/// quan trọng: dhash 8x8 bỏ hết thông tin khung hình nên ảnh dọc và ảnh ngang
+/// cùng bố cục có thể ra hash gần nhau.
+pub fn cluster_similar(
+    items: &[(i64, i64, Option<i64>, Option<i64>)],
+    max_dist: u32,
+) -> Vec<Vec<i64>> {
+    let n = items.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn find(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    let aspect = |w: Option<i64>, h: Option<i64>| -> Option<f64> {
+        match (w, h) {
+            (Some(w), Some(h)) if w > 0 && h > 0 => Some(w as f64 / h as f64),
+            _ => None,
+        }
+    };
+    for a in 0..n {
+        for b in (a + 1)..n {
+            if (items[a].1 ^ items[b].1).count_ones() > max_dist {
+                continue;
+            }
+            // Thiếu kích thước (meta chưa chạy tới) → không chặn, chỉ dựa hash
+            if let (Some(ra), Some(rb)) = (
+                aspect(items[a].2, items[a].3),
+                aspect(items[b].2, items[b].3),
+            ) {
+                if (ra - rb).abs() > 0.05 * ra.max(rb) {
+                    continue;
+                }
+            }
+            let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+            if ra != rb {
+                parent[ra] = rb;
+            }
+        }
+    }
+    let mut groups: HashMap<usize, Vec<i64>> = HashMap::new();
+    for (i, item) in items.iter().enumerate() {
+        let root = find(&mut parent, i);
+        groups.entry(root).or_default().push(item.0);
+    }
+    let mut out: Vec<Vec<i64>> = groups.into_values().filter(|g| g.len() >= 2).collect();
+    for g in out.iter_mut() {
+        g.sort_unstable();
+    }
+    // Thứ tự ổn định → rebuild 2 lần cho ra cùng kết quả
+    out.sort_unstable_by_key(|g| g[0]);
+    out
+}
+
+/// Dựng lại nhóm "gần giống" (kind = 1) từ dhash. Trả (số nhóm, bytes có thể
+/// dọn nếu mỗi nhóm chỉ giữ bản to nhất).
+pub fn rebuild_similar_groups(conn: &mut Connection, max_dist: u32) -> Result<(i64, i64)> {
+    let items: Vec<(i64, i64, Option<i64>, Option<i64>)> = {
+        let mut stmt = conn.prepare(
+            "SELECT p.file_id, p.hash64, m.width, m.height
+             FROM phashes p
+             JOIN files f ON f.id = p.file_id AND f.status = 0
+             LEFT JOIN media_meta m ON m.file_id = p.file_id
+             WHERE p.kind = 0 AND p.seq = 0
+             ORDER BY p.file_id",
+        )?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    let clusters = cluster_similar(&items, max_dist);
+
+    let tx = conn.transaction()?;
+    // Giữ group id theo file_id nhỏ nhất của cụm — UI đang mở nhóm nào thì
+    // rebuild không đá nó đi (cùng lý do như rebuild_dup_groups).
+    let existing: HashMap<i64, i64> = {
+        let mut stmt = tx.prepare(
+            "SELECT MIN(m.file_id), m.group_id FROM dup_members m
+             JOIN dup_groups g ON g.id = m.group_id AND g.kind = 1
+             GROUP BY m.group_id",
+        )?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<Vec<(i64, i64)>, _>>()?;
+        rows.into_iter().collect()
+    };
+    tx.execute(
+        "DELETE FROM dup_members WHERE group_id IN (SELECT id FROM dup_groups WHERE kind = 1)",
+        [],
+    )?;
+    let mut groups = 0i64;
+    let mut waste = 0i64;
+    {
+        let mut ins_group = tx.prepare("INSERT INTO dup_groups(kind, created_at) VALUES(1, ?1)")?;
+        let mut ins_member =
+            tx.prepare("INSERT INTO dup_members(group_id, file_id, keep) VALUES(?1, ?2, 0)")?;
+        let mut size_of = tx.prepare("SELECT size FROM files WHERE id = ?1")?;
+        let now = now_ms();
+        for cluster in &clusters {
+            let gid = match existing.get(&cluster[0]) {
+                Some(id) => *id,
+                None => {
+                    ins_group.execute(params![now])?;
+                    tx.last_insert_rowid()
+                }
+            };
+            let mut sizes: Vec<i64> = Vec::with_capacity(cluster.len());
+            for &fid in cluster {
+                ins_member.execute(params![gid, fid])?;
+                sizes.push(size_of.query_row(params![fid], |r| r.get(0))?);
+            }
+            sizes.sort_unstable();
+            // Giữ bản NẶNG nhất → dọn được tổng phần còn lại
+            waste += sizes.iter().take(sizes.len() - 1).sum::<i64>();
+            groups += 1;
+        }
+    }
+    tx.execute(
+        "DELETE FROM dup_groups
+         WHERE kind = 1 AND NOT EXISTS(
+           SELECT 1 FROM dup_members m WHERE m.group_id = dup_groups.id
+         )",
+        [],
+    )?;
+    tx.commit()?;
+    Ok((groups, waste))
+}
+
 /// Member của MỌI nhóm exact trong 1 lượt — UI cần để tick "chọn tất cả" theo
 /// rule mà không phải mở lần lượt vài nghìn nhóm. Chỉ file còn present: file
 /// mất/placeholder không bao giờ được chọn làm bản giữ, mà cũng không đáng để
 /// đề nghị xóa. Cap 200k dòng: quá số này thì UI cũng không dùng nổi 1 payload.
-pub fn list_dup_members_brief(conn: &Connection) -> Result<Vec<DupMemberBrief>> {
+pub fn list_dup_members_brief(conn: &Connection, kind: i64) -> Result<Vec<DupMemberBrief>> {
     let mut stmt = conn.prepare_cached(
         "SELECT m.group_id, f.id, f.size, f.mtime, f.status, mm.width, mm.height, mm.taken_at
          FROM dup_groups g
          JOIN dup_members m ON m.group_id = g.id
          JOIN files f ON f.id = m.file_id
          LEFT JOIN media_meta mm ON mm.file_id = f.id
-         WHERE g.kind = 0 AND f.status = 0
+         WHERE g.kind = ?1 AND f.status = 0
          ORDER BY m.group_id, f.id
          LIMIT 200000",
     )?;
     let rows = stmt
-        .query_map([], |r| {
+        .query_map(params![kind], |r| {
             Ok(DupMemberBrief {
                 group_id: r.get(0)?,
                 file_id: r.get(1)?,
@@ -1060,16 +1265,16 @@ pub fn list_dup_members_brief(conn: &Connection) -> Result<Vec<DupMemberBrief>> 
 }
 
 /// (số nhóm, tổng bytes lãng phí) cho badge/status.
-pub fn dedup_stats(conn: &Connection) -> Result<(i64, i64)> {
+pub fn dedup_stats(conn: &Connection, kind: i64) -> Result<(i64, i64)> {
     Ok(conn.query_row(
         "SELECT COUNT(*), COALESCE(SUM(waste), 0) FROM (
-           SELECT (COUNT(*) - 1) * MAX(f.size) AS waste
+           SELECT SUM(f.size) - MAX(f.size) AS waste
            FROM dup_groups g
            JOIN dup_members m ON m.group_id = g.id
            JOIN files f ON f.id = m.file_id
-           WHERE g.kind = 0 AND f.status = 0
+           WHERE g.kind = ?1 AND f.status = 0
            GROUP BY g.id HAVING COUNT(*) >= 2)",
-        [],
+        params![kind],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?)
 }
@@ -1097,6 +1302,56 @@ pub fn get_delete_context(conn: &Connection, file_ids: &[i64]) -> Result<Vec<Del
          WHERE m.group_id IN (
            SELECT m2.group_id FROM dup_members m2
            JOIN dup_groups g2 ON g2.id = m2.group_id AND g2.kind = 0
+           WHERE m2.file_id IN rarray(?1))",
+    )?;
+    let rows = stmt
+        .query_map([&values], |r| {
+            let dir: String = r.get(2)?;
+            let name: String = r.get(3)?;
+            Ok(DeleteContextRow {
+                group_id: r.get(0)?,
+                file_id: r.get(1)?,
+                path: join_path(&dir, &name),
+                kind: r.get(4)?,
+                size: r.get(5)?,
+                mtime: r.get(6)?,
+                status: r.get(7)?,
+                live_pair_id: r.get(8)?,
+                full_hash: r.get(9)?,
+                hashed_size: r.get(10)?,
+                hashed_mtime: r.get(11)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Context xóa cho nhóm GẦN GIỐNG (kind=1). Tách hẳn khỏi `get_delete_context`
+/// vì bất biến khác nhau về bản chất: ở đây KHÔNG thể chứng minh hai file cùng
+/// nội dung (chúng khác độ phân giải/độ nén thật sự), nên đường xóa của nó
+/// không bao giờ được đi qua cùng một hàm verify với nhóm byte-y-hệt.
+pub fn get_similar_delete_context(
+    conn: &Connection,
+    file_ids: &[i64],
+) -> Result<Vec<DeleteContextRow>> {
+    use std::rc::Rc;
+    let values: Rc<Vec<rusqlite::types::Value>> = Rc::new(
+        file_ids
+            .iter()
+            .map(|&i| rusqlite::types::Value::Integer(i))
+            .collect(),
+    );
+    let mut stmt = conn.prepare_cached(
+        "SELECT m.group_id, f.id, d.path, f.name, f.kind, f.size, f.mtime, f.status,
+                f.live_pair_id, h.full_hash, h.hashed_size, h.hashed_mtime
+         FROM dup_members m
+         JOIN dup_groups g ON g.id = m.group_id AND g.kind = 1
+         JOIN files f ON f.id = m.file_id
+         JOIN dirs d ON d.id = f.dir_id
+         LEFT JOIN hashes h ON h.file_id = f.id
+         WHERE m.group_id IN (
+           SELECT m2.group_id FROM dup_members m2
+           JOIN dup_groups g2 ON g2.id = m2.group_id AND g2.kind = 1
            WHERE m2.file_id IN rarray(?1))",
     )?;
     let rows = stmt

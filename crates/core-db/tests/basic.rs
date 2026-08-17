@@ -117,6 +117,125 @@ fn date_sort_and_filter_prefer_capture_time() {
         .is_empty());
 }
 
+/// Nhóm "gần giống": cùng ảnh nhưng khác byte (nén lại / thu nhỏ). Dedup tuyệt
+/// đối không bao giờ thấy chúng, nên đây là đường duy nhất dọn được.
+#[test]
+fn similar_groups_cluster_by_perceptual_distance() {
+    // Thuần: 2 ảnh sát nhau + 1 ảnh xa → đúng 1 nhóm 2 thành viên
+    let items = vec![
+        (1, 0b1011_0110i64, Some(3024), Some(3024)),
+        (2, 0b1011_0111, Some(1772), Some(1772)), // lech 1 bit, cung ti le
+        (3, !0b1011_0110, Some(3024), Some(3024)), // khac han
+    ];
+    let clusters = ops::cluster_similar(&items, 6);
+    assert_eq!(clusters, vec![vec![1, 2]]);
+
+    // Tỉ lệ khung hình khác hẳn thì KHÔNG gom dù hash sát nhau (dhash 8x8 bỏ
+    // hết thông tin khung hình nên ảnh dọc/ngang có thể ra hash gần nhau)
+    let items = vec![
+        (1, 0b1011_0110i64, Some(4000), Some(3000)),
+        (2, 0b1011_0111, Some(1080), Some(1920)),
+    ];
+    assert!(ops::cluster_similar(&items, 6).is_empty());
+
+    // Thiếu kích thước (meta chưa chạy tới) thì vẫn gom theo hash
+    let items = vec![(1, 5i64, None, None), (2, 5, Some(100), Some(100))];
+    assert_eq!(ops::cluster_similar(&items, 6), vec![vec![1, 2]]);
+
+    // Nối chuỗi: a~b, b~c nhưng a xa c → union-find vẫn gom cả 3 vào 1 nhóm
+    let items = vec![
+        (1, 0b0000_0000i64, Some(10), Some(10)),
+        (2, 0b0000_1111, Some(10), Some(10)),
+        (3, 0b1111_1111, Some(10), Some(10)),
+    ];
+    assert_eq!(ops::cluster_similar(&items, 4), vec![vec![1, 2, 3]]);
+}
+
+#[test]
+fn similar_groups_are_stable_and_measure_reclaimable_bytes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(tmp.path()).unwrap();
+    db.writer.exec(|c| ops::upsert_root(c, "D:\\S")).unwrap();
+    let entries = vec![
+        entry("D:\\S", "big.jpg", "jpg", 0, 2_000_000, 10),
+        entry("D:\\S", "small.jpg", "jpg", 0, 800_000, 20),
+        entry("D:\\S", "other.jpg", "jpg", 0, 500_000, 30),
+    ];
+    db.writer
+        .exec(move |c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(c, 1, 1, &entries, &mut cache)
+        })
+        .unwrap();
+    let pending = db
+        .pool
+        .with(|c| ops::select_pending_phash(c, 0, 100))
+        .unwrap();
+    assert_eq!(pending.len(), 3, "anh chua co phash deu vao hang cho");
+
+    let rows: Vec<core_db::PhashUpsert> = pending
+        .iter()
+        .map(|p| core_db::PhashUpsert {
+            file_id: p.file_id,
+            // big/small gần nhau, other khác hẳn; "small" phẳng -> None để
+            // kiểm luôn nhánh ghi bia
+            hash64: if p.path.ends_with("other.jpg") {
+                Some(!0b1010_1010)
+            } else {
+                Some(0b1010_1010)
+            },
+            src_mtime: p.mtime,
+            src_size: p.size,
+        })
+        .collect();
+    db.writer
+        .exec(move |c| ops::upsert_phash_batch(c, &rows))
+        .unwrap();
+    assert_eq!(
+        db.pool.with(ops::count_pending_phash).unwrap(),
+        0,
+        "hash roi thi khong duoc chon lai (job phai hoi tu)"
+    );
+
+    let (groups, waste) = db
+        .writer
+        .exec(|c| ops::rebuild_similar_groups(c, 6))
+        .unwrap();
+    assert_eq!(groups, 1);
+    assert_eq!(
+        waste, 800_000,
+        "giu ban NANG nhat -> don duoc dung phan con lai, khong phai (n-1)*max"
+    );
+
+    let list = db.pool.with(|c| ops::list_dup_groups(c, 1)).unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].count, 2);
+    let gid = list[0].id;
+    db.writer
+        .exec(|c| ops::rebuild_similar_groups(c, 6))
+        .unwrap();
+    let again = db.pool.with(|c| ops::list_dup_groups(c, 1)).unwrap();
+    assert_eq!(
+        again[0].id, gid,
+        "rebuild giu group id, UI khong bi dong nhom"
+    );
+
+    // Nhóm exact (kind 0) không bị đụng tới
+    assert!(db
+        .pool
+        .with(|c| ops::list_dup_groups(c, 0))
+        .unwrap()
+        .is_empty());
+
+    // Context xóa phủ cả nhóm dù chỉ đưa 1 id
+    let members = db.pool.with(|c| ops::get_dup_group(c, gid)).unwrap();
+    let ctx = db
+        .pool
+        .with(|c| ops::get_similar_delete_context(c, &[members[0].file_id]))
+        .unwrap();
+    assert_eq!(ctx.len(), 2);
+}
+
 #[test]
 fn scan_upsert_query_reconcile() {
     let tmp = tempfile::tempdir().unwrap();
@@ -453,14 +572,14 @@ fn dedup_hash_pipeline_and_groups() {
     assert_eq!(groups, 1);
     assert_eq!(waste, 2000, "3 ban x 1000 bytes -> giai phong duoc 2000");
 
-    let list = db.pool.with(ops::list_dup_groups).unwrap();
+    let list = db.pool.with(|c| ops::list_dup_groups(c, 0)).unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].count, 3);
     assert!(!list[0].samples.is_empty());
     let stable_group_id = list[0].id;
 
     db.writer.exec(ops::rebuild_dup_groups).unwrap();
-    let rebuilt = db.pool.with(ops::list_dup_groups).unwrap();
+    let rebuilt = db.pool.with(|c| ops::list_dup_groups(c, 0)).unwrap();
     assert_eq!(
         rebuilt[0].id, stable_group_id,
         "unchanged hash keeps group id"
@@ -474,7 +593,7 @@ fn dedup_hash_pipeline_and_groups() {
 
     // Brief = nguyên liệu để UI tick "chọn tất cả" mà không mở từng nhóm:
     // đúng nhóm đó, đúng 3 bản, kèm field cần cho rule.
-    let brief = db.pool.with(ops::list_dup_members_brief).unwrap();
+    let brief = db.pool.with(|c| ops::list_dup_members_brief(c, 0)).unwrap();
     assert_eq!(brief.len(), 3);
     assert!(brief.iter().all(|b| b.group_id == stable_group_id));
     assert!(brief.iter().all(|b| b.status == 0 && b.size == 1000));
@@ -494,7 +613,7 @@ fn dedup_hash_pipeline_and_groups() {
             }
         })
         .unwrap();
-    let brief_present = db.pool.with(ops::list_dup_members_brief).unwrap();
+    let brief_present = db.pool.with(|c| ops::list_dup_members_brief(c, 0)).unwrap();
     assert_eq!(brief_present.len(), 2, "ban da mat bi loai khoi brief");
     db.writer
         .exec({
@@ -521,7 +640,7 @@ fn dedup_hash_pipeline_and_groups() {
             move |c| ops::remove_deleted_files(c, &ids)
         })
         .unwrap();
-    let (g2, w2) = db.pool.with(ops::dedup_stats).unwrap();
+    let (g2, w2) = db.pool.with(|c| ops::dedup_stats(c, 0)).unwrap();
     assert_eq!((g2, w2), (0, 0));
     let ids = db
         .pool

@@ -1,6 +1,10 @@
 {
-  "app": { "name": "TidyMedia" },
-  "search": { "placeholder": "Tìm theo tên file…" },
+  "app": {
+    "name": "TidyMedia"
+  },
+  "search": {
+    "placeholder": "Tìm theo tên file…"
+  },
   "filter": {
     "all": "Ảnh + Video",
     "images": "Ảnh",
@@ -85,9 +89,16 @@
   },
   "dedup": {
     "scan": "Quét trùng lặp",
+    "scanSimilar": "Quét ảnh gần giống",
     "scanning": "Đang quét…",
+    "kindExact": "Trùng tuyệt đối",
+    "kindSimilar": "Gần giống",
+    "kindExactHint": "Byte y hệt nhau (BLAKE3 khớp) — xóa bản thừa là an toàn tuyệt đối",
+    "kindSimilarHint": "Cùng một tấm ảnh nhưng khác byte: nén lại, thu nhỏ, xuất qua app khác. Các bản KHÔNG giống hệt nhau nên phải tự nhìn trước khi xóa.",
+    "phaseCompare": "Đang so ảnh",
     "stats": "{{n}} nhóm · lãng phí {{size}}",
     "empty": "Chưa thấy trùng lặp. Bấm \"Quét trùng lặp\" sau khi index xong.",
+    "emptySimilar": "Chưa thấy ảnh gần giống. Bấm \"Quét ảnh gần giống\" — chạy nhanh nếu thumb đã tạo sẵn.",
     "pickGroup": "Chọn 1 nhóm bên trái. Bản nào đánh dấu sẽ bị xóa, còn lại giữ nguyên.",
     "copies": "{{n}} bản",
     "wasted": "dọn được {{size}}",
@@ -101,6 +112,7 @@
     "ruleOldest": "Giữ bản cũ nhất",
     "ruleNewest": "Giữ bản mới nhất",
     "deleteBtn": "Xóa {{n}} bản ({{size}})",
+    "confirmSimilar": "Chuyển {{n}} file ({{size}}) vào Thùng rác?\n\nĐây là nhóm GẦN GIỐNG, không phải bản sao y hệt: các bản có thể khác độ phân giải và độ nén. Máy chỉ đảm bảo mỗi nhóm luôn còn ít nhất 1 bản và bản giữ lại còn nguyên trên đĩa — phần nhìn để chọn bản nào là việc của mày.",
     "confirm": "Chuyển {{n}} file ({{size}}) vào Thùng rác? Video Live Photo chỉ đi theo khi ảnh được giữ có video giống hệt đã verify. Mỗi ảnh luôn còn ít nhất 1 bản đã verify.",
     "deleteResult": "Đã chuyển {{n}} file vào Thùng rác (giải phóng {{size}})",
     "skipped": "{{n}} bản bỏ qua",
@@ -185,7 +197,9 @@
       "org_undo": "Hoàn tác gom kho",
       "recovery": "Khôi phục",
       "thumb_warm": "Thumb nền",
-      "dedup_delete": "Xóa bản trùng"
+      "dedup_delete": "Xóa bản trùng",
+      "phash": "Quét ảnh gần giống",
+      "similar_delete": "Xóa ảnh gần giống"
     }
   },
   "status": {

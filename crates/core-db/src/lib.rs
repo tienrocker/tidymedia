@@ -19,7 +19,7 @@ use anyhow::Result;
 pub use models::{
     DeleteContextRow, DupGroupRow, DupMemberBrief, DupMemberRow, FileDetail, FileFilter, FileRow,
     HashUpsert, JobRow, LibraryRootRow, MediaSrc, MetaUpsert, OrgBatchRow, OrgCandidateRow,
-    OrgOpRow, OrgPairRow, PendingHash, PendingMeta, RootInfo, ScanEntry,
+    OrgOpRow, OrgPairRow, PendingHash, PendingMeta, PendingPhash, PhashUpsert, RootInfo, ScanEntry,
 };
 pub use pool::ReadPool;
 pub use writer::WriterHandle;

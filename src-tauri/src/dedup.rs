@@ -413,10 +413,20 @@ pub(crate) fn unix_ms(t: Option<std::time::SystemTime>) -> i64 {
 
 // ---------- queries cho UI ----------
 
+/// `kind`: 0 = trùng tuyệt đối, 1 = gần giống (perceptual).
 #[tauri::command]
-pub async fn list_dup_groups(state: State<'_, AppState>) -> CmdResult<Vec<DupGroupRow>> {
+pub async fn list_dup_groups(
+    state: State<'_, AppState>,
+    kind: Option<i64>,
+) -> CmdResult<Vec<DupGroupRow>> {
     let db = state.db.clone();
-    blocking(move || db.pool.with(core_db::ops::list_dup_groups).map_err(err)).await
+    let kind = kind.unwrap_or(0);
+    blocking(move || {
+        db.pool
+            .with(|c| core_db::ops::list_dup_groups(c, kind))
+            .map_err(err)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -438,11 +448,13 @@ pub async fn get_dup_group(
 #[tauri::command]
 pub async fn list_dup_members_brief(
     state: State<'_, AppState>,
+    kind: Option<i64>,
 ) -> CmdResult<Vec<core_db::DupMemberBrief>> {
     let db = state.db.clone();
+    let kind = kind.unwrap_or(0);
     blocking(move || {
         db.pool
-            .with(core_db::ops::list_dup_members_brief)
+            .with(|c| core_db::ops::list_dup_members_brief(c, kind))
             .map_err(err)
     })
     .await
@@ -456,10 +468,14 @@ pub struct DedupStats {
 }
 
 #[tauri::command]
-pub async fn dedup_stats(state: State<'_, AppState>) -> CmdResult<DedupStats> {
+pub async fn dedup_stats(state: State<'_, AppState>, kind: Option<i64>) -> CmdResult<DedupStats> {
     let db = state.db.clone();
+    let kind = kind.unwrap_or(0);
     blocking(move || {
-        let (groups, waste) = db.pool.with(core_db::ops::dedup_stats).map_err(err)?;
+        let (groups, waste) = db
+            .pool
+            .with(|c| core_db::ops::dedup_stats(c, kind))
+            .map_err(err)?;
         Ok(DedupStats { groups, waste })
     })
     .await
@@ -985,7 +1001,7 @@ pub async fn delete_dup_files(
 /// Trash 1 file với đủ chốt chặn: volume phải có Recycle Bin (ổ FAT32/exFAT
 /// không có → IFileOperation sẽ XÓA VĨNH VIỄN, vi phạm invariant #4 → từ
 /// chối), fs re-check ngay trước lệnh xóa.
-fn trash_one(
+pub(crate) fn trash_one(
     path: &str,
     size: i64,
     mtime: i64,
@@ -1063,7 +1079,7 @@ pub(crate) fn fs_matches(path: &str, size: i64, mtime: i64) -> bool {
     }
 }
 
-fn file_name(path: &str) -> String {
+pub(crate) fn file_name(path: &str) -> String {
     path.rsplit('\\').next().unwrap_or(path).to_string()
 }
 

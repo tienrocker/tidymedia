@@ -1,6 +1,10 @@
 {
-  "app": { "name": "TidyMedia" },
-  "search": { "placeholder": "Search file names…" },
+  "app": {
+    "name": "TidyMedia"
+  },
+  "search": {
+    "placeholder": "Search file names…"
+  },
   "filter": {
     "all": "Images + Videos",
     "images": "Images",
@@ -123,7 +127,15 @@
     "phaseVerify": "Verifying",
     "live": "live",
     "deleting": "Deleting {{done}} / {{total}}",
-    "keys": "Checkbox: mark for deletion · Shift+click: range · Ctrl+A / Ctrl+D: mark / clear all · Del: delete marked · Space, 1-9, arrows, Enter: within a group"
+    "keys": "Checkbox: mark for deletion · Shift+click: range · Ctrl+A / Ctrl+D: mark / clear all · Del: delete marked · Space, 1-9, arrows, Enter: within a group",
+    "scanSimilar": "Scan for similar photos",
+    "kindExact": "Exact",
+    "kindSimilar": "Similar",
+    "kindExactHint": "Byte-for-byte identical (BLAKE3 match) - deleting the extras is completely safe",
+    "kindSimilarHint": "Same photo, different bytes: re-compressed, resized, exported by another app. The copies are NOT identical, so look before you delete.",
+    "phaseCompare": "Comparing",
+    "emptySimilar": "No similar photos yet. Hit \"Scan for similar photos\" - it's quick when thumbnails are already cached.",
+    "confirmSimilar": "Move {{n}} files ({{size}}) to the Recycle Bin?\n\nThese are SIMILAR, not identical: the copies may differ in resolution and compression. The app only guarantees that every group keeps at least one copy and that the kept copy is still intact on disk - judging which one to keep is up to you."
   },
   "sort": {
     "newest": "Newest first",
@@ -186,7 +198,9 @@
       "org_undo": "Undo organize",
       "recovery": "Recovery",
       "thumb_warm": "Background thumbnails",
-      "dedup_delete": "Deleting duplicates"
+      "dedup_delete": "Deleting duplicates",
+      "phash": "Similar-photo scan",
+      "similar_delete": "Deleting similar photos"
     }
   },
   "status": {

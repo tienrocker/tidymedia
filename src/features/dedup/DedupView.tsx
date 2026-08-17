@@ -153,7 +153,11 @@ function GroupList() {
     return <div className="p-3 text-sm text-neutral-500">…</div>;
   }
   if (groups.length === 0) {
-    return <div className="p-3 text-sm text-neutral-500">{t("dedup.empty")}</div>;
+    return (
+      <div className="p-3 text-sm text-neutral-500">
+        {useStore.getState().dupKind === 1 ? t("dedup.emptySimilar") : t("dedup.empty")}
+      </div>
+    );
   }
   return (
     <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto">
@@ -457,11 +461,16 @@ export function DedupView() {
   const rule = useStore((s) => s.dedupRule);
   const deleting = useStore((s) => s.dupDeleting);
   const marking = useStore((s) => s.dupMarking);
+  const dupKind = useStore((s) => s.dupKind);
   const activeJobs = useStore((s) => s.activeJobs);
-  const hashJob = [...activeJobs.values()].find((j) => j.kind === "hash");
-  const deleteJob = [...activeJobs.values()].find((j) => j.kind === "dedup_delete");
+  const similar = dupKind === 1;
+  const scanKind = similar ? "phash" : "hash";
+  const hashJob = [...activeJobs.values()].find((j) => j.kind === scanKind);
+  const deleteJob = [...activeJobs.values()].find(
+    (j) => j.kind === "dedup_delete" || j.kind === "similar_delete",
+  );
   const anyHashJob = [...activeJobs.values()].some(
-    (j) => j.kind === "hash" || j.kind === "org_hash",
+    (j) => j.kind === "hash" || j.kind === "org_hash" || j.kind === "phash",
   );
 
   let totalChecked = 0;
@@ -508,7 +517,10 @@ export function DedupView() {
     const bySize = new Map((st.dupGroups ?? []).map((g) => [g.id, g.size]));
     let bytes = 0;
     for (const [gid, s] of st.dupChecked) bytes += (bySize.get(gid) ?? 0) * s.size;
-    if (window.confirm(t("dedup.confirm", { n, size: fmtSize(bytes) }))) {
+    // Nhóm gần giống KHÔNG phải bản sao y hệt — lời xác nhận phải nói khác,
+    // vì bản bị xóa có thể khác độ phân giải/độ nén thật sự.
+    const key = st.dupKind === 1 ? "dedup.confirmSimilar" : "dedup.confirm";
+    if (window.confirm(t(key, { n, size: fmtSize(bytes) }))) {
       runSafe(() => useStore.getState().deleteChecked());
     }
   };
@@ -554,24 +566,47 @@ export function DedupView() {
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Header: quét + chọn tất cả + rule + xóa */}
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800 bg-neutral-950 px-3 py-2">
+        {/* Hai tập dữ liệu khác hẳn nhau về ngữ nghĩa lẫn mức an toàn khi xóa */}
+        <div className="flex overflow-hidden rounded border border-neutral-700">
+          {([0, 1] as const).map((k) => (
+            <button
+              key={k}
+              className={`px-2 py-1 text-sm ${
+                dupKind === k
+                  ? "bg-neutral-700 text-neutral-100"
+                  : "bg-neutral-900 text-neutral-500 hover:text-neutral-300"
+              }`}
+              title={k === 0 ? t("dedup.kindExactHint") : t("dedup.kindSimilarHint")}
+              disabled={deleting}
+              onClick={() => useStore.getState().setDupKind(k)}
+            >
+              {k === 0 ? t("dedup.kindExact") : t("dedup.kindSimilar")}
+            </button>
+          ))}
+        </div>
         <button
           className="rounded border border-neutral-600 bg-neutral-800 px-3 py-1 text-sm text-neutral-100 hover:bg-neutral-700 disabled:opacity-50"
           disabled={anyHashJob}
           onClick={() =>
             runSafe(async () => {
-              await api.startHashScan();
+              if (similar) await api.startPhashScan();
+              else await api.startHashScan();
             })
           }
         >
           {hashJob != null
             ? `${
-                hashJob.message === "verify"
-                  ? t("dedup.phaseVerify")
-                  : t("dedup.phaseQuick")
+                similar
+                  ? t("dedup.phaseCompare")
+                  : hashJob.message === "verify"
+                    ? t("dedup.phaseVerify")
+                    : t("dedup.phaseQuick")
               } ${fmtCount(Number(hashJob.done))}${
                 hashJob.total != null ? ` / ${fmtCount(Number(hashJob.total))}` : ""
               }`
-            : t("dedup.scan")}
+            : similar
+              ? t("dedup.scanSimilar")
+              : t("dedup.scan")}
         </button>
         {stats && (
           <span className="text-sm text-neutral-400">

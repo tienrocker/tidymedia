@@ -175,6 +175,8 @@ pub struct AppState {
     pub hash_start_gate: Arc<std::sync::atomic::AtomicBool>,
     /// Gate cho job warm thumbnail nền (ưu tiên thấp nhất).
     pub thumb_warm_gate: Arc<std::sync::atomic::AtomicBool>,
+    /// Chống 2 job phash khởi động song song (check-rồi-register có khe đua).
+    pub phash_start_gate: Arc<std::sync::atomic::AtomicBool>,
     /// Gate tương tự cho organize/undo job (M5).
     pub org_start_gate: Arc<std::sync::atomic::AtomicBool>,
     /// Serialize các bước chuyển trạng thái giữa scan, watched-root mutation
@@ -272,6 +274,7 @@ pub fn init(app: &AppHandle) -> Result<()> {
         meta_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         hash_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         thumb_warm_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        phash_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         org_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         index_op_gate: index_op_gate.clone(),
         org_preview: Arc::new(Mutex::new(None)),

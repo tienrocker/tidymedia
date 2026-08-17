@@ -410,6 +410,8 @@ fn run_thumb_warm_job(
         "org_undo",
         "recovery",
         "dedup_delete",
+        "similar_delete",
+        "phash",
     ];
     let _ = events.send(JobEvent::Progress(JobProgress {
         job_id,

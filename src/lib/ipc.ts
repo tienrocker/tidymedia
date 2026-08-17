@@ -209,10 +209,16 @@ export const api = {
   openFile: (fileId: number) => invoke<void>("open_file", { fileId }),
   revealFile: (fileId: number) => invoke<void>("reveal_file", { fileId }),
   startHashScan: () => invoke<number | null>("start_hash_scan"),
-  listDupGroups: () => invoke<DupGroupRow[]>("list_dup_groups"),
+  /** Ảnh gần giống: tính dhash (chủ yếu đọc từ cache thumb) rồi gom nhóm. */
+  startPhashScan: () => invoke<number | null>("start_phash_scan"),
+  deleteSimilarFiles: (fileIds: number[]) =>
+    invoke<DeleteResult>("delete_similar_files", { fileIds }),
+  /** kind: 0 = trùng tuyệt đối, 1 = gần giống. */
+  listDupGroups: (kind: number) => invoke<DupGroupRow[]>("list_dup_groups", { kind }),
   getDupGroup: (groupId: number) => invoke<DupMemberRow[]>("get_dup_group", { groupId }),
-  listDupMembersBrief: () => invoke<DupMemberBrief[]>("list_dup_members_brief"),
-  dedupStats: () => invoke<DedupStats>("dedup_stats"),
+  listDupMembersBrief: (kind: number) =>
+    invoke<DupMemberBrief[]>("list_dup_members_brief", { kind }),
+  dedupStats: (kind: number) => invoke<DedupStats>("dedup_stats", { kind }),
   deleteDupFiles: (fileIds: number[]) =>
     invoke<DeleteResult>("delete_dup_files", { fileIds }),
   getOrgSettings: () => invoke<OrgSettings>("get_org_settings"),

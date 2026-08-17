@@ -65,9 +65,11 @@ function ensureDupBrief(
   if (cached != null) return Promise.resolve(cached);
   if (briefInFlight != null) return briefInFlight;
   set({ dupMarking: true });
+  const kind = get().dupKind;
   briefInFlight = api
-    .listDupMembersBrief()
+    .listDupMembersBrief(kind)
     .then((rows) => {
+      if (get().dupKind !== kind) return null; // vừa đổi chế độ, dữ liệu cũ vứt đi
       const byGroup = new Map<number, RuleMember[]>();
       for (const r of rows) {
         const list = byGroup.get(r.groupId);
@@ -124,6 +126,8 @@ interface AppStore {
   lightboxIndex: number | null;
 
   appMode: AppMode;
+  /** 0 = trùng tuyệt đối (byte y hệt), 1 = gần giống (cùng ảnh, khác byte). */
+  dupKind: 0 | 1;
   dupGroups: DupGroupRow[] | null;
   dupStats: DedupStats | null;
   activeGroupId: number | null;
@@ -168,6 +172,7 @@ interface AppStore {
   undoOrgBatch: (batchId: number) => Promise<void>;
 
   setAppMode: (m: AppMode) => void;
+  setDupKind: (kind: 0 | 1) => void;
   loadDupData: () => Promise<void>;
   openDupGroup: (id: number) => Promise<void>;
   toggleDupChecked: (groupId: number, fileId: number) => void;
@@ -222,6 +227,7 @@ export const useStore = create<AppStore>((set, get) => ({
   lightboxIndex: null,
 
   appMode: "browse",
+  dupKind: 0,
   dupGroups: null,
   dupStats: null,
   activeGroupId: null,
@@ -390,9 +396,32 @@ export const useStore = create<AppStore>((set, get) => ({
     if (m === "organize" && get().orgSettings == null) void get().loadOrgData();
   },
 
+  setDupKind: (kind) => {
+    if (get().dupKind === kind) return;
+    // Đổi loại nhóm = đổi hẳn tập dữ liệu: mọi đánh dấu/nhóm đang mở của loại
+    // cũ phải bỏ, không được mang sang loại mới (id nhóm khác ngữ nghĩa).
+    set({
+      dupKind: kind,
+      dupGroups: null,
+      dupStats: null,
+      dupChecked: new Map(),
+      dupBrief: null,
+      dupAnchor: null,
+      activeGroupId: null,
+      groupMembers: [],
+      groupMembersFor: null,
+    });
+    void get().loadDupData();
+  },
+
   loadDupData: async () => {
+    const kind = get().dupKind;
     try {
-      const [groups, stats] = await Promise.all([api.listDupGroups(), api.dedupStats()]);
+      const [groups, stats] = await Promise.all([
+        api.listDupGroups(kind),
+        api.dedupStats(kind),
+      ]);
+      if (get().dupKind !== kind) return; // user vừa đổi chế độ, kết quả cũ vứt đi
       const cur = get().activeGroupId;
       // PRUNE selection của group id không còn tồn tại - hash job rebuild làm
       // group id đổi hết; giữ lại là user xóa ngầm file họ không còn thấy.
@@ -534,7 +563,12 @@ export const useStore = create<AppStore>((set, get) => ({
     set({ dupDeleting: true });
     let res;
     try {
-      res = await api.deleteDupFiles(ids);
+      // Hai đường xóa TÁCH HẲN nhau ở backend vì bất biến khác nhau: nhóm
+      // tuyệt đối verify BLAKE3 trùng, nhóm gần giống không thể verify điều đó.
+      res =
+        get().dupKind === 1
+          ? await api.deleteSimilarFiles(ids)
+          : await api.deleteDupFiles(ids);
     } finally {
       set({ dupDeleting: false });
     }

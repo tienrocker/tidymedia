@@ -8,12 +8,14 @@
 mod ffmpeg;
 mod ffprobe;
 mod meta;
+mod phash;
 mod store;
 mod thumb;
 
 pub use ffmpeg::{find_ffmpeg, find_ffprobe};
 pub use ffprobe::{probe_video, probe_video_in_timezone, VideoMeta};
 pub use meta::{extract_image_meta, ImageMeta};
+pub use phash::{dhash, dhash_bytes, hamming};
 pub use store::ThumbStore;
 pub use thumb::{make_thumb, make_video_thumb};
 

@@ -4,6 +4,7 @@ mod commands;
 mod dedup;
 mod organize;
 mod protocols;
+mod similar;
 mod state;
 
 fn main() {
@@ -50,6 +51,8 @@ fn main() {
             dedup::list_dup_groups,
             dedup::get_dup_group,
             commands::pause_job,
+            similar::start_phash_scan,
+            similar::delete_similar_files,
             dedup::list_dup_members_brief,
             dedup::dedup_stats,
             dedup::delete_dup_files,

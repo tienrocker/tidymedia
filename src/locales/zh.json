@@ -1,6 +1,10 @@
 {
-  "app": { "name": "TidyMedia" },
-  "search": { "placeholder": "按文件名搜索…" },
+  "app": {
+    "name": "TidyMedia"
+  },
+  "search": {
+    "placeholder": "按文件名搜索…"
+  },
   "filter": {
     "all": "图片 + 视频",
     "images": "图片",
@@ -123,7 +127,15 @@
     "phaseVerify": "校验中",
     "live": "实时更新",
     "deleting": "正在删除 {{done}} / {{total}}",
-    "keys": "复选框：标记删除 · Shift+点击：范围选择 · Ctrl+A / Ctrl+D：全选 / 全部取消 · Del：删除已标记 · 空格、1-9、方向键、回车：组内操作"
+    "keys": "复选框：标记删除 · Shift+点击：范围选择 · Ctrl+A / Ctrl+D：全选 / 全部取消 · Del：删除已标记 · 空格、1-9、方向键、回车：组内操作",
+    "scanSimilar": "扫描相似照片",
+    "kindExact": "完全相同",
+    "kindSimilar": "相似",
+    "kindExactHint": "逐字节相同（BLAKE3 一致）- 删除多余副本完全安全",
+    "kindSimilarHint": "同一张照片但字节不同：重新压缩、缩放、经其他 App 导出。副本并不完全相同，删除前请先看清楚。",
+    "phaseCompare": "正在比对",
+    "emptySimilar": "还没有发现相似照片。点击「扫描相似照片」- 缩略图已缓存时会很快。",
+    "confirmSimilar": "将 {{n}} 个文件（{{size}}）移入回收站？\n\n这些是「相似」而非完全相同：副本的分辨率和压缩率可能不同。程序只保证每组至少保留一份、且保留的那份在磁盘上完好 - 具体保留哪一份由你判断。"
   },
   "sort": {
     "newest": "最新优先",
@@ -185,7 +197,9 @@
       "org_undo": "撤销整理",
       "recovery": "恢复",
       "thumb_warm": "后台缩略图",
-      "dedup_delete": "删除重复项"
+      "dedup_delete": "删除重复项",
+      "phash": "相似照片扫描",
+      "similar_delete": "删除相似照片"
     }
   },
   "status": {

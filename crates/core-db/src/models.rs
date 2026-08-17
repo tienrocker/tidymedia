@@ -195,6 +195,28 @@ pub struct DupMemberRow {
     pub camera: Option<String>,
 }
 
+/// 1 file chờ tính perceptual hash (job phash M7).
+#[derive(Debug, Clone)]
+pub struct PendingPhash {
+    pub file_id: i64,
+    pub path: String,
+    pub ext: Option<String>,
+    /// Snapshot lúc select — upsert chỉ ghi khi file chưa đổi.
+    pub mtime: i64,
+    pub size: i64,
+}
+
+/// Kết quả dhash 1 file. `hash64 = None` = ảnh phẳng/không decode được: vẫn ghi
+/// một row "bia" (kind = PHASH_KIND_NONE) để job không chọn lại file đó mãi,
+/// nhưng không bao giờ tham gia gom nhóm.
+#[derive(Debug, Clone)]
+pub struct PhashUpsert {
+    pub file_id: i64,
+    pub hash64: Option<i64>,
+    pub src_mtime: i64,
+    pub src_size: i64,
+}
+
 /// Bản rút gọn của MỌI member trong MỌI nhóm trùng — vừa đủ field để UI chạy
 /// rule "giữ bản nào" hàng loạt mà không phải mở từng nhóm (không kèm
 /// name/dir/camera: 13k dòng thì mấy chuỗi đó mới là phần nặng của payload).

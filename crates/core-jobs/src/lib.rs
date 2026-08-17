@@ -52,7 +52,7 @@ pub type PauseFlag = Arc<AtomicBool>;
 /// (organize/org_undo/dedup_delete/recovery) cố tình KHÔNG pausable — chúng ôm
 /// fs_lock/delete_lock, dừng giữa chừng là chặn mọi thứ khác vô thời hạn mà
 /// nhìn như app treo.
-pub const PAUSABLE_KINDS: &[&str] = &["hash", "meta", "org_hash", "thumb_warm"];
+pub const PAUSABLE_KINDS: &[&str] = &["hash", "meta", "org_hash", "thumb_warm", "phash"];
 
 pub fn is_pausable(kind: &str) -> bool {
     PAUSABLE_KINDS.contains(&kind)
