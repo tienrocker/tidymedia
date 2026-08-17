@@ -117,15 +117,17 @@ fn date_sort_and_filter_prefer_capture_time() {
         .is_empty());
 }
 
+/// `low` = 64 bit thấp nhất của hash 256-bit; 3 word còn lại để 0 nên khoảng
+/// cách giữa hai item bằng đúng khoảng cách giữa hai `low` — test đọc dễ.
 fn item(
     file_id: i64,
-    hash64: i64,
+    low: i64,
     wh: Option<(i64, i64)>,
     taken_at: Option<i64>,
 ) -> core_db::ClusterItem {
     core_db::ClusterItem {
         file_id,
-        hash64,
+        hash: [low, 0, 0, 0],
         width: wh.map(|(w, _)| w),
         height: wh.map(|(_, h)| h),
         taken_at,
@@ -261,10 +263,10 @@ fn similar_groups_are_stable_and_measure_reclaimable_bytes() {
             file_id: p.file_id,
             // big/small gần nhau, other khác hẳn; "small" phẳng -> None để
             // kiểm luôn nhánh ghi bia
-            hash64: if p.path.ends_with("other.jpg") {
-                Some(!0b1010_1010)
+            hash: if p.path.ends_with("other.jpg") {
+                Some([!0b1010_1010, 0, 0, 0])
             } else {
-                Some(0b1010_1010)
+                Some([0b1010_1010, 0, 0, 0])
             },
             src_mtime: p.mtime,
             src_size: p.size,
@@ -933,7 +935,7 @@ fn schema_v5_migrates_recovery_terminal_state_columns() {
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 6);
+    assert_eq!(version, ops::SCHEMA_VERSION);
     let mut columns = conn.prepare("PRAGMA table_info(org_ops)").unwrap();
     let names: Vec<String> = columns
         .query_map([], |r| r.get(1))
@@ -948,12 +950,13 @@ fn schema_v5_migrates_recovery_terminal_state_columns() {
 fn schema_newer_version_bails_instead_of_wiping() {
     // App cũ mở data mới (downgrade) không được wipe — org_ops journal (undo +
     // recovery intents) không rebuild lại được bằng rescan.
+    let newer = ops::SCHEMA_VERSION + 1;
     let mut conn = rusqlite::Connection::open_in_memory().unwrap();
     ops::ensure_schema(&mut conn).unwrap();
-    conn.execute_batch(
+    conn.execute_batch(&format!(
         "INSERT INTO kv(key, value) VALUES('canary', 'still-here');
-         PRAGMA user_version = 7;",
-    )
+         PRAGMA user_version = {newer};"
+    ))
     .unwrap();
 
     let err = ops::ensure_schema(&mut conn).unwrap_err().to_string();
@@ -962,7 +965,7 @@ fn schema_newer_version_bails_instead_of_wiping() {
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 7);
+    assert_eq!(version, newer);
     let canary: String = conn
         .query_row("SELECT value FROM kv WHERE key = 'canary'", [], |r| {
             r.get(0)

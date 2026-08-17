@@ -206,13 +206,14 @@ pub struct PendingPhash {
     pub size: i64,
 }
 
-/// Kết quả dhash 1 file. `hash64 = None` = ảnh phẳng/không decode được: vẫn ghi
+/// Kết quả dhash 1 file. `hash = None` = ảnh phẳng/không decode được: vẫn ghi
 /// một row "bia" (kind = PHASH_KIND_NONE) để job không chọn lại file đó mãi,
 /// nhưng không bao giờ tham gia gom nhóm.
 #[derive(Debug, Clone)]
 pub struct PhashUpsert {
     pub file_id: i64,
-    pub hash64: Option<i64>,
+    /// 256 bit chia thành 4 word; ghi thành 4 dòng `seq 0..3`.
+    pub hash: Option<[i64; 4]>,
     pub src_mtime: i64,
     pub src_size: i64,
 }
@@ -222,7 +223,8 @@ pub struct PhashUpsert {
 #[derive(Debug, Clone, Copy)]
 pub struct ClusterItem {
     pub file_id: i64,
-    pub hash64: i64,
+    /// dhash 256-bit, 4 word lưu thành 4 dòng `seq 0..3` trong `phashes`.
+    pub hash: [i64; 4],
     pub width: Option<i64>,
     pub height: Option<i64>,
     /// Giờ bấm máy theo EXIF, epoch ms CÓ sub-second (xem core-media). Chốt

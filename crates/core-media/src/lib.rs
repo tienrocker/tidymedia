@@ -8,7 +8,7 @@
 mod ffmpeg;
 mod ffprobe;
 mod meta;
-mod phash;
+pub mod phash;
 mod store;
 mod thumb;
 

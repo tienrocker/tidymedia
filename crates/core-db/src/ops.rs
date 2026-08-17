@@ -12,7 +12,7 @@ use crate::models::{
 
 /// Bump khi đổi schema. Có migration tăng dần từ v2 trở đi (giữ index của
 /// user); version lạ/quá cũ → wipe & recreate (rebuild bằng rescan, ok pre-1.0).
-const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// Migration tăng dần: MIGRATIONS[i] đưa schema từ version (i+2) lên (i+3).
 /// DDL PHẢI giống hệt schema.sql (fresh install đi thẳng schema.sql).
@@ -41,6 +41,13 @@ const MIGRATIONS: &[&str] = &[
     // startup does not hash/stat the same unresolved files forever.
     "ALTER TABLE org_ops ADD COLUMN recovery_error TEXT;
      ALTER TABLE org_ops ADD COLUMN recovery_attempted_at INTEGER;",
+    // v6 -> v7: dhash lên 256 bit (4 dòng seq 0..3). Hash 64-bit cũ vô nghĩa
+    // dưới sơ đồ mới — xóa sạch để job tính lại (đọc từ thumb cache nên nhanh),
+    // kèm nhóm gần giống vì chúng dựng ra từ hash cũ. KHÔNG có DDL: cột seq đã
+    // có sẵn trong schema.sql từ đầu.
+    "DELETE FROM phashes;
+     DELETE FROM dup_members WHERE group_id IN (SELECT id FROM dup_groups WHERE kind = 1);
+     DELETE FROM dup_groups WHERE kind = 1;",
 ];
 const OLDEST_MIGRATABLE: i64 = 2;
 
@@ -1080,21 +1087,35 @@ pub fn select_pending_phash(
 
 /// Ghi hash với guard mtime+size như meta: file đổi nội dung giữa lúc job đang
 /// decode thì hash vừa tính là của bản CŨ — bỏ, lượt sau tính lại.
+///
+/// 256 bit = 4 dòng `seq 0..3`. Xóa trước rồi mới chèn: file có thể đang mang
+/// hash cũ ở kind khác (bia → hash thật hoặc ngược lại), để lại là gom nhóm
+/// đọc phải hash mồ côi.
 pub fn upsert_phash_batch(conn: &mut Connection, rows: &[PhashUpsert]) -> Result<()> {
     let tx = conn.transaction()?;
     {
+        let mut fresh =
+            tx.prepare_cached("SELECT 1 FROM files WHERE id = ?1 AND mtime = ?2 AND size = ?3")?;
+        let mut del =
+            tx.prepare_cached("DELETE FROM phashes WHERE file_id = ?1 AND kind IN (0, 3)")?;
         let mut ins = tx.prepare_cached(
-            "INSERT INTO phashes(file_id, kind, seq, hash64)
-             SELECT ?1, ?2, 0, ?3
-             WHERE EXISTS(SELECT 1 FROM files WHERE id = ?1 AND mtime = ?4 AND size = ?5)
-             ON CONFLICT(file_id, kind, seq) DO UPDATE SET hash64 = excluded.hash64",
+            "INSERT INTO phashes(file_id, kind, seq, hash64) VALUES(?1, ?2, ?3, ?4)",
         )?;
         for r in rows {
-            let (kind, hash) = match r.hash64 {
-                Some(h) => (PHASH_KIND_DHASH, h),
-                None => (PHASH_KIND_NONE, 0),
-            };
-            ins.execute(params![r.file_id, kind, hash, r.src_mtime, r.src_size])?;
+            if !fresh.exists(params![r.file_id, r.src_mtime, r.src_size])? {
+                continue;
+            }
+            del.execute(params![r.file_id])?;
+            match r.hash {
+                Some(words) => {
+                    for (seq, w) in words.iter().enumerate() {
+                        ins.execute(params![r.file_id, PHASH_KIND_DHASH, seq as i64, w])?;
+                    }
+                }
+                None => {
+                    ins.execute(params![r.file_id, PHASH_KIND_NONE, 0, 0])?;
+                }
+            }
         }
     }
     tx.commit()?;
@@ -1132,9 +1153,21 @@ pub fn cluster_similar(items: &[ClusterItem], max_dist: u32) -> Vec<Vec<i64>> {
             _ => None,
         }
     };
+    let dist = |x: &ClusterItem, y: &ClusterItem| -> u32 {
+        let mut d = 0;
+        for i in 0..4 {
+            d += (x.hash[i] ^ y.hash[i]).count_ones();
+            // Vượt ngưỡng rồi thì 3 word còn lại không đổi được kết luận —
+            // thoát sớm, đây là vòng trong của O(n²) trên 21k ảnh.
+            if d > max_dist {
+                return d;
+            }
+        }
+        d
+    };
     for a in 0..n {
         for b in (a + 1)..n {
-            if (items[a].hash64 ^ items[b].hash64).count_ones() > max_dist {
+            if dist(&items[a], &items[b]) > max_dist {
                 continue;
             }
             // Thiếu kích thước (meta chưa chạy tới) → không chặn, chỉ dựa hash
@@ -1204,26 +1237,50 @@ fn split_by_taken_at(cluster: Vec<ClusterItem>) -> Vec<Vec<i64>> {
 /// dọn nếu mỗi nhóm chỉ giữ bản to nhất).
 pub fn rebuild_similar_groups(conn: &mut Connection, max_dist: u32) -> Result<(i64, i64)> {
     let items: Vec<ClusterItem> = {
+        // 4 dòng seq/file gộp lại thành 1 item. Chỉ nhận file đủ cả 4 word:
+        // thiếu word là hash dở dang (job bị kill giữa transaction cũ), gom
+        // theo nó là so với 0 và kéo về nhóm sai.
         let mut stmt = conn.prepare(
-            "SELECT p.file_id, p.hash64, m.width, m.height, m.taken_at
+            "SELECT p.file_id, p.seq, p.hash64, m.width, m.height, m.taken_at
              FROM phashes p
              JOIN files f ON f.id = p.file_id AND f.status = 0
              LEFT JOIN media_meta m ON m.file_id = p.file_id
-             WHERE p.kind = 0 AND p.seq = 0
-             ORDER BY p.file_id",
+             WHERE p.kind = 0 AND p.seq < 4
+             ORDER BY p.file_id, p.seq",
         )?;
-        let rows = stmt
-            .query_map([], |r| {
-                Ok(ClusterItem {
-                    file_id: r.get(0)?,
-                    hash64: r.get(1)?,
-                    width: r.get(2)?,
-                    height: r.get(3)?,
-                    taken_at: r.get(4)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        rows
+        let mut out: Vec<ClusterItem> = Vec::new();
+        let mut cur: Option<(ClusterItem, usize)> = None;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            let (id, seq): (i64, i64) = (r.get(0)?, r.get(1)?);
+            if cur.as_ref().is_none_or(|(it, _)| it.file_id != id) {
+                if let Some((it, n)) = cur.take() {
+                    if n == 4 {
+                        out.push(it);
+                    }
+                }
+                cur = Some((
+                    ClusterItem {
+                        file_id: id,
+                        hash: [0; 4],
+                        width: r.get(3)?,
+                        height: r.get(4)?,
+                        taken_at: r.get(5)?,
+                    },
+                    0,
+                ));
+            }
+            if let Some((it, n)) = cur.as_mut() {
+                it.hash[seq as usize] = r.get(2)?;
+                *n += 1;
+            }
+        }
+        if let Some((it, n)) = cur {
+            if n == 4 {
+                out.push(it);
+            }
+        }
+        out
     };
     let clusters = cluster_similar(&items, max_dist);
 

@@ -89,8 +89,16 @@ Năm bất biến mà mọi đường code phá hủy đều phải qua - luật
 > bốn bản của `IMG_1463` cùng mang đúng `18:02:24.802` tới từng mili-giây. Hai file chỉ có thể là
 > cùng một tấm ảnh nếu ra từ cùng một lần bấm máy, nên nhóm giờ bắt buộc trùng giờ bấm máy mỗi khi
 > cả hai file đều có. Trên 21,5k ảnh của kho đó, nhóm to nhất tụt từ 138 file xuống 5, và 3.084
-> file rời khỏi danh sách ứng viên xóa - trong khi mọi bộ trùng thật, kể cả bản Telegram xuất ra đã
-> mất sạch EXIF, vẫn còn nguyên.
+> file rời khỏi danh sách ứng viên xóa - trong khi mọi bộ trùng thật, kể cả bản xuất ra đã mất sạch
+> EXIF, vẫn còn nguyên.
+>
+> Chốt đó không cứu được 2.081 ảnh trong kho hoàn toàn không có EXIF - app nhắn tin lột sạch - nên
+> với chúng hash là chốt duy nhất, mà bản 64-bit chỉ còn đúng 3 bit dư. Vì vậy hash nâng lên 256
+> bit. Nó **không** tách được loạt chụp liên tiếp (đo rồi: vẫn 0-8 bit, vì vật thể di chuyển chiếm
+> ít ô kể cả trên lưới 16×16 - việc đó thuộc về chốt giờ bấm máy). Cái nó mang lại là đường đánh
+> đổi tốt hơn ở mọi điểm: chấm trên 9.456 cặp chứng minh được là cùng một lần bấm máy, ở cùng tỉ lệ
+> bỏ sót thì hash rộng hơn gom nhầm chỉ bằng một nửa - 11,4 % so với 20,6 % - và gom cụm cả kho vẫn
+> chỉ mất 272 ms.
 
 ## ⚙️ Hiệu năng
 

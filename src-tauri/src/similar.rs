@@ -26,10 +26,8 @@ use crate::commands::{blocking, err, CmdResult, GateGuard};
 use crate::dedup::{fs_matches, DeleteResult, SkippedFile};
 use crate::state::AppState;
 
-/// Ngưỡng Hamming trên dhash 64-bit. Đo trên kho thật: cùng một ảnh qua vài
-/// lần nén/thu nhỏ lệch 0-4 bit, ảnh khác hẳn lệch > 12. Lấy 6 để có biên an
-/// toàn mà vẫn không gom nhầm.
-const MAX_DIST: u32 = 6;
+/// Ngưỡng Hamming sống cạnh hàm hash sinh ra nó — đổi lưới là phải đo lại.
+use core_media::phash::MAX_DIST;
 const PHASH_BATCH: i64 = 256;
 
 // ---------- job tính dhash ----------
@@ -251,7 +249,7 @@ fn phash_one(
                 _ => {
                     return Some(PhashUpsert {
                         file_id: p.file_id,
-                        hash64: None,
+                        hash: None,
                         src_mtime: p.mtime,
                         src_size: p.size,
                     })
@@ -267,7 +265,7 @@ fn phash_one(
     Some(PhashUpsert {
         file_id: p.file_id,
         // None = ảnh phẳng (frame đen, nền trơn): ghi bia, không gom nhóm
-        hash64: hash.map(|h| h as i64),
+        hash: hash.map(|h| h.map(|w| w as i64)),
         src_mtime: p.mtime,
         src_size: p.size,
     })

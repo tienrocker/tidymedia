@@ -91,7 +91,15 @@ Five invariants every destructive code path must pass - not guidelines, hard rul
 > can only be the same picture if they came from the same shutter press, so groups now require an
 > identical capture time whenever both files have one. On the 21.5k photos of that library the
 > largest group fell from 138 files to 5, and 3,084 files left the deletion candidate list - while
-> every genuine duplicate set, including a Telegram re-export stripped of EXIF, stayed intact.
+> every genuine duplicate set, including a re-export stripped of EXIF, stayed intact.
+>
+> That guard cannot help the 2,081 photos in that library carrying no EXIF at all - messaging apps
+> strip it - so for those the hash is the only check, and a 64-bit one left just 3 bits of headroom.
+> The hash is therefore 256-bit. It does **not** pull burst frames apart (measured: still 0-8 bits,
+> because a moving subject covers few cells even on a 16×16 grid - that is the capture-time guard's
+> job, not the hash's). What it buys is a better trade-off everywhere: judged against 9,456 pairs
+> that provably share one shutter press, at an equal miss rate the wider hash mis-groups about half
+> as often - 11.4 % versus 20.6 % - and clustering the whole library still takes 272 ms.
 
 ## ⚙️ Performance
 
