@@ -2,13 +2,34 @@ import { useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 import { groupCheckState, runSafe, useStore, DedupRule } from "../../state/store";
-import { api, DupGroupRow, DupMemberRow } from "../../lib/ipc";
+import { api, DupGroupRow, DupMemberRow, FileDetail } from "../../lib/ipc";
 import { thumbUrl, THUMB_GRID, THUMB_PREVIEW } from "../../lib/media";
 import { useInViewThumb } from "../../lib/useInViewThumb";
-import { fmtCount, fmtSize } from "../../lib/format";
+import { fmtCount, fmtDuration, fmtSize } from "../../lib/format";
 import { fmtDateTime } from "../../lib/time";
 
 const GROUP_ROW_H = 64;
+
+/// Giờ chụp ĐẦY ĐỦ tới mili-giây. `fmtDateTime` chỉ tới phút, mà mili-giây
+/// mới là thứ quyết định các bản có được gom chung nhóm hay không — panel này
+/// phải cho thấy đúng con số đó, nếu không user không kiểm chứng được nhóm.
+/// taken_at là wall-clock camera encode ở khung UTC nên đọc thẳng getUTC*.
+function fmtTakenExact(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number, w = 2) => String(n).padStart(w, "0");
+  return `${fmtDateTime(ms, 0)}:${p(d.getUTCSeconds())}.${p(d.getUTCMilliseconds(), 3)}`;
+}
+
+/** 1 dòng nhãn - giá trị trong panel thông tin. Ẩn hẳn khi không có giá trị. */
+function InfoLine({ label, value }: { label: string; value: string | null }) {
+  if (value == null || value === "") return null;
+  return (
+    <div className="flex gap-1.5">
+      <span className="shrink-0 text-neutral-600">{label}</span>
+      <span className="min-w-0 select-text break-all text-neutral-300">{value}</span>
+    </div>
+  );
+}
 
 /** Checkbox 3 trạng thái dùng chung cho row nhóm + "chọn tất cả". */
 function TriCheckbox({
@@ -210,11 +231,30 @@ function MemberCard({
 }) {
   const { t } = useTranslation();
   const checked = useStore((s) => s.dupChecked.get(groupId)?.has(m.fileId) ?? false);
+  const similar = useStore((s) => s.dupKind === 1);
   const drag = useRef<{ x: number; y: number } | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
+  const [info, setInfo] = useState(false);
+  const [detail, setDetail] = useState<FileDetail | null>(null);
 
   const px = (m.width ?? 0) * (m.height ?? 0);
   const when = m.takenAt ?? m.mtime;
+
+  // Chỉ nạp khi user mở panel: get_file_meta trích metadata TẠI CHỖ nếu job
+  // chưa tới file đó — nạp sẵn cho cả nhóm là bắt đĩa đọc thứ chẳng ai xem.
+  useEffect(() => {
+    if (!info || detail != null) return;
+    let stale = false;
+    api
+      .getFileMeta(m.fileId)
+      .then((d) => {
+        if (!stale) setDetail(d);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [info, detail, m.fileId]);
 
   const zoomAt = (clientX: number, clientY: number, factor: number) => {
     const rect = boxRef.current?.getBoundingClientRect();
@@ -327,12 +367,66 @@ function MemberCard({
         <div className="truncate text-neutral-600" title={m.dir}>
           {m.dir}
         </div>
-        <button
-          className="text-neutral-500 underline-offset-2 hover:text-neutral-300 hover:underline"
-          onClick={() => runSafe(() => api.revealFile(m.fileId))}
-        >
-          {t("lightbox.reveal")}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            className="text-neutral-500 underline-offset-2 hover:text-neutral-300 hover:underline"
+            onClick={() => runSafe(() => api.revealFile(m.fileId))}
+          >
+            {t("lightbox.reveal")}
+          </button>
+          <button
+            className={`underline-offset-2 hover:underline ${
+              info ? "text-neutral-300" : "text-neutral-500 hover:text-neutral-300"
+            }`}
+            aria-expanded={info}
+            onClick={() => setInfo((v) => !v)}
+          >
+            {info ? "▾" : "▸"} {t("lightbox.info")}
+          </button>
+        </div>
+
+        {info && (
+          <div className="mt-1 space-y-0.5 border-t border-neutral-800 pt-1">
+            <InfoLine label={t("dedup.path")} value={`${m.dir}\\${m.name}`} />
+            <InfoLine label={t("lightbox.camera")} value={m.camera} />
+            <InfoLine
+              // Mốc quyết định nhóm: cùng lần bấm máy mới được gom chung
+              label={t("lightbox.taken")}
+              value={m.takenAt != null ? fmtTakenExact(m.takenAt) : t("dedup.noTakenAt")}
+            />
+            <InfoLine label={t("list.modified")} value={fmtDateTime(m.mtime, tz, tzOffset)} />
+            <InfoLine
+              label={t("lightbox.dimensions")}
+              value={m.width != null && m.height != null ? `${m.width} × ${m.height}` : null}
+            />
+            <InfoLine
+              label={t("list.size")}
+              value={`${fmtSize(m.size)} (${fmtCount(m.size)} B)`}
+            />
+            <InfoLine
+              label={t("lightbox.duration")}
+              value={detail?.durationMs != null ? fmtDuration(detail.durationMs) : null}
+            />
+            <InfoLine
+              label={t("lightbox.codec")}
+              value={
+                detail?.vcodec
+                  ? `${detail.vcodec}${detail.acodec ? ` / ${detail.acodec}` : ""}${
+                      detail.fps ? ` · ${Math.round(detail.fps)} fps` : ""
+                    }`
+                  : null
+              }
+            />
+            {/* Hai đường xóa đối xử với MOV đi kèm KHÁC nhau, phải nói rõ:
+                nhóm exact verify được MOV trùng BLAKE3 nên xóa cùng, nhóm gần
+                giống không verify được gì nên để nguyên MOV. */}
+            {m.isLive && (
+              <div className="text-amber-600">
+                {similar ? t("dedup.livePairKept") : t("dedup.livePairDeleted")}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
