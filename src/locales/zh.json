@@ -14,6 +14,9 @@
     "durShort": "≤ 1 分钟",
     "durMedium": "1-10 分钟",
     "durLong": "> 10 分钟",
+    "dateField": "按哪个日期筛选和排序",
+    "dateTaken": "拍摄日期",
+    "dateFile": "文件日期",
     "invalidLocalDate": "所选时区中不存在该日期，筛选条件已清除。"
   },
   "view": {
@@ -134,7 +137,9 @@
     "folder": "文件夹",
     "dims": "尺寸",
     "size": "大小",
-    "modified": "修改时间"
+    "modified": "文件日期",
+    "taken": "拍摄日期",
+    "noTaken": "元数据里没有拍摄日期 - 显示的是文件日期"
   },
   "lightbox": {
     "info": "信息",

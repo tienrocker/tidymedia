@@ -57,16 +57,44 @@ export function FilterBar() {
   const viewMode = useStore((s) => s.viewMode);
   const setViewMode = useStore((s) => s.setViewMode);
 
-  const setDateFilter = (
-    key: "mtimeFrom" | "mtimeTo",
-    value: string,
-    endOfDay: boolean,
-  ) => {
-    const epoch = dateInputToEpoch(value, tz, endOfDay, tzOffset);
-    if (value && epoch == null) {
+  const dateField = filter.dateField ?? "taken";
+  // Ngày chụp EXIF lưu dạng WALL-CLOCK (giờ trên máy ảnh, đóng gói như UTC) nên
+  // quy đổi bằng offset 0; mtime là instant UTC thật nên dùng timezone của user.
+  // Dùng nhầm là lệch đúng bằng offset (VN = 7 tiếng), ảnh chụp lúc 23h nhảy sang
+  // hôm sau.
+  const zoneOf = (field: string) => (field === "taken" ? 0 : tz);
+  const fallbackOf = (field: string) => (field === "taken" ? 0 : tzOffset);
+
+  // Giữ chuỗi ngày thô: đổi trường ngày thì NGÀY HIỂN THỊ không đổi, chỉ epoch
+  // được tính lại theo quy ước mới (không tự dịch filter của user đi 7 tiếng).
+  const [dateFrom, setDateFrom] = useState(() =>
+    epochToDateInput(
+      useStore.getState().filter.dateFrom,
+      zoneOf(dateField),
+      fallbackOf(dateField),
+    ),
+  );
+  const [dateTo, setDateTo] = useState(() =>
+    epochToDateInput(
+      useStore.getState().filter.dateTo,
+      zoneOf(dateField),
+      fallbackOf(dateField),
+    ),
+  );
+
+  const applyDates = (from: string, to: string, field: string) => {
+    const zone = zoneOf(field);
+    const fallback = fallbackOf(field);
+    const epochFrom = dateInputToEpoch(from, zone, false, fallback);
+    const epochTo = dateInputToEpoch(to, zone, true, fallback);
+    if ((from && epochFrom == null) || (to && epochTo == null)) {
       useStore.getState().showToast(t("filter.invalidLocalDate"), true);
     }
-    setFilter({ [key]: epoch });
+    setFilter({
+      dateFrom: epochFrom,
+      dateTo: epochTo,
+      dateField: field as "taken" | "mtime",
+    });
   };
 
   // IME (Telex/Pinyin): không bắn query khi đang gõ dở tổ hợp.
@@ -115,27 +143,40 @@ export function FilterBar() {
         initialBytes={filter.sizeMax}
         onBytes={(b) => setFilter({ sizeMax: b })}
       />
+      <select
+        className={inputCls}
+        title={t("filter.dateField")}
+        value={dateField}
+        onChange={(e) => applyDates(dateFrom, dateTo, e.target.value)}
+      >
+        <option value="taken">{t("filter.dateTaken")}</option>
+        <option value="mtime">{t("filter.dateFile")}</option>
+      </select>
       <input
         type="date"
         className={inputCls}
-        value={epochToDateInput(filter.mtimeFrom, tz, tzOffset)}
-        onChange={(e) => setDateFilter("mtimeFrom", e.target.value, false)}
+        value={dateFrom}
+        onChange={(e) => {
+          setDateFrom(e.target.value);
+          applyDates(e.target.value, dateTo, dateField);
+        }}
       />
       <input
         type="date"
         className={inputCls}
-        value={
-          filter.mtimeTo != null ? epochToDateInput(filter.mtimeTo, tz, tzOffset) : ""
-        }
-        onChange={(e) => setDateFilter("mtimeTo", e.target.value, true)}
+        value={dateTo}
+        onChange={(e) => {
+          setDateTo(e.target.value);
+          applyDates(dateFrom, e.target.value, dateField);
+        }}
       />
       <select
         className={inputCls}
-        value={filter.sort ?? "mtime_desc"}
+        value={filter.sort ?? "date_desc"}
         onChange={(e) => setFilter({ sort: e.target.value })}
       >
-        <option value="mtime_desc">{t("sort.newest")}</option>
-        <option value="mtime_asc">{t("sort.oldest")}</option>
+        <option value="date_desc">{t("sort.newest")}</option>
+        <option value="date_asc">{t("sort.oldest")}</option>
         <option value="name">{t("sort.nameAz")}</option>
         <option value="size_desc">{t("sort.largest")}</option>
         <option value="size_asc">{t("sort.smallest")}</option>

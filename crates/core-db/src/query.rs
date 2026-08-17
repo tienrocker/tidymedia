@@ -15,11 +15,30 @@ pub fn query_ids(conn: &Connection, f: &FileFilter) -> Result<Vec<i64>> {
     let mut wheres: Vec<String> = Vec::new();
     let mut params: Vec<Box<dyn ToSql>> = Vec::new();
 
+    // Ngày chụp EXIF, thiếu thì lùi về mtime. Alias RIÊNG + LEFT JOIN: alias `m`
+    // là INNER (chỉ file có meta mới khớp min_px/duration) — dùng chung sẽ âm
+    // thầm loại mọi file chưa có meta ra khỏi list.
+    let by_taken = f.date_field.as_deref().unwrap_or("taken") == "taken";
+    let date_expr = if by_taken {
+        "COALESCE(dm.taken_at, f.mtime)"
+    } else {
+        "f.mtime"
+    };
+    let sorts_by_date = !matches!(
+        f.sort.as_deref(),
+        Some("name") | Some("size_desc") | Some("size_asc")
+    );
+    let needs_date_join =
+        by_taken && (f.date_from.is_some() || f.date_to.is_some() || sorts_by_date);
+
     if f.root_path.is_some() {
         sql.push_str(" JOIN dirs d ON d.id = f.dir_id");
     }
     if f.min_px.is_some() || f.dur_min_ms.is_some() || f.dur_max_ms.is_some() {
         sql.push_str(" JOIN media_meta m ON m.file_id = f.id");
+    }
+    if needs_date_join {
+        sql.push_str(" LEFT JOIN media_meta dm ON dm.file_id = f.id");
     }
     if f.include_missing != Some(true) {
         // 0 = present, 2 = cloud placeholder (vẫn browse được, chỉ cấm hash/thumb)
@@ -63,12 +82,12 @@ pub fn query_ids(conn: &Connection, f: &FileFilter) -> Result<Vec<i64>> {
         wheres.push("f.size <= ?".into());
         params.push(Box::new(v));
     }
-    if let Some(v) = f.mtime_from {
-        wheres.push("f.mtime >= ?".into());
+    if let Some(v) = f.date_from {
+        wheres.push(format!("{date_expr} >= ?"));
         params.push(Box::new(v));
     }
-    if let Some(v) = f.mtime_to {
-        wheres.push("f.mtime <= ?".into());
+    if let Some(v) = f.date_to {
+        wheres.push(format!("{date_expr} <= ?"));
         params.push(Box::new(v));
     }
     if let Some(px) = f.min_px {
@@ -97,12 +116,13 @@ pub fn query_ids(conn: &Connection, f: &FileFilter) -> Result<Vec<i64>> {
         sql.push_str(&wheres.join(" AND "));
     }
     sql.push_str(" ORDER BY ");
-    sql.push_str(match f.sort.as_deref() {
-        Some("mtime_asc") => "f.mtime ASC",
-        Some("name") => "f.name COLLATE NOCASE ASC",
-        Some("size_desc") => "f.size DESC",
-        Some("size_asc") => "f.size ASC",
-        _ => "f.mtime DESC",
+    sql.push_str(&match f.sort.as_deref() {
+        // "mtime_*" giữ lại làm alias cũ — nghĩa của nó giờ là "theo ngày đang chọn"
+        Some("date_asc") | Some("mtime_asc") => format!("{date_expr} ASC"),
+        Some("name") => "f.name COLLATE NOCASE ASC".to_string(),
+        Some("size_desc") => "f.size DESC".to_string(),
+        Some("size_asc") => "f.size ASC".to_string(),
+        _ => format!("{date_expr} DESC"),
     });
 
     let started = std::time::Instant::now();

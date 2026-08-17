@@ -15,6 +15,108 @@ fn entry(dir: &str, name: &str, ext: &str, kind: i64, size: i64, mtime: i64) -> 
     }
 }
 
+/// Kho bị copy qua lại nhiều lần thì mtime là NGÀY COPY: ảnh 2018 có thể mang
+/// mtime 2024. Sắp xếp/lọc mặc định phải theo ngày chụp, thiếu EXIF mới lùi về
+/// mtime — nhưng file chưa có meta KHÔNG được biến mất khỏi danh sách.
+#[test]
+fn date_sort_and_filter_prefer_capture_time() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(tmp.path()).unwrap();
+    db.writer.exec(|c| ops::upsert_root(c, "D:\\P")).unwrap();
+    let entries = vec![
+        // (tên, mtime) — old.jpg là ca thật: chụp 2018 nhưng file copy năm 2024
+        entry("D:\\P", "old.jpg", "jpg", 0, 100, 1_704_000_000_000),
+        entry("D:\\P", "nometa.jpg", "jpg", 0, 100, 1_600_000_000_000),
+        entry("D:\\P", "mid.jpg", "jpg", 0, 100, 1_500_000_000_000),
+    ];
+    db.writer
+        .exec(move |c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(c, 1, 1, &entries, &mut cache)
+        })
+        .unwrap();
+    let id_of = |name: &str| -> i64 {
+        db.pool
+            .with(|c| -> anyhow::Result<i64> {
+                Ok(
+                    c.query_row("SELECT id FROM files WHERE name = ?1", [name], |r| {
+                        r.get::<_, i64>(0)
+                    })?,
+                )
+            })
+            .unwrap()
+    };
+    let (old_id, mid_id, nometa_id) = (id_of("old.jpg"), id_of("mid.jpg"), id_of("nometa.jpg"));
+    let metas = vec![
+        core_db::MetaUpsert {
+            file_id: old_id,
+            taken_at: Some(1_533_000_000_000), // 2018
+            meta_state: 1,
+            src_mtime: 1_704_000_000_000,
+            src_size: 100,
+            ..Default::default()
+        },
+        core_db::MetaUpsert {
+            file_id: mid_id,
+            taken_at: Some(1_650_000_000_000), // 2022
+            meta_state: 1,
+            src_mtime: 1_500_000_000_000,
+            src_size: 100,
+            ..Default::default()
+        },
+    ];
+    db.writer
+        .exec(move |c| ops::upsert_meta_batch(c, &metas))
+        .unwrap();
+
+    // Mặc định = ngày chụp: mid(2022) > nometa(mtime 2020) > old(2018)
+    let ids = db
+        .pool
+        .with(|c| query::query_ids(c, &FileFilter::default()))
+        .unwrap();
+    assert_eq!(
+        ids,
+        vec![mid_id, nometa_id, old_id],
+        "mac dinh phai sap theo ngay chup, file khong co meta lui ve mtime"
+    );
+
+    // Ngày file: old(2024) > nometa(2020) > mid(2017)
+    let f = FileFilter {
+        date_field: Some("mtime".into()),
+        ..Default::default()
+    };
+    let ids = db.pool.with(|c| query::query_ids(c, &f)).unwrap();
+    assert_eq!(ids, vec![old_id, nometa_id, mid_id]);
+
+    // Lọc "chụp từ 2020 trở đi" phải loại ảnh 2018 dù file của nó mới nhất
+    let f = FileFilter {
+        date_from: Some(1_577_836_800_000), // 2020-01-01
+        ..Default::default()
+    };
+    let ids = db.pool.with(|c| query::query_ids(c, &f)).unwrap();
+    assert_eq!(ids, vec![mid_id, nometa_id]);
+
+    // Cùng khoảng đó nhưng theo ngày file thì old.jpg lại lọt (mtime 2024)
+    let f = FileFilter {
+        date_from: Some(1_577_836_800_000),
+        date_field: Some("mtime".into()),
+        ..Default::default()
+    };
+    let ids = db.pool.with(|c| query::query_ids(c, &f)).unwrap();
+    assert_eq!(ids, vec![old_id, nometa_id]);
+
+    // Lọc theo độ phân giải (INNER JOIN meta) không được đá nhau với join ngày
+    let f = FileFilter {
+        min_px: Some(1),
+        ..Default::default()
+    };
+    assert!(db
+        .pool
+        .with(|c| query::query_ids(c, &f))
+        .unwrap()
+        .is_empty());
+}
+
 #[test]
 fn scan_upsert_query_reconcile() {
     let tmp = tempfile::tempdir().unwrap();

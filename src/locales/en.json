@@ -14,6 +14,9 @@
     "durShort": "≤ 1 min",
     "durMedium": "1-10 min",
     "durLong": "> 10 min",
+    "dateField": "Which date to filter and sort by",
+    "dateTaken": "Date taken",
+    "dateFile": "File date",
     "invalidLocalDate": "That date does not exist in the selected timezone. The filter was cleared."
   },
   "view": {
@@ -134,7 +137,9 @@
     "folder": "Folder",
     "dims": "Dimensions",
     "size": "Size",
-    "modified": "Modified"
+    "modified": "File date",
+    "taken": "Date taken",
+    "noTaken": "No capture date in metadata - showing the file date"
   },
   "lightbox": {
     "info": "Info",

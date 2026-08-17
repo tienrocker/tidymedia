@@ -14,6 +14,9 @@
     "durShort": "≤ 1 phút",
     "durMedium": "1-10 phút",
     "durLong": "> 10 phút",
+    "dateField": "Lọc và sắp xếp theo ngày nào",
+    "dateTaken": "Ngày chụp",
+    "dateFile": "Ngày file",
     "invalidLocalDate": "Ngày này không tồn tại trong múi giờ đã chọn. Bộ lọc đã được xóa."
   },
   "view": {
@@ -134,7 +137,9 @@
     "folder": "Thư mục",
     "dims": "Kích thước",
     "size": "Dung lượng",
-    "modified": "Ngày sửa"
+    "modified": "Ngày file",
+    "taken": "Ngày chụp",
+    "noTaken": "Không có ngày chụp trong metadata — đang hiện ngày file"
   },
   "lightbox": {
     "info": "Thông tin",

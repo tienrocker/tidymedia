@@ -17,7 +17,15 @@ export function FileList() {
   const filterEpoch = useStore((s) => s.filterEpoch);
   const tz = useStore((s) => s.timezone);
   const tzOffset = useStore((s) => s.tzOffsetMinutes);
+  const dateField = useStore((s) => s.filter.dateField) ?? "taken";
   const parentRef = useRef<HTMLDivElement>(null);
+
+  // Cột ngày phải là ĐÚNG cái đang dùng để sắp xếp, không thì list nhìn như
+  // loạn thứ tự. Ngày chụp là wall-clock (offset 0), mtime là instant UTC.
+  const showDate = (row: { mtime: number; takenAt: number | null }) =>
+    dateField === "taken" && row.takenAt != null
+      ? fmtDateTime(row.takenAt, 0)
+      : fmtDateTime(row.mtime, tz, tzOffset);
 
   const virtualizer = useVirtualizer({
     count: total,
@@ -52,7 +60,9 @@ export function FileList() {
         <span>{t("list.folder")}</span>
         <span className="text-right">{t("list.dims")}</span>
         <span className="text-right">{t("list.size")}</span>
-        <span className="text-right">{t("list.modified")}</span>
+        <span className="text-right">
+          {dateField === "taken" ? t("list.taken") : t("list.modified")}
+        </span>
       </div>
       <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto">
         <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
@@ -85,8 +95,15 @@ export function FileList() {
                     <span className="text-right tabular-nums text-neutral-400">
                       {fmtSize(row.size)}
                     </span>
-                    <span className="text-right tabular-nums text-neutral-400">
-                      {fmtDateTime(row.mtime, tz, tzOffset)}
+                    <span
+                      className={`text-right tabular-nums ${
+                        dateField === "taken" && row.takenAt == null
+                          ? "text-neutral-600 italic"
+                          : "text-neutral-400"
+                      }`}
+                      title={dateField === "taken" && row.takenAt == null ? t("list.noTaken") : ""}
+                    >
+                      {showDate(row)}
                     </span>
                   </>
                 ) : (

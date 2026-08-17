@@ -54,8 +54,13 @@ pub struct FileFilter {
     pub exts: Option<Vec<String>>,
     pub size_min: Option<i64>,
     pub size_max: Option<i64>,
-    pub mtime_from: Option<i64>,
-    pub mtime_to: Option<i64>,
+    /// Khoảng ngày, áp lên trường ngày đang chọn (`date_field`).
+    pub date_from: Option<i64>,
+    pub date_to: Option<i64>,
+    /// "taken" (mặc định) = ngày chụp EXIF, thiếu thì lùi về mtime; "mtime" =
+    /// ngày file. Kho bị copy qua lại nhiều lần thì mtime là NGÀY COPY, sắp
+    /// theo nó là sai thứ tự thật của thư viện.
+    pub date_field: Option<String>,
     pub root_path: Option<String>,
     pub sort: Option<String>,
     pub include_missing: Option<bool>,

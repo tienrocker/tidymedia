@@ -70,8 +70,11 @@ export interface FileFilter {
   exts?: string[];
   sizeMin?: number;
   sizeMax?: number;
-  mtimeFrom?: number;
-  mtimeTo?: number;
+  /** Khoảng ngày, áp lên trường ngày đang chọn (dateField). */
+  dateFrom?: number;
+  dateTo?: number;
+  /** "taken" (mặc định) = ngày chụp EXIF, thiếu thì lùi mtime; "mtime" = ngày file. */
+  dateField?: "taken" | "mtime";
   rootPath?: string;
   sort?: string;
   includeMissing?: boolean;
