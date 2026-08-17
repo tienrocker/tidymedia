@@ -103,10 +103,20 @@ export interface FileFilter {
   durMaxMs?: number;
   /** Thiết bị — khớp ĐÚNG chuỗi lấy từ listCameras(), không phải user gõ tay. */
   camera?: string;
+  tagId?: number;
+  /** Kèm sort:"album" để giữ thứ tự user đã thêm thay vì sắp lại theo ngày. */
+  albumId?: number;
 }
 
 export interface CameraCount {
   camera: string;
+  count: number;
+}
+
+/** Nhãn hoặc album + số file đang hiện diện trong đó. */
+export interface NamedCount {
+  id: number;
+  name: string;
   count: number;
 }
 
@@ -223,6 +233,26 @@ export const api = {
   listActiveJobs: () => invoke<JobProgress[]>("list_active_jobs"),
   queryFiles: (filter: FileFilter) => invoke<QueryResult>("query_files", { filter }),
   listCameras: () => invoke<CameraCount[]>("list_cameras"),
+
+  listTags: () => invoke<NamedCount[]>("list_tags"),
+  listAlbums: () => invoke<NamedCount[]>("list_albums"),
+  tagsOfFile: (fileId: number) => invoke<NamedCount[]>("tags_of_file", { fileId }),
+  tagFiles: (name: string, fileIds: number[]) =>
+    invoke<number>("tag_files", { name, fileIds }),
+  untagFiles: (tagId: number, fileIds: number[]) =>
+    invoke<void>("untag_files", { tagId, fileIds }),
+  deleteTag: (tagId: number) => invoke<void>("delete_tag", { tagId }),
+  renameTag: (tagId: number, name: string) => invoke<void>("rename_tag", { tagId, name }),
+  createAlbum: (name: string) => invoke<number>("create_album", { name }),
+  addToAlbum: (albumId: number, fileIds: number[]) =>
+    invoke<number>("add_to_album", { albumId, fileIds }),
+  removeFromAlbum: (albumId: number, fileIds: number[]) =>
+    invoke<void>("remove_from_album", { albumId, fileIds }),
+  deleteAlbum: (albumId: number) => invoke<void>("delete_album", { albumId }),
+  renameAlbum: (albumId: number, name: string) =>
+    invoke<void>("rename_album", { albumId, name }),
+  queryIdRange: (queryId: number, start: number, count: number) =>
+    invoke<number[]>("query_id_range", { queryId, start, count }),
   fetchRows: (queryId: number, start: number, count: number) =>
     invoke<(FileRow | null)[]>("fetch_rows", { queryId, start, count }),
   getSettings: () => invoke<Settings>("get_settings"),

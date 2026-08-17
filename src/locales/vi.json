@@ -156,7 +156,8 @@
     "oldest": "Cũ nhất",
     "nameAz": "Tên A→Z",
     "largest": "Lớn nhất",
-    "smallest": "Nhỏ nhất"
+    "smallest": "Nhỏ nhất",
+    "albumOrder": "Thứ tự trong album"
   },
   "list": {
     "name": "Tên",
@@ -293,5 +294,28 @@
     "withThumbs": "Có kèm thumbnail.",
     "noThumbs": "Bản này không kèm thumbnail — cache hiện tại sẽ bị xóa và tạo lại chạy nền.",
     "importConfirm": "Thay TOÀN BỘ dữ liệu đã lập chỉ mục bằng bản này?\n\n{{files}} file\nThư mục theo dõi:\n  {{roots}}\nTổng {{size}}. {{thumbs}}\n\nIndex hiện tại (thư mục theo dõi, hash, lịch sử organize) sẽ bị thay. Máy giữ lại một bản .bak ngay cạnh. App sẽ khởi động lại để hoàn tất."
+  },
+  "select": {
+    "count": "Đã chọn {{n}}",
+    "all": "Chọn hết {{n}}",
+    "clear": "Bỏ chọn"
+  },
+  "tags": {
+    "placeholder": "Tên nhãn…",
+    "apply": "Gắn nhãn",
+    "filter": "Lọc theo nhãn",
+    "any": "Mọi nhãn",
+    "tagged": "Đã gắn nhãn \"{{name}}\" cho {{count}} file",
+    "title": "Nhãn",
+    "none": "Chưa có nhãn",
+    "remove": "Gỡ nhãn"
+  },
+  "albums": {
+    "addTo": "Thêm vào album…",
+    "new": "Album mới",
+    "newPrompt": "Tên album:",
+    "added": "Đã thêm {{count}} file vào \"{{name}}\"",
+    "filter": "Lọc theo album",
+    "any": "Mọi album"
   }
 }

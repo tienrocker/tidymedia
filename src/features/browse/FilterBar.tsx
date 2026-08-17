@@ -61,6 +61,8 @@ export function FilterBar() {
   const filter = useStore((s) => s.filter);
   const setFilter = useStore((s) => s.setFilter);
   const cameras = useStore((s) => s.cameras);
+  const tags = useStore((s) => s.tags);
+  const albums = useStore((s) => s.albums);
   const tz = useStore((s) => s.timezone);
   const tzOffset = useStore((s) => s.tzOffsetMinutes);
   const viewMode = useStore((s) => s.viewMode);
@@ -146,7 +148,9 @@ export function FilterBar() {
     filter.minPx != null ||
     filter.durMinMs != null ||
     filter.durMaxMs != null ||
-    filter.camera != null;
+    filter.camera != null ||
+    filter.tagId != null ||
+    filter.albumId != null;
 
   const clearAll = () => {
     setText("");
@@ -164,6 +168,11 @@ export function FilterBar() {
       durMinMs: undefined,
       durMaxMs: undefined,
       camera: undefined,
+      tagId: undefined,
+      albumId: undefined,
+      // sort "album" chỉ có nghĩa khi đang xem một album — bỏ album thì phải
+      // bỏ cả cách sắp đó, không thì list im lặng quay về thứ tự ngày
+      sort: filter.sort === "album" ? undefined : filter.sort,
     });
   };
 
@@ -240,6 +249,9 @@ export function FilterBar() {
         value={filter.sort ?? "date_desc"}
         onChange={(e) => setFilter({ sort: e.target.value })}
       >
+        {/* Chỉ có nghĩa khi đang xem một album, chỗ khác chọn vào thì lặng lẽ
+            rơi về sắp theo ngày — nên chỉ hiện khi đang ở trong album */}
+        {filter.albumId != null && <option value="album">{t("sort.albumOrder")}</option>}
         <option value="date_desc">{t("sort.newest")}</option>
         <option value="date_asc">{t("sort.oldest")}</option>
         <option value="name">{t("sort.nameAz")}</option>
@@ -299,6 +311,46 @@ export function FilterBar() {
           {cameras.map((c) => (
             <option key={c.camera} value={c.camera}>
               {c.camera} ({c.count})
+            </option>
+          ))}
+        </select>
+      )}
+      {tags.length > 0 && (
+        <select
+          className={`${inputCls} max-w-[12rem]`}
+          title={t("tags.filter")}
+          value={filter.tagId ?? ""}
+          onChange={(e) =>
+            setFilter({ tagId: e.target.value ? Number(e.target.value) : undefined })
+          }
+        >
+          <option value="">{t("tags.any")}</option>
+          {tags.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.name} ({x.count})
+            </option>
+          ))}
+        </select>
+      )}
+      {albums.length > 0 && (
+        <select
+          className={`${inputCls} max-w-[12rem]`}
+          title={t("albums.filter")}
+          value={filter.albumId ?? ""}
+          onChange={(e) => {
+            const id = e.target.value ? Number(e.target.value) : undefined;
+            // Mở album thì mặc định xem theo THỨ TỰ ĐÃ THÊM — đó là lý do người
+            // ta xếp album; rời album thì trả lại cách sắp thường
+            setFilter({
+              albumId: id,
+              sort: id != null ? "album" : filter.sort === "album" ? undefined : filter.sort,
+            });
+          }}
+        >
+          <option value="">{t("albums.any")}</option>
+          {albums.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name} ({a.count})
             </option>
           ))}
         </select>

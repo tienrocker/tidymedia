@@ -25,6 +25,9 @@ function Cell({
   cellW: number;
 }) {
   const openLightbox = useStore((s) => s.openLightbox);
+  const toggleSelect = useStore((s) => s.toggleSelect);
+  const picked = useStore((s) => (row ? s.selected.has(row.id) : false));
+  const anyPicked = useStore((s) => s.selected.size > 0);
   const [failed, setFailed] = useState(false);
   const { ref: thumbRef, wanted } = useInViewThumb(row?.id);
   useEffect(() => {
@@ -44,18 +47,49 @@ function Cell({
   const icon =
     row.status === 2 ? "☁️" : failed ? (row.kind === 1 ? "🎬" : "🖼️") : null;
 
+  const fileId = row.id;
   return (
     <button
       ref={thumbRef}
       className="group flex flex-col overflow-hidden rounded text-left outline-none focus-visible:ring-1 focus-visible:ring-neutral-400"
       style={{ width: cellW }}
       title={`${row.name}\n${row.dir}\n${fmtSize(row.size)}`}
-      onClick={() => openLightbox(index)}
+      // Bấm thường vẫn MỞ ẢNH như trước — chọn nằm ở ô tick góc trái, hoặc
+      // Ctrl/Shift+bấm. Đổi nghĩa cú bấm thường là phá thói quen xem ảnh.
+      onClick={(e) => {
+        if (e.ctrlKey || e.metaKey || e.shiftKey) {
+          e.preventDefault();
+          void toggleSelect(index, fileId, e.shiftKey);
+        } else {
+          openLightbox(index);
+        }
+      }}
     >
       <div
-        className="relative flex w-full items-center justify-center overflow-hidden rounded bg-neutral-900"
+        className={`relative flex w-full items-center justify-center overflow-hidden rounded bg-neutral-900 ${
+          picked ? "ring-2 ring-emerald-500" : ""
+        }`}
         style={{ height: THUMB_H }}
       >
+        {/* Hiện khi hover, khi chính nó đang được chọn, hoặc khi đang có
+            selection — lúc đó user đang gom file nên cần thấy mọi ô tick */}
+        <span
+          role="checkbox"
+          aria-checked={picked}
+          tabIndex={-1}
+          className={`absolute left-1 top-1 z-10 flex h-5 w-5 items-center justify-center rounded border text-[11px] leading-none transition-opacity ${
+            picked
+              ? "border-emerald-400 bg-emerald-500 text-neutral-950"
+              : "border-neutral-400 bg-black/50 text-transparent"
+          } ${picked || anyPicked ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            void toggleSelect(index, fileId, e.shiftKey);
+          }}
+        >
+          ✓
+        </span>
         {icon ? (
           <span className="text-3xl opacity-60">{icon}</span>
         ) : wanted ? (

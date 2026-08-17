@@ -12,7 +12,7 @@ use crate::models::{
 
 /// Bump khi đổi schema. Có migration tăng dần từ v2 trở đi (giữ index của
 /// user); version lạ/quá cũ → wipe & recreate (rebuild bằng rescan, ok pre-1.0).
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 
 /// Phiên bản của BỘ TRÍCH metadata. Bump khi extractor học thêm field: dòng
 /// `media_meta` cũ hơn sẽ được [`select_pending_meta`] chọn lại, nên job `meta`
@@ -67,6 +67,40 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE media_meta ADD COLUMN gps_lat REAL;
      ALTER TABLE media_meta ADD COLUMN gps_lon REAL;
      ALTER TABLE media_meta ADD COLUMN meta_ver INTEGER NOT NULL DEFAULT 0;",
+    // v8 -> v9: nhãn + album bắt đầu được DÙNG. 4 bảng này có từ đầu nhưng chưa
+    // dòng code nào ghi vào, nên DROP rồi tạo lại là an toàn tuyệt đối — không
+    // có dữ liệu user nào để mất, và SQLite không thêm được khoá ngoại vào bảng
+    // sẵn có bằng ALTER.
+    //
+    // Sửa hai khuyết: (a) file_tags/album_files không có khoá ngoại nên xoá ảnh
+    // để lại dòng mồ côi, đếm ra số sai; (b) tên phân biệt hoa thường nên "Gia
+    // đình" và "gia đình" thành hai nhãn trông y hệt nhau.
+    "DROP TABLE IF EXISTS file_tags;
+     DROP TABLE IF EXISTS album_files;
+     DROP TABLE IF EXISTS tags;
+     DROP TABLE IF EXISTS albums;
+     CREATE TABLE tags(
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       name TEXT NOT NULL UNIQUE COLLATE NOCASE
+     );
+     CREATE TABLE file_tags(
+       file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+       tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+       PRIMARY KEY(file_id, tag_id)
+     ) WITHOUT ROWID;
+     CREATE INDEX file_tags_tag ON file_tags(tag_id);
+     CREATE TABLE albums(
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+       created_at INTEGER
+     );
+     CREATE TABLE album_files(
+       album_id INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+       file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+       pos INTEGER,
+       PRIMARY KEY(album_id, file_id)
+     ) WITHOUT ROWID;
+     CREATE INDEX album_files_file ON album_files(file_id);",
 ];
 const OLDEST_MIGRATABLE: i64 = 2;
 

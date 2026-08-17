@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod collections;
 mod commands;
 mod dedup;
 mod organize;
@@ -38,6 +39,19 @@ fn main() {
             commands::list_active_jobs,
             commands::query_files,
             commands::list_cameras,
+            collections::list_tags,
+            collections::list_albums,
+            collections::tags_of_file,
+            collections::tag_files,
+            collections::untag_files,
+            collections::delete_tag,
+            collections::rename_tag,
+            collections::create_album,
+            collections::add_to_album,
+            collections::remove_from_album,
+            collections::delete_album,
+            collections::rename_album,
+            collections::query_id_range,
             commands::fetch_rows,
             commands::get_settings,
             commands::set_settings,

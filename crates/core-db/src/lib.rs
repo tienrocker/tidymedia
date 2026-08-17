@@ -5,6 +5,7 @@
 //!   có write contention, WAL cho phép reader chạy song song trong lúc scan.
 //! - Đọc qua [`ReadPool`] (N connection read-only).
 
+pub mod collections;
 mod models;
 pub mod ops;
 pub mod org;
@@ -16,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+pub use collections::NamedCount;
 pub use models::{
     CameraCount, ClusterItem, DeleteContextRow, DupGroupRow, DupMemberBrief, DupMemberRow,
     FileDetail, FileFilter, FileRow, HashUpsert, JobRow, LibraryRootRow, MediaSrc, MetaUpsert,

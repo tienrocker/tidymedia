@@ -2,6 +2,7 @@ import { create } from "zustand";
 import {
   api,
   CameraCount,
+  NamedCount,
   DedupStats,
   DupGroupRow,
   DupMemberRow,
@@ -154,6 +155,13 @@ interface AppStore {
   /** Thiết bị có trong thư viện, nhiều file nhất trước. LỚN DẦN theo meta job
    *  nên phải nạp lại mỗi lần job meta xong, không cache vĩnh viễn. */
   cameras: CameraCount[];
+  /** file_id đang chọn ở lưới browse. Xoá sạch mỗi lần query đổi — thao tác
+   *  hàng loạt lên file KHÔNG còn nằm trong danh sách là kiểu bất ngờ tệ nhất. */
+  selected: Set<number>;
+  /** Index của lần chọn gần nhất, làm mốc cho shift-click. */
+  selectAnchor: number | null;
+  tags: NamedCount[];
+  albums: NamedCount[];
   roots: RootInfo[];
   activeJobs: Map<number, JobProgress>;
   recentJobs: JobRow[];
@@ -232,6 +240,13 @@ interface AppStore {
   setFilter: (patch: Partial<FileFilter>) => void;
   runQuery: () => Promise<void>;
   ensureRange: (start: number, end: number) => void;
+  /** `range` = chọn cả dải từ mốc neo tới index này (shift-click). */
+  toggleSelect: (index: number, id: number, range?: boolean) => Promise<void>;
+  clearSelection: () => void;
+  selectAllInQuery: () => Promise<void>;
+  loadCollections: () => Promise<void>;
+  tagSelected: (name: string) => Promise<void>;
+  addSelectedToAlbum: (albumId: number) => Promise<void>;
   loadCameras: () => Promise<void>;
   loadRoots: () => Promise<void>;
   refreshJobs: () => Promise<void>;
@@ -258,6 +273,10 @@ export const useStore = create<AppStore>((set, get) => ({
   queryMs: null,
   querying: false,
   cameras: [],
+  selected: new Set(),
+  selectAnchor: null,
+  tags: [],
+  albums: [],
   roots: [],
   activeJobs: new Map(),
   recentJobs: [],
@@ -709,6 +728,10 @@ export const useStore = create<AppStore>((set, get) => ({
         querying: false,
         // Kết quả mới ngắn hơn vị trí đang xem → đóng lightbox thay vì trỏ bậy
         lightboxIndex: lb != null && lb >= res.total ? null : lb,
+        // Danh sách đổi → bỏ chọn. Giữ lại thì nút "gắn nhãn cho 200 file" sẽ
+        // gắn cho những file user KHÔNG còn nhìn thấy nữa.
+        selected: new Set(),
+        selectAnchor: null,
       });
     } catch (e) {
       if (seq === querySeq) set({ querying: false });
@@ -764,6 +787,86 @@ export const useStore = create<AppStore>((set, get) => ({
             console.error("fetch_rows failed", e);
           }
         });
+    }
+  },
+
+  toggleSelect: async (index, id, range = false) => {
+    const { selected, selectAnchor, queryId } = get();
+    const next = new Set(selected);
+    if (range && selectAnchor != null && queryId != null) {
+      // Dải có thể trải qua cả phần CHƯA nạp row nào — hỏi backend lấy id,
+      // không suy từ `rows` (chỉ có cửa sổ đang xem, thiếu là chọn hụt âm thầm)
+      const [lo, hi] = [Math.min(selectAnchor, index), Math.max(selectAnchor, index)];
+      try {
+        const ids = await api.queryIdRange(queryId, lo, hi - lo + 1);
+        ids.forEach((x) => next.add(x));
+      } catch (e) {
+        get().showToast(errText(e), true);
+        return;
+      }
+    } else if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    set({ selected: next, selectAnchor: index });
+  },
+
+  clearSelection: () => set({ selected: new Set(), selectAnchor: null }),
+
+  selectAllInQuery: async () => {
+    const { queryId, total } = get();
+    if (queryId == null || total === 0) return;
+    try {
+      const ids = await api.queryIdRange(queryId, 0, total);
+      set({ selected: new Set(ids), selectAnchor: null });
+    } catch (e) {
+      get().showToast(errText(e), true);
+    }
+  },
+
+  loadCollections: async () => {
+    try {
+      const [tags, albums] = await Promise.all([api.listTags(), api.listAlbums()]);
+      // Nhãn/album đang lọc vừa bị xoá → bỏ filter, không để user mắc kẹt ở
+      // danh sách rỗng mà không rõ vì sao
+      const f = get().filter;
+      const patch: Partial<FileFilter> = {};
+      if (f.tagId != null && !tags.some((x) => x.id === f.tagId)) patch.tagId = undefined;
+      if (f.albumId != null && !albums.some((x) => x.id === f.albumId)) {
+        patch.albumId = undefined;
+        if (f.sort === "album") patch.sort = undefined;
+      }
+      if (Object.keys(patch).length > 0) get().setFilter(patch);
+      set({ tags, albums });
+    } catch (e) {
+      console.error("load collections failed", e);
+    }
+  },
+
+  tagSelected: async (name) => {
+    const ids = [...get().selected];
+    if (ids.length === 0) return;
+    try {
+      await api.tagFiles(name, ids);
+      await get().loadCollections();
+      get().showToast(i18n.t("tags.tagged", { count: ids.length, name }), false);
+    } catch (e) {
+      get().showToast(errText(e), true);
+    }
+  },
+
+  addSelectedToAlbum: async (albumId) => {
+    const ids = [...get().selected];
+    if (ids.length === 0) return;
+    try {
+      const added = await api.addToAlbum(albumId, ids);
+      await get().loadCollections();
+      const name = get().albums.find((a) => a.id === albumId)?.name ?? "";
+      // Nói số THỰC SỰ thêm: bấm 10 file mà 7 đã nằm sẵn thì "thêm 10" là sai
+      get().showToast(i18n.t("albums.added", { count: added, name }), false);
+    } catch (e) {
+      get().showToast(errText(e), true);
     }
   },
 

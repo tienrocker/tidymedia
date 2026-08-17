@@ -156,7 +156,8 @@
     "oldest": "Oldest first",
     "nameAz": "Name A→Z",
     "largest": "Largest first",
-    "smallest": "Smallest first"
+    "smallest": "Smallest first",
+    "albumOrder": "Album order"
   },
   "list": {
     "name": "Name",
@@ -295,5 +296,28 @@
     "withThumbs": "Thumbnails are included.",
     "noThumbs": "No thumbnails in this export - the local cache will be cleared and rebuilt in the background.",
     "importConfirm": "Replace ALL indexed data with this export?\n\n{{files}} files\nWatched folders:\n  {{roots}}\n{{size}} total. {{thumbs}}\n\nYour current index (watched folders, fingerprints, organize history) is replaced. A single .bak copy is kept next to it. The app restarts to finish."
+  },
+  "select": {
+    "count": "{{n}} selected",
+    "all": "Select all {{n}}",
+    "clear": "Deselect"
+  },
+  "tags": {
+    "placeholder": "Tag name…",
+    "apply": "Tag",
+    "filter": "Filter by tag",
+    "any": "Any tag",
+    "tagged": "Tagged {{count}} file(s) as \"{{name}}\"",
+    "title": "Tags",
+    "none": "No tags",
+    "remove": "Remove tag"
+  },
+  "albums": {
+    "addTo": "Add to album…",
+    "new": "New album",
+    "newPrompt": "Album name:",
+    "added": "Added {{count}} file(s) to \"{{name}}\"",
+    "filter": "Filter by album",
+    "any": "Any album"
   }
 }

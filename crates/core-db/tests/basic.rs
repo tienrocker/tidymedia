@@ -229,6 +229,151 @@ fn camera_filter_matches_exactly_and_lists_only_live_devices() {
     assert!(!cams.iter().any(|c| c.camera == "Canon EOS R5"), "{cams:?}");
 }
 
+/// Nhãn + album là dữ liệu user tự tạo, KHÔNG dựng lại được bằng quét — nên
+/// test ở đây soi kỹ mấy đường mất mát âm thầm.
+#[test]
+fn tags_and_albums_survive_the_ways_they_could_silently_break() {
+    use core_db::collections as col;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(tmp.path()).unwrap();
+    db.writer.exec(|c| ops::upsert_root(c, "D:\\P")).unwrap();
+    let entries = (1..=4)
+        .map(|i| entry("D:\\P", &format!("{i}.jpg"), "jpg", 0, 100, i))
+        .collect::<Vec<_>>();
+    db.writer
+        .exec(move |c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(c, 1, 1, &entries, &mut cache)
+        })
+        .unwrap();
+    let ids: Vec<i64> = db
+        .pool
+        .with(|c| -> anyhow::Result<Vec<i64>> {
+            let mut st = c.prepare("SELECT id FROM files ORDER BY name")?;
+            let v = st
+                .query_map([], |r| r.get(0))?
+                .collect::<Result<Vec<i64>, _>>()?;
+            Ok(v)
+        })
+        .unwrap();
+
+    // Gõ lại tên khác hoa thường KHÔNG được đẻ nhãn thứ hai trông y hệt
+    let want = ids[..2].to_vec();
+    let t1 = db
+        .writer
+        .exec(move |c| col::tag_files(c, "Gia dinh", &want))
+        .unwrap();
+    let want = ids[2..3].to_vec();
+    let t2 = db
+        .writer
+        .exec(move |c| col::tag_files(c, "  gia   DINH  ", &want))
+        .unwrap();
+    assert_eq!(t1, t2, "cung mot nhan, khong duoc tao nhan thu hai");
+    let tags = db.pool.with(col::list_tags).unwrap();
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags[0].name, "Gia dinh", "giu ten lan dau, khong ghi de");
+    assert_eq!(tags[0].count, 3);
+
+    // Tên rỗng/toàn khoảng trắng bị từ chối — nhãn vô hình thì user không bấm trúng
+    assert!(db
+        .writer
+        .exec(move |c| col::tag_files(c, "   ", &[]))
+        .is_err());
+
+    // Lọc theo nhãn
+    let f = FileFilter {
+        tag_id: Some(t1),
+        ..Default::default()
+    };
+    assert_eq!(db.pool.with(|c| query::query_ids(c, &f)).unwrap().len(), 3);
+
+    // Album giữ ĐÚNG thứ tự user thêm vào, kể cả khi thêm làm nhiều đợt và thứ
+    // tự đó ngược hẳn với thứ tự ngày
+    // Thứ tự thêm CỐ Ý khác hẳn thứ tự ngày (ngày giảm dần cho {1,2,4} là
+    // [4,2,1]) — trùng nhau thì phép so bên dưới không chứng minh được gì.
+    let album = db
+        .writer
+        .exec(|c| col::create_album(c, "Tết 2019"))
+        .unwrap();
+    let first = vec![ids[0], ids[3]];
+    let n = db
+        .writer
+        .exec(move |c| col::add_to_album(c, album, &first))
+        .unwrap();
+    assert_eq!(n, 2);
+    // Thêm lại file đã có + một file mới → chỉ file mới được tính
+    let again = vec![ids[3], ids[1]];
+    let n = db
+        .writer
+        .exec(move |c| col::add_to_album(c, album, &again))
+        .unwrap();
+    assert_eq!(n, 1, "file da co san trong album khong duoc dem lai");
+
+    let f = FileFilter {
+        album_id: Some(album),
+        sort: Some("album".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        db.pool.with(|c| query::query_ids(c, &f)).unwrap(),
+        vec![ids[0], ids[3], ids[1]],
+        "phai giu thu tu da them, khong sap lai theo ngay"
+    );
+    // Cùng album nhưng sort mặc định → quay về thứ tự ngày
+    let f = FileFilter {
+        album_id: Some(album),
+        ..Default::default()
+    };
+    assert_eq!(
+        db.pool.with(|c| query::query_ids(c, &f)).unwrap(),
+        vec![ids[3], ids[1], ids[0]],
+        "sort mac dinh van la ngay giam dan"
+    );
+
+    // sort="album" mà KHÔNG xem album nào thì phải rơi về ngày, không nổ
+    let f = FileFilter {
+        sort: Some("album".into()),
+        ..Default::default()
+    };
+    assert_eq!(db.pool.with(|c| query::query_ids(c, &f)).unwrap().len(), 4);
+
+    // Xoá file → nó rời khỏi nhãn lẫn album, không để lại dòng mồ côi làm sai
+    // số đếm (đây là thứ bản schema cũ thiếu khoá ngoại đã làm sai)
+    let gone = ids[1];
+    db.writer
+        .exec(move |c| -> anyhow::Result<()> {
+            c.execute("DELETE FROM files WHERE id = ?1", [gone])?;
+            Ok(())
+        })
+        .unwrap();
+    let orphans: i64 = db
+        .pool
+        .with(|c| -> anyhow::Result<i64> {
+            Ok(c.query_row(
+                "SELECT (SELECT COUNT(*) FROM file_tags WHERE file_id = ?1)
+                      + (SELECT COUNT(*) FROM album_files WHERE file_id = ?1)",
+                [gone],
+                |r| r.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(orphans, 0, "xoa file phai keo theo dong nhan/album");
+
+    // Xoá album KHÔNG được đụng tới file — album là cách xếp, không phải nơi chứa
+    db.writer
+        .exec(move |c| col::delete_album(c, album))
+        .unwrap();
+    assert!(db.pool.with(col::list_albums).unwrap().is_empty());
+    let left: i64 = db
+        .pool
+        .with(|c| -> anyhow::Result<i64> {
+            Ok(c.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?)
+        })
+        .unwrap();
+    assert_eq!(left, 3, "xoa album khong duoc xoa file");
+}
+
 /// `low` = 64 bit thấp nhất của hash 256-bit; 3 word còn lại để 0 nên khoảng
 /// cách giữa hai item bằng đúng khoảng cách giữa hai `low` — test đọc dễ.
 fn item(

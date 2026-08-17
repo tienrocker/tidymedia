@@ -164,19 +164,31 @@ CREATE TABLE dup_members(
   PRIMARY KEY(group_id, file_id)
 ) WITHOUT ROWID;
 
-CREATE TABLE tags(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE);
+-- Nhãn + album: cách gom file do CHÍNH USER đặt, không dựng lại được bằng quét.
+-- NOCASE để gõ "gia đình" khi đã có "Gia đình" không đẻ ra nhãn thứ hai trông
+-- y hệt (chỉ fold ASCII — Đ/đ nằm ngoài, xem collections.rs).
+CREATE TABLE tags(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE
+);
 CREATE TABLE file_tags(
-  file_id INTEGER NOT NULL,
-  tag_id INTEGER NOT NULL,
+  file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+  tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
   PRIMARY KEY(file_id, tag_id)
 ) WITHOUT ROWID;
-CREATE TABLE albums(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, created_at INTEGER);
+CREATE INDEX file_tags_tag ON file_tags(tag_id);
+CREATE TABLE albums(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  created_at INTEGER
+);
 CREATE TABLE album_files(
-  album_id INTEGER NOT NULL,
-  file_id INTEGER NOT NULL,
+  album_id INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+  file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
   pos INTEGER,
   PRIMARY KEY(album_id, file_id)
 ) WITHOUT ROWID;
+CREATE INDEX album_files_file ON album_files(file_id);
 
 CREATE TABLE library_roots(
   id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -6,6 +6,7 @@ import { errText } from "./lib/errors";
 import { api, JobProgress } from "./lib/ipc";
 import { useStore } from "./state/store";
 import { FilterBar } from "./features/browse/FilterBar";
+import { SelectionBar } from "./features/browse/SelectionBar";
 import { FileList } from "./features/browse/FileList";
 import { FileGrid } from "./features/browse/FileGrid";
 import { Lightbox } from "./features/browse/Lightbox";
@@ -55,6 +56,7 @@ export default function App() {
     void useStore.getState().loadSettings();
     void useStore.getState().loadRoots();
     void useStore.getState().loadCameras();
+    void useStore.getState().loadCollections();
     void useStore.getState().refreshJobs();
     // Ảnh index rồi mà chưa có meta (app tắt giữa chừng...) → chạy nốt.
     // Không còn gì pending thì backend trả null, không tạo job rác.
@@ -219,6 +221,7 @@ export default function App() {
         ) : (
           <>
             <FilterBar />
+            <SelectionBar />
             {viewMode === "grid" ? <FileGrid /> : <FileList />}
             <StatusBar />
           </>

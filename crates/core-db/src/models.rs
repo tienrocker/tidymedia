@@ -73,6 +73,11 @@ pub struct FileFilter {
     /// [`list_cameras`](crate::query::list_cameras) chứ không phải user gõ tay.
     /// Chỉ khớp file đã có meta.
     pub camera: Option<String>,
+    /// Chỉ file mang nhãn này.
+    pub tag_id: Option<i64>,
+    /// Chỉ file nằm trong album này. Kèm `sort = "album"` để giữ THỨ TỰ user đã
+    /// thêm vào album thay vì sắp lại theo ngày.
+    pub album_id: Option<i64>,
 }
 
 /// Một thiết bị trong thư viện + số file của nó, cho dropdown lọc.

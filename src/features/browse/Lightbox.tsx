@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { runSafe, useStore } from "../../state/store";
-import { api, FileDetail, FileRow } from "../../lib/ipc";
+import { api, FileDetail, FileRow, NamedCount } from "../../lib/ipc";
+import { errText } from "../../lib/errors";
 import { canNativeDisplay, mediaUrl, thumbUrl, THUMB_PREVIEW } from "../../lib/media";
 import { fmtDuration, fmtSize } from "../../lib/format";
 import { fmtDateTime } from "../../lib/time";
@@ -86,6 +87,25 @@ function LightboxInner({ index }: { index: number }) {
       stale = true;
     };
   }, [rowId]);
+
+  // Nhãn của ảnh đang xem. Tách khỏi getFileMeta vì nhãn ĐỔI khi user gắn/gỡ,
+  // còn meta thì không — gộp chung là mỗi lần gỡ nhãn lại đọc lại cả EXIF.
+  const [fileTags, setFileTags] = useState<NamedCount[]>([]);
+  const [tagsEpoch, setTagsEpoch] = useState(0);
+  useEffect(() => {
+    setFileTags([]);
+    if (rowId == null) return;
+    let stale = false;
+    api
+      .tagsOfFile(rowId)
+      .then((v) => {
+        if (!stale) setFileTags(v);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [rowId, tagsEpoch]);
 
   // Preload ảnh kề — bấm next không chờ
   useEffect(() => {
@@ -325,6 +345,37 @@ function LightboxInner({ index }: { index: number }) {
               label={t("list.modified")}
               value={fmtDateTime(row.mtime, tz, tzOffset)}
             />
+            <div className="flex flex-wrap items-baseline gap-1 py-0.5">
+              <span className="w-24 shrink-0 text-neutral-500">{t("tags.title")}</span>
+              {fileTags.length === 0 ? (
+                <span className="text-neutral-500">{t("tags.none")}</span>
+              ) : (
+                fileTags.map((x) => (
+                  <span
+                    key={x.id}
+                    className="flex items-center gap-1 rounded bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-300"
+                  >
+                    {x.name}
+                    <button
+                      className="text-neutral-500 hover:text-red-400"
+                      title={t("tags.remove")}
+                      onClick={() => {
+                        if (rowId == null) return;
+                        void api
+                          .untagFiles(x.id, [rowId])
+                          .then(() => {
+                            setTagsEpoch((n) => n + 1);
+                            return useStore.getState().loadCollections();
+                          })
+                          .catch((e) => useStore.getState().showToast(errText(e), true));
+                      }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))
+              )}
+            </div>
           </div>
         )}
       </div>

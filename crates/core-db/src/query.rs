@@ -48,10 +48,13 @@ pub fn query_ids(conn: &Connection, f: &FileFilter) -> Result<Vec<i64>> {
     } else {
         "f.mtime"
     };
+    // Thứ tự user đã thêm vào album chỉ có nghĩa KHI đang xem album đó — chọn
+    // "theo album" ở nơi khác thì lặng lẽ rơi về sắp theo ngày.
+    let by_album_pos = f.sort.as_deref() == Some("album") && f.album_id.is_some();
     let sorts_by_date = !matches!(
         f.sort.as_deref(),
         Some("name") | Some("size_desc") | Some("size_asc")
-    );
+    ) && !by_album_pos;
     let needs_date_join =
         by_taken && (f.date_from.is_some() || f.date_to.is_some() || sorts_by_date);
 
@@ -132,6 +135,14 @@ pub fn query_ids(conn: &Connection, f: &FileFilter) -> Result<Vec<i64>> {
         wheres.push("m.camera = ?".into());
         params.push(Box::new(cam.to_string()));
     }
+    if let Some(tag) = f.tag_id {
+        wheres.push("f.id IN (SELECT file_id FROM file_tags WHERE tag_id = ?)".into());
+        params.push(Box::new(tag));
+    }
+    if let Some(album) = f.album_id {
+        wheres.push("f.id IN (SELECT file_id FROM album_files WHERE album_id = ?)".into());
+        params.push(Box::new(album));
+    }
     if let Some(root) = f.root_path.as_deref() {
         let (eq, start, end) = path_range(&normalize_path(root));
         wheres.push("(d.path_key = ? OR (d.path_key >= ? AND d.path_key < ?))".into());
@@ -145,14 +156,21 @@ pub fn query_ids(conn: &Connection, f: &FileFilter) -> Result<Vec<i64>> {
         sql.push_str(&wheres.join(" AND "));
     }
     sql.push_str(" ORDER BY ");
-    sql.push_str(&match f.sort.as_deref() {
-        // "mtime_*" giữ lại làm alias cũ — nghĩa của nó giờ là "theo ngày đang chọn"
-        Some("date_asc") | Some("mtime_asc") => format!("{date_expr} ASC"),
-        Some("name") => "f.name COLLATE NOCASE ASC".to_string(),
-        Some("size_desc") => "f.size DESC".to_string(),
-        Some("size_asc") => "f.size ASC".to_string(),
-        _ => format!("{date_expr} DESC"),
-    });
+    if by_album_pos {
+        // album_id đã nằm trong params ở nhánh filter phía trên; ở đây bind lại
+        // một lần nữa cho subquery của ORDER BY (thứ tự bind = thứ tự xuất hiện)
+        sql.push_str("(SELECT pos FROM album_files WHERE album_id = ? AND file_id = f.id) ASC");
+        params.push(Box::new(f.album_id.unwrap_or_default()));
+    } else {
+        sql.push_str(&match f.sort.as_deref() {
+            // "mtime_*" giữ lại làm alias cũ — nghĩa giờ là "theo ngày đang chọn"
+            Some("date_asc") | Some("mtime_asc") => format!("{date_expr} ASC"),
+            Some("name") => "f.name COLLATE NOCASE ASC".to_string(),
+            Some("size_desc") => "f.size DESC".to_string(),
+            Some("size_asc") => "f.size ASC".to_string(),
+            _ => format!("{date_expr} DESC"),
+        });
+    }
 
     let started = std::time::Instant::now();
     let mut stmt = conn.prepare_cached(&sql)?;
