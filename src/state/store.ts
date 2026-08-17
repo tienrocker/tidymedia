@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   api,
+  CameraCount,
   DedupStats,
   DupGroupRow,
   DupMemberRow,
@@ -150,6 +151,9 @@ interface AppStore {
   pageOrder: number[];
   queryMs: number | null;
   querying: boolean;
+  /** Thiết bị có trong thư viện, nhiều file nhất trước. LỚN DẦN theo meta job
+   *  nên phải nạp lại mỗi lần job meta xong, không cache vĩnh viễn. */
+  cameras: CameraCount[];
   roots: RootInfo[];
   activeJobs: Map<number, JobProgress>;
   recentJobs: JobRow[];
@@ -228,6 +232,7 @@ interface AppStore {
   setFilter: (patch: Partial<FileFilter>) => void;
   runQuery: () => Promise<void>;
   ensureRange: (start: number, end: number) => void;
+  loadCameras: () => Promise<void>;
   loadRoots: () => Promise<void>;
   refreshJobs: () => Promise<void>;
   addRootAndScan: (path: string) => Promise<void>;
@@ -252,6 +257,7 @@ export const useStore = create<AppStore>((set, get) => ({
   pageOrder: [],
   queryMs: null,
   querying: false,
+  cameras: [],
   roots: [],
   activeJobs: new Map(),
   recentJobs: [],
@@ -758,6 +764,21 @@ export const useStore = create<AppStore>((set, get) => ({
             console.error("fetch_rows failed", e);
           }
         });
+    }
+  },
+
+  loadCameras: async () => {
+    try {
+      const cameras = await api.listCameras();
+      // Thiết bị đang lọc vừa biến mất khỏi danh sách (xoá hết ảnh của nó, gỡ
+      // root) → bỏ luôn filter, không để user mắc kẹt ở list rỗng không rõ vì sao
+      const cur = get().filter.camera;
+      if (cur != null && !cameras.some((c) => c.camera === cur)) {
+        get().setFilter({ camera: undefined });
+      }
+      set({ cameras });
+    } catch (e) {
+      console.error("list_cameras failed", e);
     }
   },
 

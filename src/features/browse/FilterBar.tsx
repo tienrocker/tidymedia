@@ -48,10 +48,19 @@ function SizeInput({
   );
 }
 
+/** "2026-08-17" theo lịch của MÁY — đúng cái ngày user đang nghĩ là "hôm nay". */
+function localDateInput(shiftDays = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() + shiftDays);
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+}
+
 export function FilterBar() {
   const { t } = useTranslation();
   const filter = useStore((s) => s.filter);
   const setFilter = useStore((s) => s.setFilter);
+  const cameras = useStore((s) => s.cameras);
   const tz = useStore((s) => s.timezone);
   const tzOffset = useStore((s) => s.tzOffsetMinutes);
   const viewMode = useStore((s) => s.viewMode);
@@ -104,6 +113,60 @@ export function FilterBar() {
   const composing = useRef(false);
   const pushText = (v: string) => setFilter({ text: v || undefined });
 
+  // SizeInput giữ chuỗi gõ dở trong state RIÊNG của nó nên xoá filter ở store
+  // không làm ô nhập trống theo — đổi key để React dựng lại đúng 2 ô đó.
+  const [resetNonce, setResetNonce] = useState(0);
+
+  // Khoảng ngày đi qua ĐÚNG applyDates như lúc user tự gõ: cùng một phép quy
+  // đổi zone, không có đường tắt nào tính epoch kiểu khác rồi lệch 7 tiếng.
+  const setRange = (from: string, to: string) => {
+    setDateFrom(from);
+    setDateTo(to);
+    applyDates(from, to, dateField);
+  };
+  const thisYear = new Date().getFullYear();
+  const QUICK: { key: string; from: string; to: string }[] = [
+    { key: "filter.quickLast30", from: localDateInput(-30), to: "" },
+    { key: "filter.quickThisYear", from: `${thisYear}-01-01`, to: "" },
+    {
+      key: "filter.quickLastYear",
+      from: `${thisYear - 1}-01-01`,
+      to: `${thisYear - 1}-12-31`,
+    },
+  ];
+  // Chỉ tính filter THẬT SỰ thu hẹp kết quả: viewMode/sort/dateField không phải
+  // là lọc, hiện nút "xoá lọc" vì chúng thì nút đó không bao giờ tắt.
+  const hasFilter =
+    filter.text != null ||
+    filter.kind != null ||
+    filter.sizeMin != null ||
+    filter.sizeMax != null ||
+    filter.dateFrom != null ||
+    filter.dateTo != null ||
+    filter.minPx != null ||
+    filter.durMinMs != null ||
+    filter.durMaxMs != null ||
+    filter.camera != null;
+
+  const clearAll = () => {
+    setText("");
+    setDateFrom("");
+    setDateTo("");
+    setResetNonce((n) => n + 1);
+    setFilter({
+      text: undefined,
+      kind: undefined,
+      sizeMin: undefined,
+      sizeMax: undefined,
+      dateFrom: undefined,
+      dateTo: undefined,
+      minPx: undefined,
+      durMinMs: undefined,
+      durMaxMs: undefined,
+      camera: undefined,
+    });
+  };
+
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800 bg-neutral-950 px-3 py-2">
       <input
@@ -134,11 +197,13 @@ export function FilterBar() {
         <option value="1">{t("filter.videos")}</option>
       </select>
       <SizeInput
+        key={`min-${resetNonce}`}
         placeholder={t("filter.minMb")}
         initialBytes={filter.sizeMin}
         onBytes={(b) => setFilter({ sizeMin: b })}
       />
       <SizeInput
+        key={`max-${resetNonce}`}
         placeholder={t("filter.maxMb")}
         initialBytes={filter.sizeMax}
         onBytes={(b) => setFilter({ sizeMax: b })}
@@ -221,6 +286,48 @@ export function FilterBar() {
         <option value="60000:600000">{t("filter.durMedium")}</option>
         <option value="600000:">{t("filter.durLong")}</option>
       </select>
+      {/* Danh sách thiết bị chỉ có sau khi job meta trích tên máy — chưa có
+          thiết bị nào thì giấu hẳn ô này thay vì hiện dropdown rỗng. */}
+      {cameras.length > 0 && (
+        <select
+          className={`${inputCls} max-w-[14rem]`}
+          title={t("filter.device")}
+          value={filter.camera ?? ""}
+          onChange={(e) => setFilter({ camera: e.target.value || undefined })}
+        >
+          <option value="">{t("filter.anyDevice")}</option>
+          {cameras.map((c) => (
+            <option key={c.camera} value={c.camera}>
+              {c.camera} ({c.count})
+            </option>
+          ))}
+        </select>
+      )}
+      {QUICK.map((q) => {
+        const active = dateFrom === q.from && dateTo === q.to;
+        return (
+          <button
+            key={q.key}
+            className={`rounded border px-2 py-1 text-xs ${
+              active
+                ? "border-emerald-700 bg-emerald-900/40 text-emerald-300"
+                : "border-neutral-700 bg-neutral-900 text-neutral-400 hover:text-neutral-200"
+            }`}
+            // Bấm lại chip đang bật = bỏ khoảng ngày, không phải đặt lại y hệt
+            onClick={() => (active ? setRange("", "") : setRange(q.from, q.to))}
+          >
+            {t(q.key)}
+          </button>
+        );
+      })}
+      {hasFilter && (
+        <button
+          className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200"
+          onClick={clearAll}
+        >
+          ✕ {t("filter.clear")}
+        </button>
+      )}
       <div className="ml-auto flex overflow-hidden rounded border border-neutral-700">
         <button
           className={`px-2 py-1 text-sm ${

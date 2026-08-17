@@ -144,6 +144,91 @@ fn date_sort_and_filter_prefer_capture_time() {
     assert_eq!(warm.last(), Some(&old_id));
 }
 
+/// Lọc theo thiết bị: chuỗi khớp ĐÚNG, và danh sách thiết bị chỉ đếm file đang
+/// hiện diện — thiết bị mà mọi ảnh của nó đã mất thì để lại chỉ tổ chọn vào rồi
+/// ra 0 kết quả.
+#[test]
+fn camera_filter_matches_exactly_and_lists_only_live_devices() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(tmp.path()).unwrap();
+    db.writer.exec(|c| ops::upsert_root(c, "D:\\P")).unwrap();
+    let entries = vec![
+        entry("D:\\P", "a.jpg", "jpg", 0, 100, 1),
+        entry("D:\\P", "b.jpg", "jpg", 0, 100, 2),
+        entry("D:\\P", "c.jpg", "jpg", 0, 100, 3),
+        entry("D:\\P", "gone.jpg", "jpg", 0, 100, 4),
+    ];
+    db.writer
+        .exec(move |c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(c, 1, 1, &entries, &mut cache)
+        })
+        .unwrap();
+    let id_of = |name: &str| -> i64 {
+        db.pool
+            .with(|c| -> anyhow::Result<i64> {
+                Ok(
+                    c.query_row("SELECT id FROM files WHERE name = ?1", [name], |r| {
+                        r.get::<_, i64>(0)
+                    })?,
+                )
+            })
+            .unwrap()
+    };
+    let (a, b, c_id, gone) = (
+        id_of("a.jpg"),
+        id_of("b.jpg"),
+        id_of("c.jpg"),
+        id_of("gone.jpg"),
+    );
+    let meta = |file_id: i64, cam: &str, mtime: i64| core_db::MetaUpsert {
+        file_id,
+        camera: Some(cam.to_string()),
+        meta_state: 1,
+        src_mtime: mtime,
+        src_size: 100,
+        ..Default::default()
+    };
+    let rows = vec![
+        meta(a, "Apple iPhone 12", 1),
+        meta(b, "Apple iPhone 12", 2),
+        // Tên chỉ khác phần đuôi — lọc phải KHÔNG dính, nếu dùng LIKE thì dính
+        meta(c_id, "Apple iPhone 12 Pro", 3),
+        meta(gone, "Canon EOS R5", 4),
+    ];
+    db.writer
+        .exec(move |c| ops::upsert_meta_batch(c, &rows))
+        .unwrap();
+
+    let by_cam = |cam: &str| {
+        let f = FileFilter {
+            camera: Some(cam.into()),
+            ..Default::default()
+        };
+        db.pool.with(|c| query::query_ids(c, &f)).unwrap()
+    };
+    let mut got = by_cam("Apple iPhone 12");
+    got.sort();
+    assert_eq!(got, vec![a, b], "khong duoc dinh ban 'Pro'");
+    assert_eq!(by_cam("Apple iPhone 12 Pro"), vec![c_id]);
+    assert!(by_cam("May Khong Ton Tai").is_empty());
+
+    let cams = db.pool.with(query::list_cameras).unwrap();
+    assert_eq!(cams[0].camera, "Apple iPhone 12");
+    assert_eq!(cams[0].count, 2, "nhieu file nhat phai dung dau");
+    assert_eq!(cams.len(), 3);
+
+    // gone.jpg biến mất (ổ tháo ra) → Canon rời khỏi danh sách thiết bị
+    db.writer
+        .exec(move |c| -> anyhow::Result<()> {
+            c.execute("UPDATE files SET status = 1 WHERE id = ?1", [gone])?;
+            Ok(())
+        })
+        .unwrap();
+    let cams = db.pool.with(query::list_cameras).unwrap();
+    assert!(!cams.iter().any(|c| c.camera == "Canon EOS R5"), "{cams:?}");
+}
+
 /// `low` = 64 bit thấp nhất của hash 256-bit; 3 word còn lại để 0 nên khoảng
 /// cách giữa hai item bằng đúng khoảng cách giữa hai `low` — test đọc dễ.
 fn item(

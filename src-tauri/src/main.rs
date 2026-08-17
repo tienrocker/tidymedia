@@ -37,6 +37,7 @@ fn main() {
             commands::list_jobs,
             commands::list_active_jobs,
             commands::query_files,
+            commands::list_cameras,
             commands::fetch_rows,
             commands::get_settings,
             commands::set_settings,

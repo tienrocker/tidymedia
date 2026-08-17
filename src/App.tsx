@@ -54,6 +54,7 @@ export default function App() {
   useEffect(() => {
     void useStore.getState().loadSettings();
     void useStore.getState().loadRoots();
+    void useStore.getState().loadCameras();
     void useStore.getState().refreshJobs();
     // Ảnh index rồi mà chưa có meta (app tắt giữa chừng...) → chạy nốt.
     // Không còn gì pending thì backend trả null, không tạo job rác.
@@ -93,9 +94,11 @@ export default function App() {
         if (e.payload.kind === "scan") {
           api.startMetaScan().catch((err) => console.error("start_meta_scan failed", err));
         }
-        // Meta xong → warm thumb nền cho file mới (ưu tiên thấp nhất)
+        // Meta xong → warm thumb nền cho file mới (ưu tiên thấp nhất), và
+        // danh sách thiết bị vừa đầy thêm (tên máy chỉ biết được sau khi trích)
         if (e.payload.kind === "meta") {
           api.startThumbWarm().catch((err) => console.error("start_thumb_warm failed", err));
+          void useStore.getState().loadCameras();
         }
         // Quét hash xong → refresh danh sách nhóm trùng
         if (e.payload.kind === "hash" || e.payload.kind === "org_hash") {

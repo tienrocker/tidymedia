@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useStore } from "../../state/store";
 import { api, FileRow } from "../../lib/ipc";
@@ -91,11 +92,47 @@ function Cell({
   );
 }
 
+/** Nhãn Tháng/Năm của hàng trên cùng đang nhìn thấy — nổi đè lên lưới.
+ *
+ * KHÔNG phải header chèn giữa lưới: lưới ảo hoá chỉ nạp cửa sổ đang xem nên
+ * không biết ngày của những file chưa nạp, mà cắt mốc tháng thì cần biết ngày
+ * của TẤT CẢ. Làm đúng kiểu đó phải có thêm truy vấn đếm file theo tháng rồi
+ * dựng layout cao thấp khác nhau — đắt hơn hẳn. Nhãn nổi cho đúng thông tin
+ * "đang ở quãng thời gian nào" mà không đụng gì tới layout.
+ */
+function DateBadge({ row, field }: { row: FileRow | undefined; field: string }) {
+  const { i18n } = useTranslation();
+  // Phải bám ĐÚNG trường đang sắp xếp, nếu không nhãn nói một đằng lưới xếp
+  // một nẻo. taken_at là wall-clock đóng gói khung UTC nên đọc bằng getUTC*;
+  // mtime là instant thật, đọc theo giờ máy.
+  const byTaken = field !== "mtime";
+  const ms = byTaken ? (row?.takenAt ?? row?.mtime) : row?.mtime;
+  if (ms == null) return null;
+  const d = new Date(ms);
+  const [y, m] = byTaken
+    ? [d.getUTCFullYear(), d.getUTCMonth()]
+    : [d.getFullYear(), d.getMonth()];
+  const label = new Intl.DateTimeFormat(i18n.language, {
+    year: "numeric",
+    month: "long",
+    timeZone: "UTC",
+  }).format(Date.UTC(y, m, 1));
+  return (
+    <div className="pointer-events-none sticky top-0 z-10 -mx-2 -mt-2 mb-1 px-3 py-1">
+      <span className="rounded bg-neutral-900/90 px-2 py-0.5 text-xs font-medium text-neutral-300 shadow ring-1 ring-neutral-700">
+        {label}
+      </span>
+    </div>
+  );
+}
+
 export function FileGrid() {
   const total = useStore((s) => s.total);
   const rows = useStore((s) => s.rows);
   const queryId = useStore((s) => s.queryId);
   const filterEpoch = useStore((s) => s.filterEpoch);
+  const sort = useStore((s) => s.filter.sort);
+  const dateField = useStore((s) => s.filter.dateField);
   const parentRef = useRef<HTMLDivElement>(null);
   const [layout, setLayout] = useState({ cols: 4, cellW: CELL_W });
   const { cols, cellW } = layout;
@@ -150,8 +187,18 @@ export function FileGrid() {
     }
   }, [firstRow, lastRow, cols, queryId]);
 
+  // Sắp theo tên/dung lượng thì thứ tự chẳng liên quan gì tới thời gian —
+  // nhãn ngày lúc đó là thông tin sai lệch, giấu đi.
+  const sortedByDate = !["name", "size_desc", "size_asc"].includes(sort ?? "");
+
   return (
     <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+      {sortedByDate && (
+        <DateBadge
+          row={firstRow >= 0 ? rows.get(firstRow * cols) : undefined}
+          field={dateField ?? "taken"}
+        />
+      )}
       <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
         {items.map((vi) => (
           <div

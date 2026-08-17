@@ -69,6 +69,18 @@ pub struct FileFilter {
     /// Lọc thời lượng video (ms). Chỉ khớp file đã có meta duration.
     pub dur_min_ms: Option<i64>,
     pub dur_max_ms: Option<i64>,
+    /// Lọc theo thiết bị (`media_meta.camera`), so KHỚP ĐÚNG chuỗi lấy từ
+    /// [`list_cameras`](crate::query::list_cameras) chứ không phải user gõ tay.
+    /// Chỉ khớp file đã có meta.
+    pub camera: Option<String>,
+}
+
+/// Một thiết bị trong thư viện + số file của nó, cho dropdown lọc.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CameraCount {
+    pub camera: String,
+    pub count: i64,
 }
 
 /// File chờ trích metadata (meta job M2/M3).

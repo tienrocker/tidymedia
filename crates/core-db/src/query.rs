@@ -5,8 +5,32 @@ use anyhow::Result;
 use rusqlite::types::Value;
 use rusqlite::{params_from_iter, Connection, ToSql};
 
-use crate::models::{FileFilter, FileRow};
+use crate::models::{CameraCount, FileFilter, FileRow};
 use crate::ops::{normalize_for_search, normalize_path, path_range};
+
+/// Các thiết bị có trong thư viện, nhiều file nhất trước — nguồn cho dropdown
+/// lọc theo thiết bị.
+///
+/// Chỉ đếm file đang hiện diện: thiết bị mà mọi ảnh của nó đã bị xoá/tháo ổ thì
+/// để trong danh sách chỉ tổ chọn vào rồi ra 0 kết quả.
+pub fn list_cameras(conn: &Connection) -> Result<Vec<CameraCount>> {
+    let mut st = conn.prepare_cached(
+        "SELECT m.camera, COUNT(*) c FROM media_meta m
+         JOIN files f ON f.id = m.file_id
+         WHERE m.camera IS NOT NULL AND m.camera != '' AND f.status IN (0, 2)
+           AND (f.kind = 0 OR f.live_pair_id IS NULL)
+         GROUP BY m.camera ORDER BY c DESC, m.camera",
+    )?;
+    let rows = st
+        .query_map([], |r| {
+            Ok(CameraCount {
+                camera: r.get(0)?,
+                count: r.get(1)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
 
 /// Chạy filter → trả toàn bộ ID khớp theo thứ tự sort (Everything-style result cache).
 /// UI fetch cửa sổ bằng `fetch_rows`, không bao giờ serialize cả list.
@@ -34,7 +58,8 @@ pub fn query_ids(conn: &Connection, f: &FileFilter) -> Result<Vec<i64>> {
     if f.root_path.is_some() {
         sql.push_str(" JOIN dirs d ON d.id = f.dir_id");
     }
-    if f.min_px.is_some() || f.dur_min_ms.is_some() || f.dur_max_ms.is_some() {
+    if f.min_px.is_some() || f.dur_min_ms.is_some() || f.dur_max_ms.is_some() || f.camera.is_some()
+    {
         sql.push_str(" JOIN media_meta m ON m.file_id = f.id");
     }
     if needs_date_join {
@@ -102,6 +127,10 @@ pub fn query_ids(conn: &Connection, f: &FileFilter) -> Result<Vec<i64>> {
     if let Some(v) = f.dur_max_ms {
         wheres.push("m.duration_ms <= ?".into());
         params.push(Box::new(v));
+    }
+    if let Some(cam) = f.camera.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        wheres.push("m.camera = ?".into());
+        params.push(Box::new(cam.to_string()));
     }
     if let Some(root) = f.root_path.as_deref() {
         let (eq, start, end) = path_range(&normalize_path(root));

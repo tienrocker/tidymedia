@@ -960,6 +960,14 @@ pub struct QueryResult {
     pub total: usize,
 }
 
+/// Thiết bị có trong thư viện cho dropdown lọc. Danh sách LỚN DẦN theo meta job
+/// nên frontend phải nạp lại mỗi lần job meta xong, không cache vĩnh viễn.
+#[tauri::command]
+pub async fn list_cameras(state: State<'_, AppState>) -> CmdResult<Vec<core_db::CameraCount>> {
+    let db = state.db.clone();
+    blocking(move || db.pool.with(core_db::query::list_cameras).map_err(err)).await
+}
+
 #[tauri::command]
 pub async fn query_files(state: State<'_, AppState>, filter: FileFilter) -> CmdResult<QueryResult> {
     let db = state.db.clone();

@@ -101,6 +101,13 @@ export interface FileFilter {
   minPx?: number; // width*height >= minPx (chỉ khớp file đã có meta)
   durMinMs?: number; // thời lượng video (chỉ khớp file đã có meta duration)
   durMaxMs?: number;
+  /** Thiết bị — khớp ĐÚNG chuỗi lấy từ listCameras(), không phải user gõ tay. */
+  camera?: string;
+}
+
+export interface CameraCount {
+  camera: string;
+  count: number;
 }
 
 export interface QueryResult {
@@ -215,6 +222,7 @@ export const api = {
   listJobs: () => invoke<JobRow[]>("list_jobs"),
   listActiveJobs: () => invoke<JobProgress[]>("list_active_jobs"),
   queryFiles: (filter: FileFilter) => invoke<QueryResult>("query_files", { filter }),
+  listCameras: () => invoke<CameraCount[]>("list_cameras"),
   fetchRows: (queryId: number, start: number, count: number) =>
     invoke<(FileRow | null)[]>("fetch_rows", { queryId, start, count }),
   getSettings: () => invoke<Settings>("get_settings"),
