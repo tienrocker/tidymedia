@@ -227,6 +227,16 @@ pub struct ClusterItem {
     pub height: Option<i64>,
     /// Giờ bấm máy theo EXIF, epoch ms CÓ sub-second (xem core-media). Chốt
     /// chặn mạnh nhất: hai bản của cùng một tấm ảnh luôn mang đúng mốc này.
+    ///
+    /// CHỈ được nhận giờ CHỤP thật — hiện là EXIF `DateTimeOriginal`
+    /// (date_source 0) hoặc QuickTime creation time (1). ĐỪNG BAO GIỜ đổ ngày
+    /// suy từ TÊN FILE (date_source 2) hay mtime (3) vào đây: tên file mang
+    /// giờ LƯU chứ không phải giờ bấm máy, ví dụ thật trong kho là
+    /// `photo_2018-12-02_10-50-05.jpg` — bản sao đã bị lột EXIF của một tấm
+    /// chụp lúc 10:49, lệch 60 giây. Gán mốc giả đó vào sẽ khiến nó KHÁC mốc
+    /// với bản gốc và bị đá khỏi nhóm, tức là mất đúng ca mà M7 sinh ra để bắt.
+    /// Hai tầng suy đoán kia chỉ sống trong `core_ingest::date::resolve_taken`
+    /// cho organize, không bao giờ ghi xuống `media_meta`.
     pub taken_at: Option<i64>,
 }
 
