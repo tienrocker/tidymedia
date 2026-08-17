@@ -4,3 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+
+[dev-dependencies]
+# Chi de TEST kiem chung du lieu dung NFC that su - runtime khong can
+unicode-normalization = "0.1"

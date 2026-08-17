@@ -304,22 +304,43 @@ mod tests {
         // Hồ Hoàn Kiếm, trung tâm Hà Nội. cities1000 có hàng chục phường quanh
         // đây; luật "đông dân nhất" phải cho ra chính Hà Nội.
         let p = lookup(21.0287, 105.8524);
-        assert_eq!(p.city, Some("Hanoi"), "{p:?}");
+        assert_eq!(p.city, Some("Hà Nội"), "{p:?}");
         assert_eq!(p.country, Some("Vietnam"));
     }
 
-    /// GeoNames ghi `name` của thành phố lớn theo tên PHỔ THÔNG (thường là
-    /// tiếng Anh), tên bản địa nằm trong `alternatenames` — muốn "Hà Nội" phải
-    /// tải thêm dump `alternateNames`. Tầng phường/xã thì `name` đã là tiếng
-    /// Việt sẵn. Hai tầng lệch ngôn ngữ nhau là DỮ LIỆU THẬT, không phải lỗi;
-    /// khoá lại để sau này ai đổi cũng biết mình đang đổi cái gì.
+    /// MỌI tầng phải cùng một ngôn ngữ. GeoNames để `name` của thành phố lớn ở
+    /// dạng phổ thông ("Hanoi") nên bộ sinh dữ liệu ghi đè bằng tên tiếng Việt
+    /// từ dump `alternatenames` (`--fine VN:vi`). Thiếu bước đó thì một đường
+    /// dẫn duy nhất trộn hai ngôn ngữ: `Hanoi\Quận Hoàn Kiếm\Phường Lý Thái Tổ`.
     #[test]
-    fn city_names_are_common_form_while_ward_names_are_local() {
+    fn every_level_uses_the_same_language() {
         let p = lookup(21.0287, 105.8524);
-        assert_eq!(p.city, Some("Hanoi"));
-        assert_eq!(p.province, Some("Hanoi"));
+        assert_eq!(p.city, Some("Hà Nội"));
+        assert_eq!(p.province, Some("Hà Nội"));
         assert_eq!(p.ward, Some("Phường Lý Thái Tổ"));
         assert_eq!(p.district, Some("Quận Hoàn Kiếm"));
+    }
+
+    /// Dữ liệu phải ở dạng NFC. Dump gốc TRỘN hai dạng ("Xã An Hải" tách dấu),
+    /// mà hai chuỗi nhìn y hệt nhưng khác byte thì sinh ra hai thư mục trông
+    /// giống hệt nhau cạnh nhau — và so sánh đường dẫn thì trượt.
+    ///
+    /// Kiểm bằng chính thư viện chuẩn hoá chứ không đoán qua "có dấu tổ hợp hay
+    /// không": vài ký tự (`n̈` trong "Iharan̈a") KHÔNG có dạng liền, nên ở NFC
+    /// chúng vẫn phải giữ dấu rời.
+    #[test]
+    fn names_are_nfc_normalized() {
+        use unicode_normalization::UnicodeNormalization;
+        let d = data();
+        let bad = d
+            .fine
+            .iter()
+            .map(|f| f.name)
+            .chain(d.cities.iter().map(|c| c.name))
+            .chain(d.admin1.iter().copied())
+            .chain(d.districts.iter().copied())
+            .find(|s| s.nfc().collect::<String>() != **s);
+        assert_eq!(bad, None, "ten chua o dang NFC");
     }
 
     /// Tầng phường/xã đi RIÊNG với tầng thành phố: cùng một toạ độ cho ra cả

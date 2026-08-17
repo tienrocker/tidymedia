@@ -29,7 +29,7 @@ BL	Saint Barthelemy
 BM	Bermuda
 BN	Brunei
 BO	Bolivia
-BQ	Bonaire, Saint Eustatius and Saba 
+BQ	Bonaire, Saint Eustatius and Saba
 BR	Brazil
 BS	Bahamas
 BT	Bhutan
@@ -268,9 +268,9 @@ Fujairah
 Ajman
 Abu Dhabi
 Zabul
-Maidan Wardak Province
+Maidan Wardak
 Takhar
-Sar-e Pol Province
+Sar-e Pol
 Samangan
 Parwan
 Paktika
@@ -323,18 +323,18 @@ Island Harbour
 George Hill
 Stoney Ground
 The Farrington
-Berat County
-Dibër County
-Elbasan County
-Gjirokastër County
-Korçë County
-Kukës County
-Durrës County
-Fier County
-Lezhë County
-Shkodër County
+Berat
+Dibër
+Elbasan
+Gjirokastër
+Korçë
+Kukës
+Durrës
+Fier
+Lezhë
+Shkodër
 Tirana
-Vlorë County
+Vlorë
 Ararat
 Syunik
 Vayots Dzor
@@ -364,9 +364,9 @@ Kwanza Sul
 Bíe
 Benguela
 Cubango
-Icolo e Bengo Province
-Moxico Leste Province
-Cuando Province
+Icolo e Bengo
+Moxico Leste
+Cuando
 Misiones
 Formosa
 Buenos Aires F.D.
@@ -441,7 +441,7 @@ Ağcabǝdi
 Ağdam
 Shirvan
 Lankaran Sahari
-Shusha City
+Shusha
 Tartar District
 Xankǝndi
 Khojavend
@@ -477,15 +477,15 @@ Ağdaş
 Gadabay District
 Ağstafa
 Gǝncǝ
-Mingacevir City
+Mingacevir
 Naftalan
 Qobustan
 Samux
-Shaki City
+Shaki
 Siyǝzǝn
 Sumqayit
 Xızı
-Yevlax City
+Yevlax
 Hacıqabul
 Federation of B&H
 Srpska
@@ -513,7 +513,7 @@ Brussels Capital
 Wallonia
 Flanders
 Boucle du Mouhoun
-Cascades Region
+Cascades
 Centre
 Centre-Est
 Centre-Nord
@@ -710,7 +710,7 @@ Sowa Town
 Vitebsk
 Mogilev
 Minsk
-Minsk City
+Minsk
 Grodnenskaya
 Homyel’ Voblasc’
 Brest
@@ -845,18 +845,18 @@ Rarotonga
 Valparaiso
 Tarapacá
 Santiago Metropolitan
-Maule Region
-Los Lagos Region
-O'Higgins Region
-Coquimbo Region
+Maule
+Los Lagos
+O'Higgins
+Coquimbo
 Biobio
 Atacama
 Araucania
 Antofagasta
 Aysén
 Region of Magallanes
-Arica y Parinacota Region
-Los Ríos Region
+Arica y Parinacota
+Los Ríos
 Ñuble
 South-West
 South
@@ -933,25 +933,25 @@ Arauca Department
 Antioquia
 Amazonas Department
 San José
-Puntarenas Province
-Limón Province
-Heredia Province
-Guanacaste Province
-Cartago Province
-Alajuela Province
-Villa Clara Province
-Santiago de Cuba Province
-Sancti Spíritus Province
+Puntarenas
+Limón
+Heredia
+Guanacaste
+Cartago
+Alajuela
+Villa Clara
+Santiago de Cuba
+Sancti Spíritus
 Pinar del Río
-Matanzas Province
-Las Tunas Province
+Matanzas
+Las Tunas
 Isla de la Juventud
-Holguín Province
-Guantánamo Province
-Granma Province
+Holguín
+Guantánamo
+Granma
 Havana
-Cienfuegos Province
-Ciego de Ávila Province
+Cienfuegos
+Ciego de Ávila
 Camagüey
 Artemisa
 Mayabeque
@@ -985,17 +985,17 @@ Keryneia
 Ammochostos
 Prague
 South Moravian
-South Bohemian Region
+South Bohemian
 Vysocina
-Carlsbad Region
-Hradec Králové Region
-Liberec Region
-Olomouc Region
-Moravian-Silesian Region
-Pardubice Region
-Plzeň Region
+Carlsbad
+Hradec Králové
+Liberec
+Olomouc
+Moravian-Silesian
+Pardubice
+Plzeň
 Central Bohemia
-Ústí nad Labem Region
+Ústí nad Labem
 Zlín
 Thuringia
 Schleswig-Holstein
@@ -1019,7 +1019,7 @@ Djibouti
 Dikhil
 Ali Sabieh
 Arta
-Capital Region
+Capital
 Central Jutland
 North Denmark
 Zealand
@@ -1034,38 +1034,38 @@ Saint John Parish
 Saint George Parish
 Saint David Parish
 Saint Andrew Parish
-Valverde Province
+Valverde
 Santiago Rodríguez
-Santiago Province
+Santiago
 San Pedro de Macorís
-San Juan Province
+San Juan
 San Cristóbal
 Sánchez Ramírez
 Samaná
 Hermanas Mirabal
 Puerto Plata
 Peravia
-Pedernales Province
+Pedernales
 Nacional
-Monte Plata Province
-Monte Cristi Province
+Monte Plata
+Monte Cristi
 Monseñor Nouel
 María Trinidad Sánchez
 La Vega
 La Romana
-La Altagracia Province
+La Altagracia
 Independencia
-Hato Mayor Province
-Espaillat Province
+Hato Mayor
+Espaillat
 El Seíbo
 Elías Piña
-Duarte Province
+Duarte
 Dajabón
-Barahona Province
-Baoruco Province
-Azua Province
+Barahona
+Baoruco
+Azua
 San José de Ocoa
-Santo Domingo Province
+Santo Domingo
 Tlemcen
 Tizi Ouzou
 Tissemsilt
@@ -1125,11 +1125,11 @@ Touggourt
 El Mghair
 Ouled Djellal
 Zamora Chinchipe
-Tungurahua Province
+Tungurahua
 Pichincha
-Pastaza Province
+Pastaza
 Napo
-Morona-Santiago Province
+Morona-Santiago
 Manabí
 Los Ríos
 Loja
@@ -1139,13 +1139,13 @@ Galápagos
 Esmeraldas
 El Oro
 Cotopaxi
-Chimborazo Province
+Chimborazo
 Carchi
 Canar
 Bolívar
 Azuay
 Sucumbíos
-Orellana Province
+Orellana
 Santo Domingo de los Tsáchilas
 Santa Elena
 Võrumaa
@@ -1225,10 +1225,10 @@ Harari
 Oromiya
 Somali
 Tigray
-Sidama Region
+Sidama
 Central Ethiopia Regional State
 South Ethiopia Regional State
-South West Ethiopia Peoples' Region
+South West Ethiopia Peoples'
 Lapland
 Kainuu
 North Ostrobothnia
@@ -1347,13 +1347,13 @@ Central River
 Lower River
 Banjul
 Conakry
-Boké Region
+Boké
 Faranah
-Kankan Region
+Kankan
 Kindia
-Labé Region
-Mamou Region
-Nzérékoré Region
+Labé
+Mamou
+Nzérékoré
 Guadeloupe
 Annobon
 Bioko Norte
@@ -1448,7 +1448,7 @@ Eastern District
 Southern District
 Yau Tsim Mong District
 Sham Shui Po District
-Kowloon City
+Kowloon
 Wong Tai Sin District
 Kwun Tong District
 Kwai Tsing District
@@ -1491,7 +1491,7 @@ Split-Dalmatia
 Varaždin
 Vukovar-Srijem
 Zadar
-Zagreb County
+Zagreb
 Zagreb
 Virovitica-Podravina
 Sud-Est
@@ -1506,17 +1506,17 @@ Artibonite
 Nippes
 Szabolcs-Szatmár-Bereg
 Jász-Nagykun-Szolnok
-Heves County
+Heves
 Hajdú-Bihar
 Csongrád
 Borsod-Abaúj-Zemplén
-Bekes County
-Zala County
+Bekes
+Zala
 Veszprém
-Vas County
-Tolna County
-Somogy County
-Pest County
+Vas
+Tolna
+Somogy
+Pest
 Nógrád
 Komárom-Esztergom
 Győr-Moson-Sopron
@@ -1654,40 +1654,40 @@ Anbar
 Halabja
 Tehran
 Zanjan
-Yazd Province
+Yazd
 Semnan
 Māzandarān
 Markazi
-Lorestan Province
-Kurdistan Province
+Lorestan
+Kurdistan
 Kohgiluyeh and Boyer-Ahmad
 Khuzestan
-Kermanshah Province
+Kermanshah
 Kerman
-Ilam Province
+Ilam
 Hormozgan
-Hamadan Province
-Gilan Province
+Hamadan
+Gilan
 Fars
 Chaharmahal and Bakhtiari
 Bushehr
 East Azerbaijan
 West Azerbaijan
-Ardabil Province
+Ardabil
 Isfahan
 Golestan
-Qazvin Province
-Qom Province
+Qazvin
+Qom
 Sistan and Baluchestan
-South Khorasan Province
+South Khorasan
 Razavi Khorasan
 North Khorasan
-Alborz Province
+Alborz
 Northwest
 Northeast
 East
 South
-Capital Region
+Capital
 Southern Peninsula
 West
 Westfjords
@@ -1796,62 +1796,62 @@ Chiba
 Akita
 Hokkaido
 Aomori
-West Pokot County
-Wajir County
-Uasin Gishu County
-Turkana County
+West Pokot
+Wajir
+Uasin Gishu
+Turkana
 Trans Nzoia
 Tharaka - Nithi
-Tana River County
-Siaya County
-Samburu County
-Nairobi County
+Tana River
+Siaya
+Samburu
+Nairobi
 Murang'A
-Mombasa County
-Meru County
-Marsabit County
-Mandera County
+Mombasa
+Meru
+Marsabit
+Mandera
 Laikipia
-Kwale County
-Kitui County
-Kisumu County
-Kisii County
-Kirinyaga County
-Kilifi County
-Kiambu County
-Kericho County
-Kakamega County
-Isiolo County
-Garissa County
-Embu County
-Busia County
-Bungoma County
+Kwale
+Kitui
+Kisumu
+Kisii
+Kirinyaga
+Kilifi
+Kiambu
+Kericho
+Kakamega
+Isiolo
+Garissa
+Embu
+Busia
+Bungoma
 Baringo
-Nyandarua County
-Vihiga County
+Nyandarua
+Vihiga
 Lamu
-Machakos County
-Makueni County
+Machakos
+Makueni
 Elegeyo-Marakwet
 Taita Taveta
-Kajiado County
-Nyeri County
-Homa Bay County
-Bomet County
-Migori County
-Nakuru County
-Narok County
+Kajiado
+Nyeri
+Homa Bay
+Bomet
+Migori
+Nakuru
+Narok
 Nyamira county
 Nandi
-Osh Region
+Osh
 Batken
-Talas Region
-Naryn Region
+Talas
+Naryn
 Issyk-Kul
 Bishkek
-Jalal-Abad Region
-Chuy Region
-Osh City
+Jalal-Abad
+Chuy
+Osh
 Pursat
 Battambang
 Takeo
@@ -1871,7 +1871,7 @@ Koh Kong
 Kandal
 Kampot
 Kampong Thom
-Kampong Speu Province
+Kampong Speu
 Kampong Chhnang
 Kampong Cham
 Preah Sihanouk
@@ -1946,37 +1946,37 @@ Aktobe
 East Kazakhstan
 Aqmola
 North Kazakhstan
-Pavlodar Region
+Pavlodar
 Kyzylorda
 Kostanay
 Karaganda
 Zhambyl
 Turkistan
 Almaty
-Almaty Region
+Almaty
 Shymkent
 Baikonur
 Astana
-Abai Region
-Zhetysu Region
-Ulytau Region
+Abai
+Zhetysu
+Ulytau
 Xiangkhoang
 Xiagnabouli
 Vientiane
-Savannakhet Province
-Salavan Province
+Savannakhet
+Salavan
 Phôngsali
 Oudômxai
-Luang Prabang Province
+Luang Prabang
 Loungnamtha
-Khammouane Province
+Khammouane
 Houaphan
-Champasak Province
+Champasak
 Attapu
 Xékong
 Bokeo
 Bolikhamsai
-Vientiane Prefecture
+Vientiane
 Xaisomboun
 Mount Lebanon
 Beirut
@@ -2007,30 +2007,30 @@ Mauren
 Gamprin
 Eschen
 Balzers
-Western Province
-Uva Province
-Southern Province
-Sabaragamuwa Province
-North Western Province
-North Central Province
-Central Province
-Northern Province
-Eastern Province
-Sinoe County
+Western
+Uva
+Southern
+Sabaragamuwa
+North Western
+North Central
+Central
+Northern
+Eastern
+Sinoe
 Nimba
-Montserrado County
-Maryland County
-Lofa County
-Grand Gedeh County
-Grand Cape Mount County
-Grand Bassa County
-Bong County
-Bomi County
-Grand Kru County
-Margibi County
-River Cess County
-Gbarpolu County
-River Gee County
+Montserrado
+Maryland
+Lofa
+Grand Gedeh
+Grand Cape Mount
+Grand Bassa
+Bong
+Bomi
+Grand Kru
+Margibi
+River Cess
+Gbarpolu
+River Gee
 Thaba-Tseka
 Quthing
 Qacha's Nek District
@@ -2043,11 +2043,11 @@ Butha-Buthe
 Berea
 Alytus
 Kaunas
-Klaipėda County
-Marijampolė County
+Klaipėda
+Marijampolė
 Panevėžys
 Siauliai
-Tauragė County
+Tauragė
 Telsiai
 Utena
 Vilnius
@@ -2063,49 +2063,49 @@ Echternach
 Diekirch
 Clervaux
 Capellen
-Ventspils Municipality
+Ventspils
 Ventspils
 Valmiera
 Valka
-Tukums Municipality
+Tukums
 Talsu novads
 Saldus Rajons
 Riga
-Rēzekne Municipality
+Rēzekne
 Rēzekne
 Preiļu novads
 Ogre
 Madonas novads
-Ludza Municipality
-Limbaži Municipality
+Ludza
+Limbaži
 Liepaja
-Kuldīga Municipality
-Krāslava Municipality
+Kuldīga
+Krāslava
 Jūrmala
-Jelgava Municipality
 Jelgava
-Jēkabpils Municipality
-Gulbene Municipality
-Dobele Municipality
+Jelgava
+Jēkabpils
+Gulbene
+Dobele
 Daugavpils
-Cēsis Municipality
-Bauska Municipality
-Balvi Municipality
-Alūksne Municipality
-Aizkraukle Municipality
+Cēsis
+Bauska
+Balvi
+Alūksne
+Aizkraukle
 Mārupe
 Olaine
 Ķekava
-Salaspils Municipality
+Salaspils
 Ādaži
 Līvāni
-Varakļāni Municipality
-Ropaži Municipality
-Sigulda Municipality
-Saulkrasti Municipality
-Smiltene Municipality
-South Kurzeme Municipality
-Augšdaugava Municipality
+Varakļāni
+Ropaži
+Sigulda
+Saulkrasti
+Smiltene
+South Kurzeme
+Augšdaugava
 Darnah
 Banghazi
 Al Marj
@@ -2158,7 +2158,7 @@ Leova
 Sîngerei
 Criuleni
 Ialoveni
-Chișinău Municipality
+Chișinău
 Căuşeni
 Cantemir
 Călăraşi
@@ -2176,9 +2176,9 @@ Hînceşti
 Şoldăneşti
 Transnistria
 Gagauzia
-Bender Municipality
+Bender
 Bălţi
-Rožaje Municipality
+Rožaje
 Opština Žabljak
 Ulcinj
 Tivat
@@ -2199,9 +2199,9 @@ Budva
 Bijelo Polje
 Bar
 Andrijevica
-Gusinje Municipality
-Petnjica Municipality
-Tuzi Municipality
+Gusinje
+Petnjica
+Tuzi
 Zeta
 Diana
 Sava
@@ -2224,8 +2224,8 @@ Atsimo-Atsinanana
 Anosy
 Androy
 Atsimo-Andrefana
-Fitovinany Region
-Vatovavy Region
+Fitovinany
+Vatovavy
 Ailinginae Atoll
 Ailinglaplap Atoll
 Ailuk Atoll
@@ -2341,14 +2341,14 @@ Bamako
 Kidal
 Taoudénit
 Ménaka
-Tanintharyi Region
+Tanintharyi
 Shan State
-Sagaing Region
+Sagaing
 Yangon
 Rakhine
-Bago Region
+Bago
 Mon
-Mandalay Region
+Mandalay
 Magway
 Kayah State
 Kayin State
@@ -2356,25 +2356,25 @@ Kachin State
 Ayeyarwady
 Chin State
 Nay Pyi Taw
-Uvs Province
+Uvs
 Hovd
-Govi-Altai Province
+Govi-Altai
 Dzabkhan
-Bayan-Ölgii Province
+Bayan-Ölgii
 Bayankhongor
 Ulaanbaatar
 Central Aimak
 Sühbaatar
-Selenge Province
+Selenge
 Övörhangay
 Ömnögovĭ
-Khövsgöl Province
+Khövsgöl
 Hentiy
 Middle Govĭ
 East Gobi Aymag
 East Aimak
 Bulgan
-Arkhangai Province
+Arkhangai
 Darhan Uul
 Govĭ-Sumber
 Orhon
@@ -2510,9 +2510,9 @@ Baa Atholhu
 Northern Ari Atoll
 Male
 Southern Ari Atoll
-Southern Region
-Northern Region
-Central Region
+Southern
+Northern
+Central
 Yucatán
 Veracruz
 Tlaxcala
@@ -2527,7 +2527,7 @@ Morelos
 México
 Hidalgo
 Guerrero
-Mexico City
+Mexico
 Chiapas
 Campeche
 Zacatecas
@@ -2561,41 +2561,41 @@ Kedah
 Johor
 Labuan
 Putrajaya
-Zambezia Province
+Zambezia
 Tete
 Sofala
-Niassa Province
+Niassa
 Nampula
-Maputo Province
+Maputo
 Manica
-Inhambane Province
-Gaza Province
-Cabo Delgado Province
-Maputo City
-Zambezi Region
-Khomas Region
-Erongo Region
-Hardap Region
-Karas Region
-Kunene Region
-Ohangwena Region
-Omaheke Region
-Omusati Region
-Oshana Region
-Oshikoto Region
-Otjozondjupa Region
+Inhambane
+Gaza
+Cabo Delgado
+Maputo
+Zambezi
+Khomas
+Erongo
+Hardap
+Karas
+Kunene
+Ohangwena
+Omaheke
+Omusati
+Oshana
+Oshikoto
+Otjozondjupa
 Kavango East
 Kavango West
-South Province
-North Province
+South
+North
 Loyalty Islands
-Zinder Region
-Tahoua Region
-Maradi Region
-Dosso Region
+Zinder
+Tahoua
+Maradi
+Dosso
 Diffa
 Agadez
-Tillabéri Region
+Tillabéri
 Niamey
 Sokoto
 Rivers State
@@ -2680,9 +2680,9 @@ Innlandet
 Vestland
 Koshi
 Madhesh
-Bagmati Province
+Bagmati
 Gandaki Pradesh
-Lumbini Province
+Lumbini
 Karnali Pradesh
 Sudurpashchim Pradesh
 Yaren District
@@ -2699,21 +2699,21 @@ Anibare District
 Anetan District
 Anabar District
 Aiwo District
-Wellington Region
+Wellington
 Manawatu-Wanganui
-Waikato Region
+Waikato
 Tasman District
-Taranaki Region
+Taranaki
 Southland
 Bay of Plenty
 Northland
 Marlborough
-Hawke's Bay Region
+Hawke's Bay
 Gisborne
 Canterbury
 Auckland
 Chatham Islands
-Nelson Region
+Nelson
 Otago
 West Coast
 Ad Dakhiliyah
@@ -2727,19 +2727,19 @@ Dhofar
 Al Buraimi
 Northeastern Governorate
 Al Batinah North
-Veraguas Province
+Veraguas
 Guna Yala
 Panamá
-Los Santos Province
-Herrera Province
+Los Santos
+Herrera
 Darién
 Colón
 Coclé
-Chiriquí Province
-Bocas del Toro Province
+Chiriquí
+Bocas del Toro
 Embera
 Ngöbe-Buglé Comarca
-Panamá Oeste Province
+Panamá Oeste
 Naso Tjër Di
 Ucayali
 Tumbes
@@ -2757,7 +2757,7 @@ Puno
 Pasco
 Moquegua Department
 Madre de Dios
-Lima Province
+Lima
 Lima region
 Junin
 Ica
@@ -2772,28 +2772,28 @@ Tuamotu-Gambier Islands
 Leeward Islands
 Îles du Vent
 Austral Islands
-West New Britain Province
-Western Province
-Western Highlands Province
-Southern Highlands Province
-Sandaun Province
+West New Britain
+Western
+Western Highlands
+Southern Highlands
+Sandaun
 Bougainville
-Oro Province
+Oro
 New Ireland
 National Capital
-Morobe Province
-Manus Province
-Madang Province
-Gulf Province
-Enga Province
-East Sepik Province
-East New Britain Province
-Eastern Highlands Province
-Chimbu Province
-Milne Bay Province
-Central Province
-Hela Province
-Jiwaka Province
+Morobe
+Manus
+Madang
+Gulf
+Enga
+East Sepik
+East New Britain
+Eastern Highlands
+Chimbu
+Milne Bay
+Central
+Hela
+Jiwaka
 Autonomous Region in Muslim Mindanao
 Northern Mindanao
 Mimaropa
@@ -2808,9 +2808,9 @@ Central Luzon
 Central Visayas
 Eastern Visayas
 Zamboanga Peninsula
-Davao Region
-Bicol Region
-National Capital Region
+Davao
+Bicol
+National Capital
 Islamabad
 Sindh
 Punjab
@@ -2980,46 +2980,46 @@ Al Daayen
 Al-Shahaniya
 Reunion
 Vrancea
-Vâlcea County
-Vaslui County
-Tulcea County
-Timiș County
-Teleorman County
+Vâlcea
+Vaslui
+Tulcea
+Timiș
+Teleorman
 Suceava
-Sibiu County
-Satu Mare County
-Sălaj County
+Sibiu
+Satu Mare
+Sălaj
 Prahova
 Olt
-Neamț County
-Mureș County
-Mehedinți County
+Neamț
+Mureș
+Mehedinți
 Maramureş
-Iași County
-Ialomița County
-Hunedoara County
-Harghita County
-Gorj County
-Giurgiu County
-Galați County
+Iași
+Ialomița
+Hunedoara
+Harghita
+Gorj
+Giurgiu
+Galați
 Dolj
-Dâmbovița County
-Covasna County
-Constanța County
-Cluj County
-Caraș-Severin County
-Călărași County
-Buzău County
+Dâmbovița
+Covasna
+Constanța
+Cluj
+Caraș-Severin
+Călărași
+Buzău
 Bucharest
-Brașov County
-Brăila County
-Botoșani County
-Bistrița-Năsăud County
-Bihor County
-Bacău County
+Brașov
+Brăila
+Botoșani
+Bistrița-Năsăud
+Bihor
+Bacău
 Arges
-Arad County
-Alba County
+Arad
+Alba
 Ilfov
 Vojvodina
 Central Serbia
@@ -3106,33 +3106,33 @@ Magadan Oblast
 Kamchatka
 Chukotka
 Zabaykalskiy (Transbaikal) Kray
-Eastern Province
+Eastern
 Kigali
-Northern Province
-Western Province
-Southern Province
-Tabuk Region
-Najran Region
-Mecca Region
-Jazan Region
-Ha'il Region
-'Asir Region
-Eastern Province
-Riyadh Region
-Al-Qassim Region
-Medina Region
-Al Jawf Region
-Northern Borders Region
-Al Bahah Region
-Western Province
-Malaita Province
-Isabel Province
-Guadalcanal Province
-Central Province
-Temotu Province
-Makira-Ulawa Province
-Choiseul Province
-Rennell and Bellona Province
+Northern
+Western
+Southern
+Tabuk
+Najran
+Mecca
+Jazan
+Ha'il
+'Asir
+Eastern
+Riyadh
+Al-Qassim
+Medina
+Al Jawf
+Northern Borders
+Al Bahah
+Western
+Malaita
+Isabel
+Guadalcanal
+Central
+Temotu
+Makira-Ulawa
+Choiseul
+Rennell and Bellona
 Honiara
 Takamaka
 Saint Louis
@@ -3418,18 +3418,18 @@ Municipality of Ankaran
 Municipality of Mirna
 Jan Mayen
 Svalbard
-Košice Region
-Prešov Region
-Žilina Region
-Banská Bystrica Region
-Bratislava Region
-Nitra Region
-Trenčín Region
-Trnava Region
+Košice
+Prešov
+Žilina
+Banská Bystrica
+Bratislava
+Nitra
+Trenčín
+Trnava
 Western Area
-Southern Province
-Northern Province
-Eastern Province
+Southern
+Northern
+Eastern
 North West
 Serravalle
 Chiesanuova
@@ -3449,7 +3449,7 @@ Louga
 Kolda
 Kaolack
 Fatick
-Diourbel Region
+Diourbel
 Dakar
 Kaffrine
 Kedougou
@@ -3523,9 +3523,9 @@ Quneitra
 Latakia
 Al-Hasakah
 Shiselweni
-Manzini Region
-Lubombo Region
-Hhohho Region
+Manzini
+Lubombo
+Hhohho
 Salamat
 Ouadaï
 Wadi Fira
@@ -3638,7 +3638,7 @@ Sa Kaeo
 Bueng Kan
 Sughd
 Gorno-Badakhshan
-Khatlon Province
+Khatlon
 Republican Subordination
 Dushanbe
 Nukunonu
@@ -3651,7 +3651,7 @@ Liquiçá
 Lautém
 Cova Lima
 Ermera
-Dili Municipality
+Dili
 Bobonaro
 Baucau
 Oecusse
@@ -3699,8 +3699,8 @@ Uşak
 Tunceli
 Sivas
 Siirt
-Niğde Province
-Nevşehir Province
+Niğde
+Nevşehir
 Muş
 Muğla
 Mardin
@@ -3711,7 +3711,7 @@ Konya
 Kırşehir
 Kayseri
 Kahramanmaraş
-İzmir Province
+İzmir
 Isparta
 Mersin
 Hatay
@@ -3721,7 +3721,7 @@ Eskişehir
 Erzurum
 Erzincan
 Elazığ
-Diyarbakır Province
+Diyarbakır
 Denizli
 Burdur
 Bitlis
@@ -3732,8 +3732,8 @@ Aydın
 Antalya
 Ankara
 Ağrı
-Afyonkarahisar Province
-Adıyaman Province
+Afyonkarahisar
+Adıyaman
 Adana
 Osmaniye
 Iğdır
@@ -3743,35 +3743,35 @@ Karaman
 Kırıkkale
 Şırnak
 Kilis
-Zonguldak Province
+Zonguldak
 Trabzon
-Tokat Province
+Tokat
 Tekirdağ
 Sinop
 Samsun
 Sakarya
-Rize Province
+Rize
 Ordu
 Kocaeli
 Kırklareli
 Kastamonu
-Kars Province
+Kars
 Istanbul
-Gümüşhane Province
+Gümüşhane
 Giresun
 Edirne
 Çorum
 Çankırı
 Canakkale
-Bursa Province
+Bursa
 Bolu
 Artvin
 Amasya
 Bartın
-Karabük Province
+Karabük
 Yalova
 Ardahan
-Bayburt Province
+Bayburt
 Düzce
 Tobago
 San Fernando
@@ -3821,7 +3821,7 @@ Kilimanjaro
 Kigoma
 Iringa
 Dodoma
-Dar es Salaam Region
+Dar es Salaam
 Arusha
 Manyara
 Ruvuma
@@ -3838,7 +3838,7 @@ Volyn
 Vinnytsia
 Ternopil
 Sumy
-Sevastopol City
+Sevastopol
 Rivne Oblast
 Poltava
 Odesa
@@ -3846,7 +3846,7 @@ Mykolaiv
 Lviv
 Luhansk
 Kyiv Oblast
-Kyiv City
+Kyiv
 Crimea
 Kirovohrad
 Khmelnytskyi
@@ -3858,10 +3858,10 @@ Dnipropetrovsk
 Chernivtsi
 Chernihiv Oblast
 Cherkasy
-Central Region
-Eastern Region
-Northern Region
-Western Region
+Central
+Eastern
+Northern
+Western
 Wake Island
 Navassa Island
 Baker Island
@@ -3942,19 +3942,19 @@ Cerro Largo
 Canelones
 Artigas
 Karakalpakstan
-Surxondaryo Region
-Samarqand Region
+Surxondaryo
+Samarqand
 Qashqadaryo
 Bukhara
-Tashkent Region
 Tashkent
-Sirdaryo Region
-Navoiy Region
+Tashkent
+Sirdaryo
+Navoiy
 Namangan
-Xorazm Region
-Jizzakh Region
+Xorazm
+Jizzakh
 Fergana
-Andijan Region
+Andijan
 Saint Patrick Parish
 Saint George Parish
 Saint David Parish
@@ -3989,40 +3989,40 @@ Vargas
 Saint Croix Island
 Saint John Island
 Saint Thomas Island
-Nghệ An Province
-Thừa Thiên Huế Province
-Thanh Hóa Province
-Sơn La Province
+Nghệ An
+Thừa Thiên Huế
+Thanh Hóa
+Sơn La
 Quảng Ninh
-Lạng Sơn Province
-Lai Châu Province
-Hà Tĩnh Province
-Hanoi
-Cao Bằng Province
-Điện Biên Province
-Lao Cai
-Thai Nguyen
-Bac Ninh
-Phu Tho
-Hai Phong
-Hưng Yên Province
-Ninh Binh
-Quang Tri
-Da Nang City
-Quang Ngai
+Lạng Sơn
+Lai Châu
+Hà Tĩnh
+Hà Nội
+Cao Bằng
+Điện Biên
+Lào Cai
+Thái Nguyên
+Bắc Ninh
+Phú Thọ
+Hải Phòng
+Hưng Yên
+Ninh Bình
+Quảng Trị
+Đà Nẵng
+Quảng Ngãi
 Gia Lai
-Khanh Hoa
-Dak Lak
-Lam Dong
-Dong Nai
-Ho Chi Minh City (HCMC)
-Tay Ninh
-Dong Thap
-Vinh Long
+Khánh Hòa
+Đắk Lắk
+Lâm Đồng
+Đồng Nai
+Hồ Chí Minh
+Tây Ninh
+Đồng Tháp
+Vĩnh Long
 An Giang
-Can Tho City
-Ca Mau
-Tuyen Quang
+Cần Thơ
+Cà Mau
+Tuyên Quang
 Tafea
 Sanma
 Torba
@@ -4098,22 +4098,22 @@ Northern Cape
 Limpopo
 North West
 Western Cape
-Western Province
-Southern Province
+Western
+Southern
 North-Western
-Northern Province
-Lusaka Province
-Luapula Province
-Eastern Province
+Northern
+Lusaka
+Luapula
+Eastern
 Copperbelt
-Central Province
+Central
 Muchinga
-Midlands Province
-Matabeleland South Province
+Midlands
+Matabeleland South
 Matabeleland North
-Masvingo Province
+Masvingo
 Mashonaland West
-Mashonaland East Province
+Mashonaland East
 Mashonaland Central
 Manicaland
 Bulawayo
@@ -34860,7 +34860,7 @@ Xã Hòa Long
 92891	-797680	Gatún	173	2480	1
 92899	-56868	Nanbékaha	43	573	1
 92917	781385	Pudūr	104	1348	8
-92941	1057278	Bạc Liêu	241	3768	156
+92941	1057278	Thành Phố Bạc Liêu	241	3768	156
 92948	50541	Mokwa	164	2350	21
 92951	-781550	San Ignacio de Tupile	173	2475	1
 92957	-694543	Ospino	238	3713	33
@@ -35571,7 +35571,7 @@ Xã Hòa Long
 97769	1254247	San Francisco	177	2546	0
 97788	1244174	Lombog	177	2552	2
 97791	1231503	Tinaogan	177	2552	2
-97797	1057338	Phụng Hiệp	241	3767	0
+97797	1057338	Cây Dương	241	3767	0
 97804	1254643	Rizal	177	2546	2
 97808	1241484	Batuan	177	2552	4
 97809	1238988	Antequera	177	2552	0
@@ -35930,7 +35930,7 @@ Xã Hòa Long
 99711	1240484	Nahawan	177	2552	2
 99718	1226249	Cauayan	177	2550	8
 99721	57789	Mashegu	164	2350	0
-99727	1048475	Kiên Hải	241	3766	23
+99727	1048475	Đặc khu Kiên Hải	241	3766	23
 99729	434276	Ruqi	207	3217	148
 99733	1236165	Simala	177	2552	2
 99736	1226544	Tiling	177	2550	3
@@ -36103,7 +36103,7 @@ Xã Hòa Long
 100667	345333	Āsosa	68	965	69
 100667	762833	Elūr	104	1361	31
 100667	1232500	Padre Zamora	177	2552	2
-100682	1058222	Bình Minh	241	3765	94
+100682	1058222	Cái Vồn	241	3765	94
 100692	-54342	Sorodi	43	573	2
 100706	61906	Tegina	164	2350	24
 100740	-842155	Sabanilla	49	685	1
@@ -36369,7 +36369,7 @@ Xã Hòa Long
 102226	1053984	Vĩnh Thạnh	241	3767	98
 102230	-639245	San Lorenzo	238	3712	8
 102231	-58657	Bougou	43	573	4
-102241	1039716	Phu Quoc	241	3766	294
+102241	1039716	Phú Quốc	241	3766	294
 102245	1235573	Bonbon	177	2552	6
 102247	-74825	Tienko	43	567	3
 102253	777485	Ayyampālaiyam	104	1348	12
@@ -36510,7 +36510,7 @@ Xã Hòa Long
 102897	111673	Gombe	164	2373	560
 102904	792016	Peravurani	104	1348	22
 102908	-51597	Kadarvogo	43	573	2
-102909	1057564	Sa Dec	241	3764	214
+102909	1057564	Sa Đéc	241	3764	214
 102928	33837	Kalalé	24	323	35
 102937	761584	Pappinivattom	104	1361	15
 102953	-677177	Mariara	238	3725	116
@@ -36536,7 +36536,7 @@ Xã Hòa Long
 103064	-61097	Massiogo	145	2078	41
 103094	1190128	Caruray	177	2543	4
 103095	-65382	Fébiasso	43	573	1
-103099	1057386	Quận Đức Thịnh	241	-1	132
+103099	1057386	Đức Thịnh Sa Đéc	241	-1	132
 103103	98439	Bauchi	164	2360	693
 103103	1239494	Lapu-Lapu City	177	2552	497
 103105	-69351	Gbeya	43	567	7
@@ -36708,7 +36708,7 @@ Xã Hòa Long
 104092	-614729	California	226	3526	3
 104093	787918	Nathampannai	104	1348	8
 104110	761682	Kurumpilavu	104	1361	14
-104111	1069547	Cần Giờ	241	3762	55
+104111	1069547	Cần Thạnh	241	3762	55
 104119	-716892	Concepción	238	3708	92
 104123	86875	Saminaka	164	2355	7
 104131	1225162	La Paz	177	2550	2
@@ -37454,7 +37454,7 @@ Xã Hòa Long
 108209	1238689	Tabuelan	177	2552	3
 108214	1224311	Alimodian	177	2550	7
 108225	770196	Kinattukkadavu	104	1348	8
-108230	1066297	Ho Chi Minh City	241	3762	14002
+108230	1066297	Thành phố Hồ Chí Minh	241	3762	14002
 108231	1225344	Santa Barbara	177	2550	8
 108238	107722	Dukku	164	2373	16
 108250	1227130	Dumangas	177	2550	8
@@ -37880,8 +37880,8 @@ Xã Hòa Long
 110833	-92000	Sansando	85	1096	0
 110833	-92500	Niandan Koro	85	1096	0
 110833	758490	Ariyallur	104	1361	22
-110842	1076810	Tánh Linh	241	3760	0
-110842	1067883	Tân Uyên	241	3762	52
+110842	1076810	Lạc Tánh	241	3760	0
+110842	1067883	Uyên Hưng	241	3762	52
 110845	773969	Muttanampālaiyam	104	1348	26
 110866	771146	Arasūr	104	1348	11
 110866	-718560	Sinamaica	238	3708	0
@@ -38821,7 +38821,7 @@ Xã Hòa Long
 117343	-861928	La Conquista	165	2394	0
 117347	1062144	Rung	116	1623	10
 117348	1082023	Xã Tân Hà	241	3760	0
-117356	1083733	Đưc Trọng	241	3760	161
+117356	1083733	Liên Nghĩa	241	3760	161
 117358	1049771	Mukh Kampul	116	1615	0
 117365	1240420	Esperanza	177	2556	17
 117375	17772	Namponkoré	20	266	16
@@ -39551,7 +39551,7 @@ Xã Hòa Long
 124101	1210899	Magbay	177	2543	3
 124108	74146	Safana	164	2353	0
 124109	1235672	Bulo	177	2556	2
-124109	1081768	Liên Sơn	241	3759	5
+124109	1081768	Lắk	241	3759	5
 124129	1242791	San Antonio	177	2553	0
 124146	-18064	Sourgoubila	20	269	0
 124160	395597	Alamata	68	971	70
@@ -39709,7 +39709,7 @@ Xã Hòa Long
 125398	750102	Madhūru	104	1361	12
 125409	1060625	Kou Loab	116	1612	4
 125429	783574	Bargūr	104	1348	16
-125429	1079898	Ea Na	241	3759	12
+125429	1079898	Ea Ana	241	3759	12
 125430	1023048	Ban I Pat	218	3370	7
 125433	-871652	El Realejo	165	2393	6
 125442	-869798	Posoltega	165	2393	6
@@ -40375,7 +40375,7 @@ Xã Hòa Long
 130938	72262	Jibia	164	2353	14
 130942	1229600	San Rafael	177	2556	3
 130947	-167622	Kartung	84	1087	5
-130955	1093209	Tuy Hòa	241	3759	155
+130955	1093209	Thành phố Tuy Hòa	241	3759	155
 130967	1214235	Maluanluan	177	2543	3
 130976	798623	Kadambuttūr	104	1348	11
 130982	801615	Ambattur	104	1348	466
@@ -40539,7 +40539,7 @@ Xã Hòa Long
 132047	999796	Ban Laem	218	3315	0
 132058	-163056	Somita	84	1087	2
 132058	775473	Adde Vishwanathapura	104	1362	1
-132073	1083164	Ea Hiao	241	3759	12
+132073	1083164	Buôn Hiao	241	3759	12
 132078	-23589	Gourcy	20	268	40
 132092	801097	Alamādi	104	1348	7
 132093	1236761	Anuling	177	2556	2
@@ -41506,7 +41506,7 @@ Xã Hòa Long
 137736	1027373	Ou Bei Choan	116	1622	15
 137744	444420	Ḑawrān	245	3812	0
 137753	1085256	Kông Chro	241	3757	0
-137765	1092237	Qui Nhon	241	3757	519
+137765	1092237	Quy Nhơn	241	3757	519
 137768	1005790	Huai Khwang	218	3366	78
 137770	1233032	Bagacay	177	2556	2
 137770	1004567	Taling Chan	218	3366	105
@@ -41892,7 +41892,7 @@ Xã Hòa Long
 139833	1210833	Mahabang Parang	177	2549	2
 139833	-148000	Koungheul	206	3198	31
 139833	-145667	Koumpentoum	206	3189	15
-139833	1080000	Pleiku	241	3757	114
+139833	1080000	Plây Cu	241	3757	114
 139835	102704	Gouré	162	2336	24
 139841	777722	Gorantla	104	1373	24
 139849	1241347	Caramoran	177	2556	4
@@ -43630,7 +43630,7 @@ Xã Hòa Long
 151194	-235191	Achada Fazenda	51	713	2
 151195	-893572	Gualán	90	1124	19
 151202	1057990	Pakse	126	1718	77
-151205	1087923	Quảng Ngãi	241	3756	278
+151205	1087923	Thành phố Quảng Ngãi	241	3756	278
 151206	-924400	Primer Cantón	157	2275	1
 151225	-918064	Tejutla	90	1129	2
 151228	1206447	Acli	177	2551	2
@@ -44188,7 +44188,7 @@ Xã Hòa Long
 154859	1209665	Cabanatuan City	177	2551	343
 154862	1199622	San Lorenzo	177	2551	2
 154880	1039964	Phon Sai	218	3341	0
-154882	1083074	Tiên Phước	241	3755	0
+154882	1083074	Tiên Kỳ	241	3755	0
 154887	446657	Al Ḩarjah	245	3802	0
 154905	1206654	San Manuel	177	2551	5
 154914	-917655	San Pedro Necta	90	1138	3
@@ -44324,7 +44324,7 @@ Xã Hòa Long
 155812	435873	Banī al ‘Awwām	245	3814	0
 155815	1206112	Amacalan	177	2551	2
 155817	791106	Cumbum	104	1373	22
-155822	1081142	Hiệp Đức	241	3755	14
+155822	1081142	Tân An	241	3755	14
 155823	1199335	Bani	177	2551	3
 155829	-614559	Portsmouth	59	777	3
 155833	-872333	San Juan Pueblo	96	1219	5
@@ -44777,7 +44777,7 @@ Xã Hòa Long
 158700	746114	Sāmbre	104	1362	13
 158725	-966236	El Camalote	157	2268	1
 158726	-927247	Jaltenango de la Paz	157	2275	10
-158744	1080213	Đại Đồng	241	3755	10
+158744	1080213	Phước Lộc	241	3755	10
 158750	744721	Hindalgi	104	1362	13
 158755	1076282	A Rooi	241	3755	1
 158772	436667	Al Maghrabah	245	3814	0
@@ -44786,14 +44786,14 @@ Xã Hòa Long
 158779	1203163	Libas	177	2548	3
 158790	1080890	Đại Nghĩa	241	3755	10
 158793	1208983	Lupao	177	2551	11
-158794	1083350	Hoi An	241	3755	32
+158794	1083350	Hội An	241	3755	32
 158799	781335	Ālampur	104	1347	14
 158807	1078085	Ka Dăng	241	3755	1
 158809	1203742	Mapolopolo	177	2548	2
 158811	785870	Atmakūr	104	1373	35
 158818	-963241	Benito Juárez	157	2268	1
 158821	-935287	Tres Picos	157	2275	4
-158821	1081209	Đại Lộc	241	3755	16
+158821	1081209	Ái Nghĩa	241	3755	16
 158830	1203890	Dumpay	177	2548	5
 158840	-613148	Grand-Bourg	86	1101	5
 158844	1204509	Lepa	177	2548	8
@@ -44804,7 +44804,7 @@ Xã Hòa Long
 158868	1205736	Puelay	177	2548	6
 158884	1202378	Aguilar	177	2548	9
 158885	-878555	Baja Mar	96	1214	1
-158885	1082545	Điện Bàn	241	3755	226
+158885	1082545	Vĩnh Điện	241	3755	226
 158895	-937040	Doctor Belisario Domínguez (La Barra)	157	2275	1
 158915	1003080	Chumsaeng	218	3357	0
 158922	1049056	Pathum Ratchawongsa	218	3379	0
@@ -45035,7 +45035,7 @@ Xã Hòa Long
 160425	1052184	Khemarat	218	3378	0
 160429	-928187	Benito Juárez	157	2275	2
 160431	1203333	Dagupan	177	2548	171
-160431	1081821	Hòa Cường	241	3755	119
+160431	1081821	Bình Thuận	241	3755	119
 160438	1204861	Manaoag	177	2548	59
 160443	1207987	Natividad	177	2548	5
 160450	-615643	Capesterre-Belle-Eau	86	1101	19
@@ -45074,7 +45074,7 @@ Xã Hòa Long
 160667	1082333	An Hải	241	3755	82
 160668	1200941	Sual	177	2548	5
 160675	979069	Tagondaing	146	2098	4
-160678	1082208	Da Nang	241	3755	1276
+160678	1082208	Đà Nẵng	241	3755	1276
 160692	-922862	Héroes de Chapultepec	157	2275	1
 160695	-967547	Santa Catarina Loxicha	157	2268	3
 160699	1199391	Mabini	177	2548	2
@@ -46147,7 +46147,7 @@ Xã Hòa Long
 167167	815500	Pippara	104	1373	8
 167167	-924000	Chanal	157	2275	5
 167167	985667	Mae Sot	218	3308	44
-167167	1072333	Thôn La Vang Chinh	241	3754	4
+167167	1072333	La Vang	241	3754	4
 167169	-928267	Zequentic	157	2275	1
 167178	790020	Kondamallapally	104	1347	9
 167186	1215553	Rizal	177	2544	2
@@ -46216,7 +46216,7 @@ Xã Hòa Long
 167499	-914419	El Zapotal	157	2275	1
 167500	-990024	Cuautepec	157	2273	3
 167500	1207833	Gambang	177	2547	3
-167508	1071828	thị xã Quảng Trị	241	3754	23
+167508	1071828	Quảng Trị	241	3754	23
 167521	-927413	Patosil	157	2275	1
 167522	-987306	Jolotichán	157	2273	1
 167527	1026325	Khuean Ubonrat	218	3367	0
@@ -49252,7 +49252,7 @@ Xã Hòa Long
 183418	-1008211	Santa Teresa	157	2273	1
 183419	-649307	Charlotte Amalie	240	3735	20
 183425	-1006344	Querendas	157	2273	1
-183428	1059057	Hà Tĩnh	241	3743	266
+183428	1059057	Thành Sen	241	3743	266
 183435	740310	Sāsvad	104	1358	31
 183446	-777954	Maroon Town	111	1474	3
 183450	-928036	Caparroso	157	2264	1
@@ -49577,7 +49577,7 @@ Xã Hòa Long
 184724	-667157	Arecibo	182	2589	87
 184726	1205763	Davila	177	2548	3
 184738	-669385	Quebradillas	182	2642	5
-184742	1057869	Thuần Thiện	241	3743	7
+184742	1057869	Trường Tiến	241	3743	7
 184761	-732350	Petite Rivière de Nippes	98	1250	1
 184762	-1009792	Zirándaro de los Chávez	157	2273	3
 184763	-979635	Almolonga	157	2267	1
@@ -51444,7 +51444,7 @@ Xã Hòa Long
 192989	-998239	San Bartolo el Viejo	157	2271	3
 192998	-813781	Rock Hole	124	-1	6
 193000	-811167	East End	124	1684	1
-193000	1054333	Nghĩa Đàn	241	3736	5
+193000	1054333	Nghĩa Hưng	241	3736	5
 193002	730588	Bhiwandi	104	1358	874
 193003	979685	Mae Hong Son	218	3317	9
 193006	-995228	Colonia Isidro Fabela	157	2271	1
@@ -52285,7 +52285,7 @@ Xã Hòa Long
 195634	-988568	Papalotla	157	2271	4
 195634	-967000	Mesa de Guadalupe	157	2261	3
 195636	-988764	Atenguillo	157	2271	1
-195636	1045346	Bản Na Hỷ	241	3736	16
+195636	1045346	Na Hỷ	241	3736	16
 195637	-1014155	Lagunillas	157	2282	2
 195638	-708758	Villa Bisonó	60	783	33
 195642	-997733	Barrio San Joaquín el Junco	157	2271	2
@@ -54139,7 +54139,7 @@ Xã Hòa Long
 202573	-1025902	Cumuato	157	2282	1
 202580	-981333	Xolotla	157	2267	2
 202581	1001626	Donethat	126	1721	1
-202581	1059797	Ninh Bình	241	3753	36
+202581	1059797	Thành Phố Ninh Bình	241	3753	36
 202582	-974003	Espinal	157	2261	2
 202583	757700	Bhokardan	104	1358	24
 202588	-1010254	Puerta del Monte	157	2284	1
@@ -54297,7 +54297,7 @@ Xã Hòa Long
 203262	-1025925	Moras	157	2283	1
 203266	-970266	Hueytepec	157	2261	2
 203275	-1024575	El Cuenqueño	157	2282	1
-203277	1060121	Hanoi	241	3744	0
+203277	1060121	Lâm	241	3744	0
 203279	1034086	Viengthong	126	1717	0
 203279	-894543	Yotholin	157	2260	2
 203282	-1031008	San Juan Tecomatlán	157	2283	1
@@ -54552,7 +54552,7 @@ Xã Hòa Long
 204334	-991495	Taxadho	157	2272	1
 204335	998762	Mae Sai	218	3324	27
 204336	-1036369	Bellavista	157	2283	7
-204339	1061773	Nam Định	241	3753	448
+204339	1061773	Thành Phố Nam Định	241	3753	448
 204341	-1004718	Charco Blanco	157	2266	1
 204350	-993571	Zozea	157	2272	1
 204354	-1039288	San Martín Hidalgo	157	2283	8
@@ -54589,7 +54589,7 @@ Xã Hòa Long
 204489	816200	Narharpur	104	1375	6
 204492	-888307	Tahdzibichen	157	2260	1
 204500	728833	Bhimpur	104	1379	10
-204500	1063400	Thái Bình	241	3752	53
+204500	1063400	Thành Phố Thái Bình	241	3752	53
 204503	-1015301	Abasolo	157	2284	27
 204503	-991908	El Barrido	157	2272	1
 204504	-1005061	El Salto de Espejo	157	2284	1
@@ -54824,7 +54824,7 @@ Xã Hòa Long
 205436	729411	Atul	104	1366	3
 205442	-980601	San Esteban	157	2272	1
 205452	-996876	Gandho	157	2272	2
-205453	1059122	Phủ Lý	241	3753	136
+205453	1059122	Thành Phố Phủ Lý	241	3753	136
 205454	-1016289	San Gregorio	157	2284	1
 205456	-1006879	Apaseo el Grande	157	2284	26
 205456	-1033697	Real del Valle (El Paraíso) [Fraccionamiento]	157	2283	13
@@ -55429,7 +55429,7 @@ Xã Hòa Long
 208169	-1027635	Tepatitlán de Morelos	157	2283	91
 208169	-1040859	Santa Rosalía	157	2283	1
 208170	-981003	Colatlán	157	2261	1
-208172	1053376	Hòa Bình	241	3750	105
+208172	1053376	Thành Phố Hòa Bình	241	3750	105
 208174	-1013149	Aldama	157	2284	4
 208175	-895608	Tekik de Regil	157	2260	1
 208178	-1034517	Campestre las Palomas [Fraccionamiento]	157	2283	4
@@ -55507,7 +55507,7 @@ Xã Hòa Long
 208634	-976793	La Concepción	157	2261	1
 208638	1066133	An Dương	241	3751	0
 208639	-1032392	Ixtlahuacán del Río	157	2283	6
-208648	1066835	Haiphong	241	3751	2625
+208648	1066835	Hải Phòng	241	3751	2625
 208651	-892013	Hoctun	157	2260	4
 208652	-896535	Dzununcán	157	2260	1
 208654	851828	Nalco	104	1353	19
@@ -55674,7 +55674,7 @@ Xã Hòa Long
 209389	-1009810	Xoconoxtle el Grande	157	2284	1
 209392	-1016423	Barretos	157	2284	1
 209409	-889572	Sitilpech	157	2260	1
-209410	1063330	Hải Dương	241	3751	241
+209410	1063330	Thành Phố Hải Dương	241	3751	241
 209416	-983388	Tecacahuaco	157	2272	1
 209419	-170384	Nouadhibou	151	2146	146
 209421	1068027	Quảng Yên	241	3740	0
@@ -55702,7 +55702,7 @@ Xã Hòa Long
 209500	1057167	Phụng Nghia	241	3744	11
 209500	1065500	Huyền Tụng	241	3751	4
 209503	-1012997	Paso de Pirules	157	2284	1
-209505	1070734	Hạ Long	241	3740	270
+209505	1070734	Thành Phố Hạ Long	241	3740	270
 209508	729583	Kabilpor	104	1366	15
 209514	729458	Kaliawadi	104	1366	4
 209516	-1007911	La Cieneguita	157	2284	1
@@ -55836,7 +55836,7 @@ Xã Hòa Long
 210118	-979443	El Mirador	157	2261	1
 210119	752741	Dharangaon	104	1358	35
 210130	1058250	Đống Đa	241	3744	371
-210134	1058477	Hai Bà Trưng	241	3744	303
+210134	1058477	Hai BàTrưng	241	3744	303
 210138	-988414	Tepehuacán de Guerrero	157	2272	1
 210144	-1003174	Ojo de Agua del Refugio	157	2284	1
 210152	-1015299	El Refugio de los Sauces	157	2284	1
@@ -55846,8 +55846,8 @@ Xã Hòa Long
 210164	-898772	Hunucmá	157	2260	24
 210167	-1037160	El Salvador	157	2283	2
 210167	1058500	Nguyễn Du	241	3744	10
-210167	1057667	Phú Đô	241	3744	15
-210167	1058333	Hoang Cau	241	3744	18
+210167	1057667	làng Phú Đô	241	3744	15
+210167	1058333	Hoàng Cầu	241	3744	18
 210167	1073000	Cẩm Phả Mines	241	3740	135
 210177	759104	Varangaon	104	1358	44
 210179	-1003343	Santa Anita	157	2284	1
@@ -55872,7 +55872,7 @@ Xã Hòa Long
 210226	-1014581	Providencia de Nápoles	157	2284	1
 210237	1058036	Láng Thượng	241	3744	31
 210240	-1052678	Rincón de Guayabitos	157	2281	1
-210245	1058412	Hanoi	241	3744	8053
+210245	1058412	Hà Nội	241	3744	8053
 210263	838120	Binika	104	1353	15
 210267	728868	Mahuver	104	1366	10
 210269	768389	Telhāra	104	1358	21
@@ -55890,7 +55890,7 @@ Xã Hòa Long
 210323	1058007	Cầu Giấy	241	3744	292
 210333	815333	Pātan	104	1375	10
 210333	1058333	Yên Phụ	241	3744	23
-210333	1059000	Long Bien	241	3744	347
+210333	1059000	Long Biên	241	3744	347
 210333	1057833	Mai Dịch	241	3744	40
 210333	1058167	Liễu Giai	241	3744	20
 210333	1058000	Dịch Vọng	241	3744	27
@@ -55899,7 +55899,7 @@ Xã Hòa Long
 210353	-878508	Tixcancal	157	2260	2
 210353	-1044117	Mexpan	157	2281	1
 210363	-1014566	El Salitrillo	157	2284	1
-210365	1058268	Ba Dinh	241	3744	221
+210365	1058268	Ba Đình	241	3744	221
 210371	-1014437	Chichimequillas	157	2284	2
 210372	-1018247	Estación de San Francisco	157	2284	1
 210383	-1052502	La Peñita de Jaltemba	157	2281	9
@@ -56200,12 +56200,12 @@ Xã Hòa Long
 211959	-766035	Puerto Padre	50	691	76
 211959	728302	Surat	104	1366	4591
 211964	819691	Arang	104	1375	19
-211973	1041060	Hát Lót	241	3739	0
+211973	1041060	Thị Trấn Hát Lót	241	3739	0
 211974	-988302	Pemucho	157	2280	1
 211977	-984927	Santa Cruz	157	2272	1
-211981	1054222	Tây Đằng	241	3744	12
+211981	1054222	Tây Dằng	241	3744	12
 211983	-1021242	Tlacuitapan	157	2283	1
-211987	1051789	Thanh Sơn	241	3750	0
+211987	1051789	Huyện Thanh Sơn	241	3750	0
 211989	1055328	Tú Trưng	241	3750	7
 211992	-1006919	La Sabana	157	2284	1
 212005	1062474	Neo	241	3749	0
@@ -56289,7 +56289,7 @@ Xã Hòa Long
 212543	-974503	Estero de Milpas	157	2261	1
 212544	850330	Rengāli	104	1353	6
 212547	-976557	El Anono	157	2261	1
-212549	1052953	Hưng Hóa	241	3750	0
+212549	1052953	Huyện Tam Thanh	241	3750	0
 212553	733041	Māndvi	104	1366	18
 212553	1054894	Thổ Tăng	241	3750	14
 212567	775101	Achalpur	104	1358	112
@@ -56431,7 +56431,7 @@ Xã Hòa Long
 213231	-1578063	Upper Manoa	233	3663	3
 213236	745680	Dondaicha	104	1358	46
 213244	-987286	Ocuiltzapoyo	157	2280	1
-213256	1039188	Sơn La	241	3739	106
+213256	1039188	Thành Phố Sơn La	241	3739	106
 213261	-1578759	Kalihi-Palama	233	3663	43
 213278	-1579830	Iroquois Point	233	3663	4
 213286	710265	Dhāri	104	1366	29
@@ -56474,7 +56474,7 @@ Xã Hòa Long
 213453	-1580512	ʻEwa Villages-Honouliuli	233	3663	6
 213461	-1577238	Waimanalo	233	3663	5
 213469	-1580858	Makakilo City	233	3663	15
-213471	1050574	Yên Lập	241	3750	0
+213471	1050574	Huyện Yên Lập	241	3750	0
 213482	748804	Shirpur	104	1358	76
 213491	-1579471	Joint Base Pearl Harbor Hickam	233	3663	42
 213498	-1579592	Ford Island	233	3663	7
@@ -56541,7 +56541,7 @@ Xã Hòa Long
 213847	729584	Palod	104	1366	7
 213847	-1579096	Camp H.M. Smith	233	3663	6
 213851	789216	Saoner	104	1358	32
-213860	1030230	Dien Bien Phu	241	3746	84
+213860	1030230	Điện Biên Phủ	241	3746	84
 213867	-1580092	Waipahu	233	3663	38
 213868	-989901	Xilitla	157	2280	6
 213871	1061293	Cao Thượng	241	3749	6
@@ -56563,7 +56563,7 @@ Xã Hòa Long
 213973	-1579752	Pearl City	233	3663	47
 213981	-1580303	Village Park	233	3663	11
 213988	721754	Alang	104	1366	18
-213996	1052222	Phú Thọ	241	3750	91
+213996	1052222	Thị Xã Phú Thọ	241	3750	91
 213997	-1579379	Newtown	233	3663	3
 213999	-1577990	Kaneohe	233	3663	34
 214000	1062667	Kép	241	3749	11
@@ -56579,7 +56579,7 @@ Xã Hòa Long
 214026	-878780	Dzonot Carretero	157	2260	2
 214029	-1579576	Lower Pearl City	233	3663	2
 214041	799262	Tirorā	104	1358	25
-214068	1053123	Phong Châu	241	3750	0
+214068	1053123	Huyện Phong Châu	241	3750	0
 214085	-1577956	Pū‘ōhala Village	233	3663	3
 214107	711662	Chalāla	104	1366	17
 214109	-1031169	Juchipila	157	2277	6
@@ -56596,7 +56596,7 @@ Xã Hòa Long
 214196	958758	Ta Dar U	146	2095	1
 214198	1058899	Phổ Yên	241	3748	231
 214203	792766	Kāndri	104	1358	8
-214213	1051337	Sông Thao	241	3750	0
+214213	1051337	Huyện Sông Thao	241	3750	0
 214224	789817	Khāpa	104	1358	15
 214244	-975453	Saladero	157	2261	1
 214252	-1046092	San José de Mojarras	157	2281	1
@@ -56664,7 +56664,7 @@ Xã Hòa Long
 214752	-1580340	Wheeler Army Airfield	233	3663	2
 214758	-1581992	Mākaha Valley	233	3663	1
 214768	1061265	Cầu Gồ	241	3749	0
-214772	1058414	Thành phố Sông Công	241	3748	128
+214772	1058414	Sông Công	241	3748	128
 214774	703311	Vanthli	104	1366	14
 214778	1091132	Haicheng	47	635	0
 214779	-1579945	Mililani Mauka	233	3663	21
@@ -56691,7 +56691,7 @@ Xã Hòa Long
 214927	869335	Balasore	104	1353	144
 214981	701378	Mānāvadar	104	1366	30
 214984	-1580652	Schofield Barracks	233	3663	16
-214988	1051410	Thanh Ba	241	3750	0
+214988	1051410	Huyện Thanh Hòa	241	3750	0
 215016	-1048209	La Cantera	157	2281	1
 215018	805406	Lānjī	104	1359	13
 215025	-1047052	San Luis de Lozada	157	2281	1
@@ -56714,7 +56714,7 @@ Xã Hòa Long
 215179	738215	Selamba	104	1366	6
 215194	1096557	Shatian	47	635	14
 215197	704598	Jūnāgadh	104	1366	319
-215199	1032229	Mường Ảng	241	3746	0
+215199	1032229	Thị Trấn Mường Ảng	241	3746	0
 215200	-983883	Tempoal de Sánchez	157	2261	12
 215202	-1582214	Makua Valley	233	3663	3
 215232	809979	Chhuīkhadān	104	1375	7
@@ -56776,7 +56776,7 @@ Xã Hòa Long
 215705	-1578756	Punalu‘u	233	3663	1
 215708	731602	Vālia	104	1366	1
 215708	-1012639	Molino de San José	157	2284	1
-215736	1065026	Chi Lăng	241	3741	7
+215736	1065026	Thị Trấn Chi Lăng	241	3741	7
 215743	-1021383	Mesón de los Sauces	157	2283	2
 215750	1084790	Qisha	47	635	44
 215759	-782826	Carlos Manuel de Céspedes	50	699	0
@@ -56797,7 +56797,7 @@ Xã Hòa Long
 215921	-1051742	La Libertad	157	2281	1
 215928	-1010914	Chirimoya (Estación Chirimoya)	157	2284	1
 215928	-1581034	Hale‘iwa	233	3663	3
-215942	1058482	Thái Nguyên	241	3748	420
+215942	1058482	Thành Phố Thái Nguyên	241	3748	420
 215945	-881577	Río Lagartos	157	2260	2
 215956	785263	Pāndhurnā	104	1359	45
 215964	-1010039	San José de Rancho Nuevo (Los Arrieros)	157	2284	1
@@ -56922,7 +56922,7 @@ Xã Hòa Long
 216938	-1579747	Kahuku-Kawela	233	3663	2
 216948	729805	Bharūch	104	1366	169
 216957	953743	Kyi	146	2095	1
-216968	1053990	Sơn Dương	241	3769	0
+216968	1053990	Huyên Sơn Dương	241	3769	0
 216969	-989675	Las Armas	157	2280	1
 216971	697206	Amardad	104	1366	5
 216982	762249	Pandhāna	104	1359	13
@@ -56988,7 +56988,7 @@ Xã Hòa Long
 217571	-722677	Five Cays Settlement	214	-1	3
 217587	1069234	Lộc Bình	241	3741	9
 217592	-1020197	Betulia	157	2283	1
-217617	1030978	Mường Chà	241	3746	13
+217617	1030978	Thị Trấn Mường Chà	241	3746	13
 217618	800430	Wārāseonī	104	1359	27
 217625	-1015607	Gachupines	157	2284	1
 217626	859732	Karanjiā	104	1353	22
@@ -57089,7 +57089,7 @@ Xã Hòa Long
 218513	1040895	Mù Cang Chải	241	3747	0
 218514	-1008718	Socavón (El Carmen)	157	2280	1
 218521	-781169	Esmeralda	50	699	20
-218526	1067610	Lạng Sơn	241	3741	200
+218526	1067610	Thành Phố Lạng Sơn	241	3741	200
 218552	702479	Bhāyāvadar	104	1366	19
 218553	840070	Jharsuguda	104	1353	97
 218556	1119627	Yangjiang	47	636	1292
@@ -57337,7 +57337,7 @@ Xã Hòa Long
 220622	-985655	Nuevo Tampaón	157	2280	3
 220631	821313	Tifrā	104	1375	30
 220633	754009	Pipri	104	1359	6
-220655	1050345	Thị Trấn Tân Yên	241	3769	8
+220655	1050345	Tân Yên	241	3769	8
 220657	816854	Mungeli	104	1375	36
 220669	764933	Mundi	104	1359	12
 220673	856646	Chāmpua	104	1353	10
@@ -58266,7 +58266,7 @@ Xã Hòa Long
 225405	1140953	Nanyuan Residential	47	636	9
 225410	1139482	Keji yuan	47	636	8
 225424	729039	Karamsad	104	1366	35
-225431	1038899	Bát Xát	241	3747	6
+225431	1038899	Thị Trấn Bát Xát	241	3747	6
 225434	1140043	Dalingxia	47	636	8
 225435	-738778	Masons Bay	31	398	0
 225443	1032978	Phong Thổ	241	3742	0
@@ -58495,7 +58495,7 @@ Xã Hòa Long
 226630	860750	Gopināthpur	104	1376	5
 226650	-1021098	General Pánfilo Natera	157	2277	4
 226655	749774	Sardārpur	104	1359	7
-226657	1062579	Cao Bằng	241	3745	73
+226657	1062579	Thành Phố Cao Bằng	241	3745	73
 226666	758900	Limbodi	104	1359	9
 226676	767429	Kannod	104	1359	17
 226676	755196	Dehri	104	1359	8
@@ -58737,7 +58737,7 @@ Xã Hòa Long
 228282	876089	Rāmjībanpur	104	1344	18
 228284	723636	Bāola	104	1366	42
 228290	1063234	Thị Trấn Hùng Quốc	241	3745	0
-228297	1054933	Pác Miầu	241	3745	4
+228297	1054933	Păc Miều	241	3745	4
 228304	-1025026	Sauceda de La Borda	157	2277	3
 228305	-1019108	Villa de Ramos	157	2280	2
 228328	1071965	Daxin	47	635	0
@@ -162521,7 +162521,7 @@ Xã Hòa Long
 522927	211054	Ząbki	179	2567	23
 522942	-2491	Buckden	76	1034	2
 522942	65778	Enter	166	2401	7
-522946	105684	Querum -  Wabenkamp	56	751	3
+522946	105684	Querum - Wabenkamp	56	751	3
 522950	49075	Ouderkerk aan de Amstel	166	2402	7
 522951	105418	Schuntersdlg - West	56	751	1
 522957	105232	Rühme - Vorwerksdlg.	56	751	1
@@ -182783,7 +182783,7 @@ Xã Hòa Long
 208583	1067126	Phường Vạn Mỹ	241	227
 208583	1057642	Thị Trấn Kim Bài	241	-1
 208588	1067082	Phường Cầu Tre	241	227
-208589	1066516	Xã An Hải	241	-1
+208589	1066516	Xã An Hải	241	-1
 208590	1056958	Xã Quảng Bị	241	178
 208592	1059034	Xã Thư Phú	241	185
 208593	1053575	Xã Trung Minh	241	-1

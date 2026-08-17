@@ -8,6 +8,7 @@ name = "devtool"
 path = "src/main.rs"
 
 [dependencies]
+unicode-normalization = "0.1"
 core-db.workspace = true
 core-index.workspace = true
 anyhow.workspace = true

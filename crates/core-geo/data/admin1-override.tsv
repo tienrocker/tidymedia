@@ -1,0 +1,45 @@
+# Chuẩn hoá tên cấp tỉnh/thành. GeoNames ghi nhóm này RẤT KHÔNG ĐỒNG NHẤT:
+# khoảng 20/34 đơn vị của Việt Nam không có dấu nào ("Lao Cai", "Bac Ninh"),
+# số còn lại lại dính hậu tố tiếng Anh ("Nghệ An Province"), và chỉ vài đơn vị
+# có tên tiếng Việt trong dump alternatenames. Trộn chúng vào một đường dẫn thì
+# ra "Lao Cai\Huyện Bảo Thắng" — nửa có dấu nửa không.
+#
+# Khoá là MÃ admin1 (VN.01…) vì mã ổn định, còn tên thì không. Giá trị chỉ thêm
+# dấu và bỏ hậu tố/tiền tố tiếng Anh — KHÔNG đổi tên hay gộp/tách đơn vị nào,
+# nên bảng này an toàn khi GeoNames cập nhật cơ cấu hành chính.
+#
+# Đọc bởi `devtool gen-geo`; sửa xong phải sinh lại places.tsv.
+VN.01	Hà Nội
+VN.04	Cao Bằng
+VN.08	Tuyên Quang
+VN.11	Điện Biên
+VN.12	Lai Châu
+VN.14	Sơn La
+VN.15	Lào Cai
+VN.19	Thái Nguyên
+VN.20	Lạng Sơn
+VN.22	Quảng Ninh
+VN.24	Bắc Ninh
+VN.25	Phú Thọ
+VN.31	Hải Phòng
+VN.33	Hưng Yên
+VN.37	Ninh Bình
+VN.38	Thanh Hóa
+VN.40	Nghệ An
+VN.42	Hà Tĩnh
+VN.44	Quảng Trị
+VN.46	Thừa Thiên Huế
+VN.48	Đà Nẵng
+VN.51	Quảng Ngãi
+VN.52	Gia Lai
+VN.56	Khánh Hòa
+VN.66	Đắk Lắk
+VN.68	Lâm Đồng
+VN.75	Đồng Nai
+VN.79	Hồ Chí Minh
+VN.80	Tây Ninh
+VN.82	Đồng Tháp
+VN.86	Vĩnh Long
+VN.91	An Giang
+VN.92	Cần Thơ
+VN.96	Cà Mau
