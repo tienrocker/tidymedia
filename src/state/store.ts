@@ -452,7 +452,11 @@ export const useStore = create<AppStore>((set, get) => ({
       const members = await api.getDupGroup(id);
       if (get().activeGroupId !== id) return; // đã chuyển nhóm khác
       const checked = new Map(get().dupChecked);
-      if (!checked.has(id)) {
+      // Nhóm tuyệt đối được chứng minh trùng BLAKE3 nên tick sẵn là an toàn.
+      // Nhóm GẦN GIỐNG chỉ là suy đoán từ hash tri giác: tick sẵn nghĩa là đặt
+      // ảnh thật vào danh sách xóa trước khi user kịp nhìn. Muốn áp rule thì
+      // bấm checkbox của nhóm ở cột trái (hoặc "chọn tất cả") - vẫn 1 cú bấm.
+      if (!checked.has(id) && get().dupKind === 0) {
         // Pre-check theo rule đang chọn - user override từng ô thoải mái
         checked.set(id, ruleChecked(members, get().dedupRule));
       }

@@ -80,6 +80,17 @@ Năm bất biến mà mọi đường code phá hủy đều phải qua - luật
 > **không cặp nào trùng byte**, nên dedup tuyệt đối bỏ qua cả ba là đúng. Gom theo tên file cũng
 > không phải lối tắt: 8 cặp trùng tên `IMG_####` lấy mẫu giữa hai thư mục thì 4 là cùng ảnh
 > (32-40 dB), 4 là ảnh hoàn toàn khác nhau (9-11 dB).
+>
+> Chỉ dựa khoảng cách tri giác cũng chưa đủ, và đây mới là nửa nguy hiểm. Một loạt ảnh chụp liên
+> tiếp cùng cảnh gần như y hệt nhau dưới hash 64-bit - ở lưới 8×8 luma thì người vừa đổi tư thế chỉ
+> chiếm một hai ô - nên 25 tấm ảnh thật sự khác nhau rơi chung vào một nhóm "gần giống". Không
+> ngưỡng nào tách được: siết chặt lại thì mất các bản nén lại thật từ lâu trước khi loạt ảnh kia
+> chịu rời nhau. Giờ bấm máy thì tách được, tuyệt đối: 25 tấm đó mang 25 mốc EXIF khác nhau, còn
+> bốn bản của `IMG_1463` cùng mang đúng `18:02:24.802` tới từng mili-giây. Hai file chỉ có thể là
+> cùng một tấm ảnh nếu ra từ cùng một lần bấm máy, nên nhóm giờ bắt buộc trùng giờ bấm máy mỗi khi
+> cả hai file đều có. Trên 21,5k ảnh của kho đó, nhóm to nhất tụt từ 138 file xuống 5, và 3.084
+> file rời khỏi danh sách ứng viên xóa - trong khi mọi bộ trùng thật, kể cả bản Telegram xuất ra đã
+> mất sạch EXIF, vẫn còn nguyên.
 
 ## ⚙️ Hiệu năng
 

@@ -117,15 +117,30 @@ fn date_sort_and_filter_prefer_capture_time() {
         .is_empty());
 }
 
+fn item(
+    file_id: i64,
+    hash64: i64,
+    wh: Option<(i64, i64)>,
+    taken_at: Option<i64>,
+) -> core_db::ClusterItem {
+    core_db::ClusterItem {
+        file_id,
+        hash64,
+        width: wh.map(|(w, _)| w),
+        height: wh.map(|(_, h)| h),
+        taken_at,
+    }
+}
+
 /// Nhóm "gần giống": cùng ảnh nhưng khác byte (nén lại / thu nhỏ). Dedup tuyệt
 /// đối không bao giờ thấy chúng, nên đây là đường duy nhất dọn được.
 #[test]
 fn similar_groups_cluster_by_perceptual_distance() {
     // Thuần: 2 ảnh sát nhau + 1 ảnh xa → đúng 1 nhóm 2 thành viên
     let items = vec![
-        (1, 0b1011_0110i64, Some(3024), Some(3024)),
-        (2, 0b1011_0111, Some(1772), Some(1772)), // lech 1 bit, cung ti le
-        (3, !0b1011_0110, Some(3024), Some(3024)), // khac han
+        item(1, 0b1011_0110, Some((3024, 3024)), None),
+        item(2, 0b1011_0111, Some((1772, 1772)), None), // lech 1 bit, cung ti le
+        item(3, !0b1011_0110, Some((3024, 3024)), None), // khac han
     ];
     let clusters = ops::cluster_similar(&items, 6);
     assert_eq!(clusters, vec![vec![1, 2]]);
@@ -133,22 +148,89 @@ fn similar_groups_cluster_by_perceptual_distance() {
     // Tỉ lệ khung hình khác hẳn thì KHÔNG gom dù hash sát nhau (dhash 8x8 bỏ
     // hết thông tin khung hình nên ảnh dọc/ngang có thể ra hash gần nhau)
     let items = vec![
-        (1, 0b1011_0110i64, Some(4000), Some(3000)),
-        (2, 0b1011_0111, Some(1080), Some(1920)),
+        item(1, 0b1011_0110, Some((4000, 3000)), None),
+        item(2, 0b1011_0111, Some((1080, 1920)), None),
     ];
     assert!(ops::cluster_similar(&items, 6).is_empty());
 
     // Thiếu kích thước (meta chưa chạy tới) thì vẫn gom theo hash
-    let items = vec![(1, 5i64, None, None), (2, 5, Some(100), Some(100))];
+    let items = vec![item(1, 5, None, None), item(2, 5, Some((100, 100)), None)];
     assert_eq!(ops::cluster_similar(&items, 6), vec![vec![1, 2]]);
 
     // Nối chuỗi: a~b, b~c nhưng a xa c → union-find vẫn gom cả 3 vào 1 nhóm
     let items = vec![
-        (1, 0b0000_0000i64, Some(10), Some(10)),
-        (2, 0b0000_1111, Some(10), Some(10)),
-        (3, 0b1111_1111, Some(10), Some(10)),
+        item(1, 0b0000_0000, Some((10, 10)), None),
+        item(2, 0b0000_1111, Some((10, 10)), None),
+        item(3, 0b1111_1111, Some((10, 10)), None),
     ];
     assert_eq!(ops::cluster_similar(&items, 4), vec![vec![1, 2, 3]]);
+}
+
+/// Chốt chặn giờ bấm máy. Số liệu lấy từ kho thật: loạt 13 tấm chụp liên tiếp
+/// cùng cảnh `IMG_8194..IMG_8206` (hash gần như y hệt vì người chỉ chiếm 1-2 ô
+/// trên lưới 9x8) so với 4 bản của cùng một tấm `IMG_1463`.
+#[test]
+fn similar_groups_never_merge_different_shutter_presses() {
+    // 13 mốc EXIF thật, trải 14 giây trong cùng một phút (2016-11-19 12:08).
+    // Hash cho y hệt nhau — chốt chặn duy nhất tách được chúng là taken_at.
+    let burst_ms = [
+        3_000, 3_870, 5_000, 5_720, 12_000, 12_670, 13_360, 14_110, 14_820, 15_410, 16_090, 16_720,
+        17_190,
+    ];
+    let burst: Vec<_> = burst_ms
+        .iter()
+        .enumerate()
+        .map(|(i, ms)| {
+            item(
+                8194 + i as i64,
+                0b1011_0110,
+                Some((5472, 3648)),
+                Some(1_479_557_283_000 + ms),
+            )
+        })
+        .collect();
+    assert!(
+        ops::cluster_similar(&burst, 6).is_empty(),
+        "13 lan bam may khac nhau khong duoc gom - do la 13 anh that"
+    );
+
+    // 4 bản của CÙNG một lần bấm máy: 3 độ phân giải, 4 dung lượng, hash lệch
+    // 0-3 bit, nhưng chung đúng một mốc 2018-08-02 18:02:24.802
+    let ts = Some(1_533_232_944_802);
+    let real_dup = vec![
+        item(1, 0b1011_0110, Some((3024, 3024)), ts), // icloud
+        item(2, 0b1011_0111, Some((3024, 3024)), ts), // iphone
+        item(3, 0b1011_0100, Some((3024, 3024)), ts), // TienIphone
+        item(4, 0b1011_1110, Some((1772, 1772)), ts), // anh\2019, bi resize
+    ];
+    assert_eq!(
+        ops::cluster_similar(&real_dup, 6),
+        vec![vec![1, 2, 3, 4]],
+        "cung mot lan bam may -> van phai gom du 4 ban"
+    );
+
+    // Ảnh qua app nhắn tin bị xóa sạch EXIF: thiếu mốc thì không chặn, vẫn gom
+    // được với bản gốc (đây là ca thường gặp NHẤT của M7)
+    let stripped = vec![
+        item(1, 0b1011_0110, Some((3024, 3024)), ts),
+        item(2, 0b1011_0111, Some((1024, 1024)), None),
+    ];
+    assert_eq!(ops::cluster_similar(&stripped, 6), vec![vec![1, 2]]);
+
+    // Bắc cầu qua member thiếu mốc: A(mốc 1) ~ B(không mốc) ~ C(mốc 2). Chẻ
+    // theo mốc, B bị loại vì không có cơ sở gán về bên nào.
+    let bridged = vec![
+        item(1, 0b1011_0110, Some((10, 10)), Some(1_000)),
+        item(2, 0b1011_0110, Some((10, 10)), Some(1_000)),
+        item(3, 0b1011_0110, Some((10, 10)), None),
+        item(4, 0b1011_0110, Some((10, 10)), Some(2_000)),
+        item(5, 0b1011_0110, Some((10, 10)), Some(2_000)),
+    ];
+    assert_eq!(
+        ops::cluster_similar(&bridged, 6),
+        vec![vec![1, 2], vec![4, 5]],
+        "chia dung theo moc, member khong moc bi loai chu khong doan bua"
+    );
 }
 
 #[test]

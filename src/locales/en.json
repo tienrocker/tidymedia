@@ -132,7 +132,9 @@
     "kindExact": "Exact",
     "kindSimilar": "Similar",
     "kindExactHint": "Byte-for-byte identical (BLAKE3 match) - deleting the extras is completely safe",
-    "kindSimilarHint": "Same photo, different bytes: re-compressed, resized, exported by another app. The copies are NOT identical, so look before you delete.",
+    "kindSimilarHint": "Same photo, different bytes: re-compressed, resized, exported by another app. Only copies sharing the exact same capture time are grouped, so a burst of shots of the same scene stays apart. The copies are NOT identical, so look before you delete.",
+    "noPrecheck": "nothing pre-selected",
+    "noPrecheckHint": "Exact groups are proven identical, so the rule marks them for you. Similar groups are a guess, so nothing is marked until you say so - tick a group in the left column (or Select all) to apply the rule.",
     "phaseCompare": "Comparing",
     "emptySimilar": "No similar photos yet. Hit \"Scan for similar photos\" - it's quick when thumbnails are already cached.",
     "confirmSimilar": "Move {{n}} files ({{size}}) to the Recycle Bin?\n\nThese are SIMILAR, not identical: the copies may differ in resolution and compression. The app only guarantees that every group keeps at least one copy and that the kept copy is still intact on disk - judging which one to keep is up to you."

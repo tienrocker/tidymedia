@@ -5,8 +5,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::models::{
-    DeleteContextRow, DupGroupRow, DupMemberBrief, DupMemberRow, FileDetail, HashUpsert, JobRow,
-    MediaSrc, MetaUpsert, PendingHash, PendingMeta, PendingPhash, PhashUpsert, RootInfo, ScanEntry,
+    ClusterItem, DeleteContextRow, DupGroupRow, DupMemberBrief, DupMemberRow, FileDetail,
+    HashUpsert, JobRow, MediaSrc, MetaUpsert, PendingHash, PendingMeta, PendingPhash, PhashUpsert,
+    RootInfo, ScanEntry,
 };
 
 /// Bump khi đổi schema. Có migration tăng dần từ v2 trở đi (giữ index của
@@ -1100,14 +1101,22 @@ pub fn upsert_phash_batch(conn: &mut Connection, rows: &[PhashUpsert]) -> Result
     Ok(())
 }
 
-/// Gom cụm THUẦN (test được, không đụng DB): union-find trên các cặp có
-/// Hamming ≤ `max_dist` VÀ tỉ lệ khung hình xấp xỉ nhau. Tỉ lệ là chốt chặn
-/// quan trọng: dhash 8x8 bỏ hết thông tin khung hình nên ảnh dọc và ảnh ngang
-/// cùng bố cục có thể ra hash gần nhau.
-pub fn cluster_similar(
-    items: &[(i64, i64, Option<i64>, Option<i64>)],
-    max_dist: u32,
-) -> Vec<Vec<i64>> {
+/// Gom cụm THUẦN (test được, không đụng DB): union-find trên các cặp qua được
+/// CẢ BA chốt chặn — Hamming ≤ `max_dist`, tỉ lệ khung hình xấp xỉ, và cùng
+/// giờ bấm máy.
+///
+/// Tỉ lệ khung hình: dhash 8x8 bỏ hết thông tin khung hình nên ảnh dọc và ảnh
+/// ngang cùng bố cục có thể ra hash gần nhau.
+///
+/// Giờ bấm máy là chốt chặn QUAN TRỌNG NHẤT, đo trên kho thật mới thêm: một
+/// loạt 13 tấm chụp liên tiếp cùng cảnh (`IMG_8194..IMG_8206`, người chỉ đổi tư
+/// thế) ra hash gần như y hệt vì ở lưới 9x8 luma người chiếm 1-2 ô — chỉnh
+/// `max_dist` không cứu được, hạ tới 0 thì mất luôn ca trùng thật. Nhưng 13 tấm
+/// đó có 13 mốc EXIF khác nhau trải 14 giây, trong khi 4 bản của CÙNG một tấm
+/// (`IMG_1463` ở icloud/iphone/anh/TienIphone, 3 độ phân giải, 4 dung lượng)
+/// mang đúng một mốc `18:02:24.802`. Cùng một tấm ảnh thì bắt buộc cùng một lần
+/// bấm máy — khác mili-giây là khác tấm, dù hash giống đến đâu.
+pub fn cluster_similar(items: &[ClusterItem], max_dist: u32) -> Vec<Vec<i64>> {
     let n = items.len();
     let mut parent: Vec<usize> = (0..n).collect();
     fn find(parent: &mut [usize], mut i: usize) -> usize {
@@ -1117,23 +1126,27 @@ pub fn cluster_similar(
         }
         i
     }
-    let aspect = |w: Option<i64>, h: Option<i64>| -> Option<f64> {
-        match (w, h) {
+    let aspect = |it: &ClusterItem| -> Option<f64> {
+        match (it.width, it.height) {
             (Some(w), Some(h)) if w > 0 && h > 0 => Some(w as f64 / h as f64),
             _ => None,
         }
     };
     for a in 0..n {
         for b in (a + 1)..n {
-            if (items[a].1 ^ items[b].1).count_ones() > max_dist {
+            if (items[a].hash64 ^ items[b].hash64).count_ones() > max_dist {
                 continue;
             }
             // Thiếu kích thước (meta chưa chạy tới) → không chặn, chỉ dựa hash
-            if let (Some(ra), Some(rb)) = (
-                aspect(items[a].2, items[a].3),
-                aspect(items[b].2, items[b].3),
-            ) {
+            if let (Some(ra), Some(rb)) = (aspect(&items[a]), aspect(&items[b])) {
                 if (ra - rb).abs() > 0.05 * ra.max(rb) {
+                    continue;
+                }
+            }
+            // Thiếu taken_at (ảnh bị app nhắn tin xóa sạch EXIF) → không chặn:
+            // đó là ca M7 thật, phải gom được với bản gốc.
+            if let (Some(ta), Some(tb)) = (items[a].taken_at, items[b].taken_at) {
+                if ta != tb {
                     continue;
                 }
             }
@@ -1143,12 +1156,16 @@ pub fn cluster_similar(
             }
         }
     }
-    let mut groups: HashMap<usize, Vec<i64>> = HashMap::new();
+    let mut groups: HashMap<usize, Vec<ClusterItem>> = HashMap::new();
     for (i, item) in items.iter().enumerate() {
         let root = find(&mut parent, i);
-        groups.entry(root).or_default().push(item.0);
+        groups.entry(root).or_default().push(*item);
     }
-    let mut out: Vec<Vec<i64>> = groups.into_values().filter(|g| g.len() >= 2).collect();
+    let mut out: Vec<Vec<i64>> = groups
+        .into_values()
+        .flat_map(|c| split_by_taken_at(c).into_iter())
+        .filter(|g| g.len() >= 2)
+        .collect();
     for g in out.iter_mut() {
         g.sort_unstable();
     }
@@ -1157,12 +1174,38 @@ pub fn cluster_similar(
     out
 }
 
+/// Hậu kiểm chống BẮC CẦU qua member thiếu EXIF: chốt chặn giờ bấm máy chỉ xét
+/// từng cặp, nên A(mốc 1) ~ B(không mốc) ~ C(mốc 2) vẫn chui chung cụm qua B.
+///
+/// - Cụm chỉ có 1 mốc (kèm bao nhiêu member không mốc cũng được) → giữ nguyên;
+///   đây đúng là ca ảnh gốc + bản bị xóa EXIF, phải gom được.
+/// - Cụm có ≥ 2 mốc khác nhau → chẻ theo từng mốc, member không mốc bị LOẠI:
+///   không có cơ sở gán nó về mốc nào, mà đoán sai là xóa nhầm ảnh thật.
+fn split_by_taken_at(cluster: Vec<ClusterItem>) -> Vec<Vec<i64>> {
+    let mut stamps: Vec<i64> = cluster.iter().filter_map(|it| it.taken_at).collect();
+    stamps.sort_unstable();
+    stamps.dedup();
+    match stamps.len() {
+        0 | 1 => vec![cluster.into_iter().map(|it| it.file_id).collect()],
+        _ => stamps
+            .into_iter()
+            .map(|ts| {
+                cluster
+                    .iter()
+                    .filter(|it| it.taken_at == Some(ts))
+                    .map(|it| it.file_id)
+                    .collect()
+            })
+            .collect(),
+    }
+}
+
 /// Dựng lại nhóm "gần giống" (kind = 1) từ dhash. Trả (số nhóm, bytes có thể
 /// dọn nếu mỗi nhóm chỉ giữ bản to nhất).
 pub fn rebuild_similar_groups(conn: &mut Connection, max_dist: u32) -> Result<(i64, i64)> {
-    let items: Vec<(i64, i64, Option<i64>, Option<i64>)> = {
+    let items: Vec<ClusterItem> = {
         let mut stmt = conn.prepare(
-            "SELECT p.file_id, p.hash64, m.width, m.height
+            "SELECT p.file_id, p.hash64, m.width, m.height, m.taken_at
              FROM phashes p
              JOIN files f ON f.id = p.file_id AND f.status = 0
              LEFT JOIN media_meta m ON m.file_id = p.file_id
@@ -1170,7 +1213,15 @@ pub fn rebuild_similar_groups(conn: &mut Connection, max_dist: u32) -> Result<(i
              ORDER BY p.file_id",
         )?;
         let rows = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .query_map([], |r| {
+                Ok(ClusterItem {
+                    file_id: r.get(0)?,
+                    hash64: r.get(1)?,
+                    width: r.get(2)?,
+                    height: r.get(3)?,
+                    taken_at: r.get(4)?,
+                })
+            })?
             .collect::<Result<Vec<_>, _>>()?;
         rows
     };

@@ -81,6 +81,17 @@ Five invariants every destructive code path must pass - not guidelines, hard rul
 > 38.7 dB) yet **no two share a single byte**, so exact dedup correctly leaves all three alone.
 > Matching by file name is not a shortcut either: of 8 sampled `IMG_####` name collisions between
 > two folders, 4 were the same photo (32-40 dB) and 4 were completely unrelated shots (9-11 dB).
+>
+> Perceptual distance alone is not enough either, and that is the more dangerous half. A burst of
+> shots of one scene is near-identical to a 64-bit hash - at an 8×8 luma grid the person who moved
+> occupies one or two cells - so 25 genuinely different photos landed in a single "similar" group.
+> No threshold separates them: tightening it loses the real re-encodes long before it splits the
+> burst. Capture time does separate them, exactly: those 25 carry 25 distinct EXIF timestamps,
+> while the four copies of `IMG_1463` all carry `18:02:24.802` down to the millisecond. Two files
+> can only be the same picture if they came from the same shutter press, so groups now require an
+> identical capture time whenever both files have one. On the 21.5k photos of that library the
+> largest group fell from 138 files to 5, and 3,084 files left the deletion candidate list - while
+> every genuine duplicate set, including a Telegram re-export stripped of EXIF, stayed intact.
 
 ## ⚙️ Performance
 

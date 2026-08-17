@@ -17,9 +17,10 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 pub use models::{
-    DeleteContextRow, DupGroupRow, DupMemberBrief, DupMemberRow, FileDetail, FileFilter, FileRow,
-    HashUpsert, JobRow, LibraryRootRow, MediaSrc, MetaUpsert, OrgBatchRow, OrgCandidateRow,
-    OrgOpRow, OrgPairRow, PendingHash, PendingMeta, PendingPhash, PhashUpsert, RootInfo, ScanEntry,
+    ClusterItem, DeleteContextRow, DupGroupRow, DupMemberBrief, DupMemberRow, FileDetail,
+    FileFilter, FileRow, HashUpsert, JobRow, LibraryRootRow, MediaSrc, MetaUpsert, OrgBatchRow,
+    OrgCandidateRow, OrgOpRow, OrgPairRow, PendingHash, PendingMeta, PendingPhash, PhashUpsert,
+    RootInfo, ScanEntry,
 };
 pub use pool::ReadPool;
 pub use writer::WriterHandle;

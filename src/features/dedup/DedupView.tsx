@@ -630,6 +630,11 @@ export function DedupView() {
           )}
           {marking && <span className="text-xs text-neutral-500">…</span>}
         </label>
+        {similar && (
+          <span className="text-xs text-amber-600" title={t("dedup.noPrecheckHint")}>
+            {t("dedup.noPrecheck")}
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-2">
           <select
             className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none"

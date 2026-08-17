@@ -217,6 +217,19 @@ pub struct PhashUpsert {
     pub src_size: i64,
 }
 
+/// 1 ứng viên vào [`crate::ops::cluster_similar`]. Tách struct thay vì tuple 5
+/// phần tử vì mỗi field là một chốt chặn riêng, đọc `it.taken_at` rõ hơn `it.4`.
+#[derive(Debug, Clone, Copy)]
+pub struct ClusterItem {
+    pub file_id: i64,
+    pub hash64: i64,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    /// Giờ bấm máy theo EXIF, epoch ms CÓ sub-second (xem core-media). Chốt
+    /// chặn mạnh nhất: hai bản của cùng một tấm ảnh luôn mang đúng mốc này.
+    pub taken_at: Option<i64>,
+}
+
 /// Bản rút gọn của MỌI member trong MỌI nhóm trùng — vừa đủ field để UI chạy
 /// rule "giữ bản nào" hàng loạt mà không phải mở từng nhóm (không kèm
 /// name/dir/camera: 13k dòng thì mấy chuỗi đó mới là phần nặng của payload).
