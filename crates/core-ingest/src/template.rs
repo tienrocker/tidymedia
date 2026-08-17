@@ -28,6 +28,12 @@ pub enum Token {
     Folder,
     /// stem tên file gốc (original_name ?? name, bỏ ext)
     Name,
+    /// nơi chụp, tra từ GPS trong EXIF — xem [`Token::Place`] và crate `core-geo`
+    Place,
+    Province,
+    District,
+    Ward,
+    Country,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -104,6 +110,11 @@ pub fn parse_template(src: &str, kind: TemplateKind) -> Result<Template, Templat
                 "relpath" => Token::RelPath,
                 "folder" => Token::Folder,
                 "name" => Token::Name,
+                "place" => Token::Place,
+                "province" => Token::Province,
+                "district" => Token::District,
+                "ward" => Token::Ward,
+                "country" => Token::Country,
                 other => return Err(TemplateError::UnknownToken(other.to_string())),
             };
             // {relpath}/{folder} có thể render nhiều segment thư mục — trong
@@ -166,6 +177,10 @@ pub struct RenderCtx<'a> {
     pub folder: Option<&'a str>,
     /// stem tên file gốc (original_name ?? name, không gồm ext)
     pub orig_stem: Option<&'a str>,
+    /// Nơi chụp đã tra sẵn từ GPS. Caller tra MỘT lần cho mỗi file rồi đưa vào
+    /// đây — render bị gọi lại nhiều lượt khi escalate độ dài hash, tra trong
+    /// render là quét lại 170k điểm mỗi lượt.
+    pub place: core_geo::Place,
 }
 
 impl<'a> RenderCtx<'a> {
@@ -186,6 +201,7 @@ impl<'a> RenderCtx<'a> {
             rel_dir: None,
             folder: None,
             orig_stem: None,
+            place: core_geo::Place::default(),
         }
     }
 
@@ -199,6 +215,14 @@ impl<'a> RenderCtx<'a> {
         self.rel_dir = rel_dir;
         self.folder = folder;
         self.orig_stem = orig_stem;
+        self
+    }
+
+    /// Gắn nơi chụp cho token {place}/{province}/{district}/{ward}/{country}.
+    /// Ảnh không có GPS thì để `Place::default()` — mọi token trên render rỗng
+    /// và segment thư mục tương ứng biến mất, KHÔNG sinh ra "Unknown".
+    pub fn with_place(mut self, place: core_geo::Place) -> Self {
+        self.place = place;
         self
     }
 }
@@ -227,6 +251,14 @@ fn sanitize_source_component(s: &str) -> String {
     s.chars()
         .filter(|&c| !BAD_CHARS.contains(&c) && (c as u32) >= 0x20 && c != '\\' && c != '/')
         .collect()
+}
+
+/// Tên địa điểm: BỎ DẤU rồi lọc như mọi giá trị lấy từ ngoài. Khác
+/// `{relpath}`/`{folder}` cố ý — xem `core_geo::fold_ascii`: tên thư mục có dấu
+/// làm script batch duyệt thư mục trượt, mà tên địa điểm là do ta sinh ra từ
+/// toạ độ nên ta được chọn cách viết; còn tên thư mục sẵn có của user thì không.
+fn sanitize_place(s: &str) -> String {
+    sanitize_source_component(&core_geo::fold_ascii(s))
 }
 
 /// relpath nguồn: chuẩn hóa separator, sanitize từng segment, bỏ segment "."
@@ -270,6 +302,12 @@ fn clean_component(s: &str) -> String {
     }
 }
 
+fn push_place(out: &mut String, name: Option<&str>) {
+    if let Some(n) = name {
+        out.push_str(&sanitize_place(n));
+    }
+}
+
 impl Template {
     /// hash_len: None = độ dài mặc định của từng token; Some(n) = escalation khi
     /// đụng độ tên (mọi token hash render n ký tự).
@@ -310,6 +348,11 @@ impl Template {
                         out.push_str(&sanitize_source_component(n));
                     }
                 }
+                Token::Place => push_place(&mut out, ctx.place.city),
+                Token::Province => push_place(&mut out, ctx.place.province),
+                Token::District => push_place(&mut out, ctx.place.district),
+                Token::Ward => push_place(&mut out, ctx.place.ward),
+                Token::Country => push_place(&mut out, ctx.place.country),
             }
         }
         out
@@ -524,6 +567,52 @@ mod tests {
             d.render_dir(&src_ctx(Some(r"CON\a"), None, None)),
             vec!["_CON", "a"]
         );
+    }
+
+    /// Toạ độ thật đọc từ EXIF của chính kho ảnh dùng để phát triển (IMG_0386,
+    /// khu Kim Mã). Đi qua `core_geo` thật chứ không stub — nếu bộ dữ liệu hỏng
+    /// thì test này phải kêu.
+    #[test]
+    fn place_tokens_render_a_folded_hierarchy() {
+        let place = core_geo::lookup(21.027450, 105.822258);
+        let c = ctx(None).with_place(place);
+        let d = parse_template(r"{YYYY}\{province}\{district}\{ward}", TemplateKind::Dir).unwrap();
+        assert_eq!(
+            d.render_dir(&c),
+            vec!["2019", "Ha Noi", "Quan Ba Dinh", "Phuong Kim Ma"]
+        );
+        let p = parse_template(r"{country}\{place}", TemplateKind::Dir).unwrap();
+        assert_eq!(p.render_dir(&c), vec!["Vietnam", "Ha Noi"]);
+    }
+
+    /// Ảnh KHÔNG có GPS (máy ảnh rời, ảnh qua app nhắn tin) là ca thường: đo
+    /// trên kho thật thì cả thư mục 499 ảnh máy ảnh rời không có toạ độ nào.
+    /// Tầng thư mục đó phải biến mất, tuyệt đối không đẻ ra "Unknown".
+    #[test]
+    fn missing_gps_drops_the_place_segment() {
+        let d = parse_template(r"{YYYY}\{place}\{YYYY}-{MM}", TemplateKind::Dir).unwrap();
+        assert_eq!(d.render_dir(&ctx(None)), vec!["2019", "2019-06"]);
+        // Chỉ có mỗi {place} → không còn segment nào, executor giữ file tại root
+        let only = parse_template("{place}", TemplateKind::Dir).unwrap();
+        assert!(only.render_dir(&ctx(None)).is_empty());
+    }
+
+    /// Ảnh chụp ngoài Việt Nam: có thành phố/quốc gia nhưng KHÔNG có phường/xã
+    /// (dữ liệu chi tiết chỉ sinh cho VN) — đường dẫn tự rút ngắn, không rỗng.
+    #[test]
+    fn place_tokens_outside_vietnam_have_no_ward() {
+        let c = ctx(None).with_place(core_geo::lookup(48.8566, 2.3522)); // Paris
+        let d = parse_template(r"{country}\{place}\{ward}", TemplateKind::Dir).unwrap();
+        assert_eq!(d.render_dir(&c), vec!["France", "Paris"]);
+    }
+
+    /// Token địa điểm dùng được cả trong TÊN FILE, không phải Dir-only như
+    /// {relpath}: chúng luôn render đúng 1 component.
+    #[test]
+    fn place_tokens_work_in_file_names() {
+        let c = ctx(None).with_place(core_geo::lookup(21.027450, 105.822258));
+        let f = parse_template("{YYYYMMDD}_{place}", TemplateKind::File).unwrap();
+        assert_eq!(f.render_file(&c, None), "20190614_Ha Noi");
     }
 
     #[test]

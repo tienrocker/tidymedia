@@ -84,6 +84,10 @@ const TEMPLATE_PRESETS = [
   { key: "org.presetKeepStructure", dir: "{relpath}", file: "{YYYYMMDD}_{hhmmss}_{hash4}" },
   { key: "org.presetKeepStructureName", dir: "{relpath}", file: "{name}" },
   { key: "org.presetByDevice", dir: "{camera}\\{YYYY}-{MM}", file: "{YYYYMMDD}_{hhmmss}_{hash4}" },
+  // Địa điểm: {place} là thành phố, đủ dùng cho ảnh đi xa. Muốn chi tiết tới
+  // phường thì gõ tay {province}\{district}\{ward} — chỉ VN có tầng đó, để
+  // preset lại thì user nước khác bấm vào ra một tầng thư mục rỗng.
+  { key: "org.presetByPlace", dir: "{YYYY}\\{place}", file: "{YYYYMMDD}_{hhmmss}_{hash4}" },
 ] as const;
 
 /** Template thư mục + tên file, validate + render ví dụ REALTIME khi gõ. */
@@ -172,7 +176,7 @@ function TemplateSettings() {
         <div className="text-xs text-neutral-500">
           {t("org.tokens")}:{" "}
           <code className="text-neutral-400">
-            {"{YYYY} {MM} {DD} {YYYYMMDD} {hh} {mm} {ss} {hhmmss} {hash4} {hash8} {hash16} {camera} {relpath} {folder} {name}"}
+            {"{YYYY} {MM} {DD} {YYYYMMDD} {hh} {mm} {ss} {hhmmss} {hash4} {hash8} {hash16} {camera} {relpath} {folder} {name} {place} {province} {district} {ward} {country}"}
           </code>
         </div>
         <div className="text-xs text-neutral-500">{t("org.tokensHint")}</div>

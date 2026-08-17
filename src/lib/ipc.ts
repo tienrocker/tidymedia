@@ -34,6 +34,10 @@ export interface FileDetail {
   acodec: string | null;
   fps: number | null;
   metaState: number | null;
+  gpsLat: number | null;
+  gpsLon: number | null;
+  /** Tên nơi chụp để ĐỌC, GIỮ NGUYÊN DẤU — khác tên bỏ dấu dùng đặt thư mục. */
+  place: string | null;
 }
 
 export interface ExportResult {

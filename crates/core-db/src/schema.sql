@@ -120,7 +120,13 @@ CREATE TABLE media_meta(
   date_source INTEGER,           -- 0=EXIF 1=QuickTime 2=filename-parse 3=mtime-uncertain
   camera TEXT,
   orientation INTEGER,
-  meta_state INTEGER NOT NULL DEFAULT 0  -- 0 pending 1 done 2 failed
+  meta_state INTEGER NOT NULL DEFAULT 0, -- 0 pending 1 done 2 failed
+  gps_lat REAL,                  -- độ thập phân, bắc dương. NULL = ảnh không có toạ độ
+  gps_lon REAL,                  -- độ thập phân, đông dương
+  -- Phiên bản BỘ TRÍCH đã sinh ra dòng này (ops::META_VERSION). Thêm field mới
+  -- vào extractor thì bump hằng số đó, job meta sẵn có tự trích lại các dòng cũ
+  -- — không cần job mới, và vẫn tạm dừng/tiếp tục được như mọi job khác.
+  meta_ver INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX meta_dims ON media_meta(width, height);
 CREATE INDEX meta_dur ON media_meta(duration_ms);

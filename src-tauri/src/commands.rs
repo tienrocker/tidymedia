@@ -772,6 +772,8 @@ fn extract_one_meta(
             acodec: m.acodec,
             bitrate: m.bitrate,
             fps: m.fps,
+            gps_lat: m.gps_lat,
+            gps_lon: m.gps_lon,
             meta_state: if m.ok { 1 } else { 2 },
             src_mtime: p.mtime,
             src_size: p.size,
@@ -787,11 +789,34 @@ fn extract_one_meta(
         date_source: m.date_source,
         camera: m.camera,
         orientation: m.orientation.map(i64::from),
+        gps_lat: m.gps_lat,
+        gps_lon: m.gps_lon,
         meta_state: if m.ok { 1 } else { 2 },
         src_mtime: p.mtime,
         src_size: p.size,
         ..Default::default()
     })
+}
+
+/// Tên nơi chụp để ĐỌC, ghép từ chi tiết nhất tới rộng nhất và GIỮ NGUYÊN DẤU
+/// ("Phường Lý Thái Tổ, Quận Hoàn Kiếm, Hà Nội, Vietnam"). Khác hẳn tên dùng
+/// đặt thư mục — chỗ đó bỏ dấu, xem `core_geo::fold_ascii`.
+///
+/// Bỏ tầng trùng tên nhau: Hà Nội là thành phố trực thuộc trung ương nên
+/// `city` và `province` bằng nhau, in cả hai thì thành "Hà Nội, Hà Nội".
+fn place_label(lat: Option<f64>, lon: Option<f64>) -> Option<String> {
+    let (lat, lon) = (lat?, lon?);
+    let p = core_geo::lookup(lat, lon);
+    let mut parts: Vec<&str> = Vec::new();
+    for name in [p.ward, p.district, p.city, p.province, p.country]
+        .into_iter()
+        .flatten()
+    {
+        if !parts.contains(&name) {
+            parts.push(name);
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join(", "))
 }
 
 /// Chi tiết file cho panel info lightbox. Meta chưa có (job chưa chạy tới) mà
@@ -819,6 +844,8 @@ pub async fn get_file_meta(
                 d.taken_at = m.taken_at;
                 d.camera = m.camera.clone();
                 d.orientation = m.orientation.map(i64::from);
+                d.gps_lat = m.gps_lat;
+                d.gps_lon = m.gps_lon;
                 d.meta_state = Some(if m.ok { 1 } else { 2 });
                 let row = MetaUpsert {
                     file_id: d.id,
@@ -828,6 +855,8 @@ pub async fn get_file_meta(
                     date_source: m.date_source,
                     camera: d.camera.clone(),
                     orientation: d.orientation,
+                    gps_lat: d.gps_lat,
+                    gps_lon: d.gps_lon,
                     meta_state: if m.ok { 1 } else { 2 },
                     src_mtime: d.mtime,
                     src_size: d.size,
@@ -836,6 +865,7 @@ pub async fn get_file_meta(
                 db.writer
                     .exec_async(move |c| core_db::ops::upsert_meta_batch(c, &[row]));
             }
+            d.place = place_label(d.gps_lat, d.gps_lon);
         }
         Ok(detail)
     })

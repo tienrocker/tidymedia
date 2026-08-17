@@ -320,6 +320,7 @@ function LightboxInner({ index }: { index: number }) {
               }
             />
             <InfoRow label={t("lightbox.camera")} value={detail?.camera ?? null} />
+            <InfoRow label={t("lightbox.place")} value={detail?.place ?? null} />
             <InfoRow
               label={t("list.modified")}
               value={fmtDateTime(row.mtime, tz, tzOffset)}

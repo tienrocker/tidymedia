@@ -146,7 +146,11 @@ fn sample_render(dir: &Template, file: &Template) -> String {
             Some(r"Bac Tuan\Tet 2008"),
             Some("Tet 2008"),
             Some("Picture 039"),
-        );
+        )
+        // Toạ độ mẫu: Hồ Hoàn Kiếm. Tra thật qua core-geo chứ không cắm chuỗi
+        // cứng — preview phải cho user thấy đúng cái tên họ sẽ nhận được, gồm
+        // cả việc tên địa điểm bị bỏ dấu.
+        .with_place(core_geo::lookup(21.0287, 105.8524));
     let mut segs = dir.render_dir(&ctx);
     segs.push(format!("{}.jpg", file.render_file(&ctx, None)));
     segs.join("\\")
@@ -437,6 +441,7 @@ fn build_items(
                 rel_dir,
                 folder,
                 orig_stem,
+                gps: c.gps,
                 pair,
             }
         })
@@ -2662,6 +2667,7 @@ mod tests {
                 taken_at: None,
                 date_source: None,
                 camera: None,
+                gps: None,
                 full_hash: None,
                 hashed_size: None,
                 hashed_mtime: None,

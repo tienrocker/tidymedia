@@ -594,6 +594,7 @@ version = "0.1.1"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "core-geo",
  "regex",
  "serde",
  "thiserror 2.0.19",
@@ -844,7 +845,9 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "core-db",
+ "core-geo",
  "core-index",
+ "core-media",
  "filetime",
  "unicode-normalization",
 ]
@@ -4331,6 +4334,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "core-db",
+ "core-geo",
  "core-hash",
  "core-index",
  "core-ingest",

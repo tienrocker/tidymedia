@@ -95,6 +95,9 @@ pub struct PlanItem {
     pub folder: Option<String>,
     /// stem tên file gốc (token {name})
     pub orig_stem: Option<String>,
+    /// Toạ độ nơi chụp cho token {place}/{province}/{district}/{ward}/{country}.
+    /// None = ảnh không có GPS → các token đó render rỗng.
+    pub gps: Option<(f64, f64)>,
     pub pair: Option<PairInfo>,
 }
 
@@ -222,11 +225,19 @@ pub fn plan_organize_incremental<C: ClaimStore + ?Sized>(
         let needs_hash =
             (it.hash_hex.is_none() && (file_tpl.has_hash || !same_vol)) || pair_needs_hash;
         let hash_hex = it.hash_hex.clone().unwrap_or_default();
-        let ctx = RenderCtx::from_taken(it.taken_ms, &hash_hex, it.camera.as_deref()).with_source(
-            it.rel_dir.as_deref(),
-            it.folder.as_deref(),
-            it.orig_stem.as_deref(),
-        );
+        let ctx = RenderCtx::from_taken(it.taken_ms, &hash_hex, it.camera.as_deref())
+            .with_source(
+                it.rel_dir.as_deref(),
+                it.folder.as_deref(),
+                it.orig_stem.as_deref(),
+            )
+            // Tra MỘT lần cho mỗi file: bên dưới render lại tới 100 lượt để né
+            // đụng độ tên, mà mỗi lượt tra là quét một dải trong 170k điểm.
+            .with_place(
+                it.gps
+                    .map(|(lat, lon)| core_geo::lookup(lat, lon))
+                    .unwrap_or_default(),
+            );
         let segs = dir_tpl.render_dir(&ctx);
         if needs_hash {
             // đường dự kiến chỉ để hiển thị dry-run
@@ -383,6 +394,7 @@ mod tests {
             rel_dir: None,
             folder: None,
             orig_stem: None,
+            gps: None,
             pair: None,
         }
     }

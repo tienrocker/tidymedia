@@ -12,7 +12,20 @@ use crate::models::{
 
 /// Bump khi đổi schema. Có migration tăng dần từ v2 trở đi (giữ index của
 /// user); version lạ/quá cũ → wipe & recreate (rebuild bằng rescan, ok pre-1.0).
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
+
+/// Phiên bản của BỘ TRÍCH metadata. Bump khi extractor học thêm field: dòng
+/// `media_meta` cũ hơn sẽ được [`select_pending_meta`] chọn lại, nên job `meta`
+/// sẵn có tự trích bù — không phải viết job mới, và vẫn tạm dừng/tiếp tục được.
+///
+/// Chỉ chọn lại dòng `meta_state = 1` (đã trích THÀNH CÔNG). Dòng thất bại
+/// (file hỏng, format lạ) thì bump version không cứu được, mà đọc lại toàn bộ
+/// file hỏng sau mỗi lần bump thì mỗi bản cập nhật lại tốn một lượt quét vô ích.
+///
+/// | ver | thêm gì |
+/// |---|---|
+/// | 1 | `gps_lat`/`gps_lon` — EXIF GPS + ISO 6709 của video |
+pub const META_VERSION: i64 = 1;
 
 /// Migration tăng dần: MIGRATIONS[i] đưa schema từ version (i+2) lên (i+3).
 /// DDL PHẢI giống hệt schema.sql (fresh install đi thẳng schema.sql).
@@ -48,6 +61,12 @@ const MIGRATIONS: &[&str] = &[
     "DELETE FROM phashes;
      DELETE FROM dup_members WHERE group_id IN (SELECT id FROM dup_groups WHERE kind = 1);
      DELETE FROM dup_groups WHERE kind = 1;",
+    // v7 -> v8: toạ độ nơi chụp + phiên bản bộ trích. Dòng cũ mang meta_ver = 0
+    // nên tự động thấp hơn META_VERSION → job meta trích bù, KHÔNG xoá gì cả:
+    // width/height/taken_at/camera đang có vẫn dùng được nguyên trong lúc chờ.
+    "ALTER TABLE media_meta ADD COLUMN gps_lat REAL;
+     ALTER TABLE media_meta ADD COLUMN gps_lon REAL;
+     ALTER TABLE media_meta ADD COLUMN meta_ver INTEGER NOT NULL DEFAULT 0;",
 ];
 const OLDEST_MIGRATABLE: i64 = 2;
 
@@ -532,14 +551,22 @@ pub fn join_path(dir: &str, name: &str) -> String {
     }
 }
 
+/// Điều kiện "file này cần trích meta": chưa có dòng nào, HOẶC đã trích thành
+/// công nhưng bằng bộ trích cũ hơn [`META_VERSION`]. Dùng chung cho cả đếm lẫn
+/// chọn — hai bên lệch nhau thì job hiện progress sai hoặc chạy mãi không hết.
+const NEEDS_META: &str = "(m.file_id IS NULL OR (m.meta_state = 1 AND m.meta_ver < :meta_ver))
+     AND f.kind <= :kind_max AND f.status = 0";
+
 /// Số file present chưa có meta — quyết định có mở meta job không.
 /// `include_video=false` khi không có ffprobe: video để lại, có tool sẽ làm.
 pub fn count_pending_meta(conn: &Connection, include_video: bool) -> Result<i64> {
     let kind_max = if include_video { 1 } else { 0 };
     Ok(conn.query_row(
-        "SELECT COUNT(*) FROM files f LEFT JOIN media_meta m ON m.file_id = f.id
-         WHERE m.file_id IS NULL AND f.kind <= ?1 AND f.status = 0",
-        params![kind_max],
+        &format!(
+            "SELECT COUNT(*) FROM files f LEFT JOIN media_meta m ON m.file_id = f.id
+             WHERE {NEEDS_META}"
+        ),
+        rusqlite::named_params! { ":kind_max": kind_max, ":meta_ver": META_VERSION },
         |r| r.get(0),
     )?)
 }
@@ -554,26 +581,34 @@ pub fn select_pending_meta(
     include_video: bool,
 ) -> Result<Vec<PendingMeta>> {
     let kind_max = if include_video { 1 } else { 0 };
-    let mut stmt = conn.prepare_cached(
+    let mut stmt = conn.prepare_cached(&format!(
         "SELECT f.id, d.path, f.name, f.kind, f.mtime, f.size
          FROM files f
          JOIN dirs d ON d.id = f.dir_id
          LEFT JOIN media_meta m ON m.file_id = f.id
-         WHERE m.file_id IS NULL AND f.kind <= ?3 AND f.status = 0 AND f.id > ?1
-         ORDER BY f.id LIMIT ?2",
-    )?;
+         WHERE {NEEDS_META} AND f.id > :after_id
+         ORDER BY f.id LIMIT :limit"
+    ))?;
     let rows = stmt
-        .query_map(params![after_id, limit, kind_max], |r| {
-            let dir: String = r.get(1)?;
-            let name: String = r.get(2)?;
-            Ok(PendingMeta {
-                file_id: r.get(0)?,
-                path: join_path(&dir, &name),
-                kind: r.get(3)?,
-                mtime: r.get(4)?,
-                size: r.get(5)?,
-            })
-        })?
+        .query_map(
+            rusqlite::named_params! {
+                ":after_id": after_id,
+                ":limit": limit,
+                ":kind_max": kind_max,
+                ":meta_ver": META_VERSION,
+            },
+            |r| {
+                let dir: String = r.get(1)?;
+                let name: String = r.get(2)?;
+                Ok(PendingMeta {
+                    file_id: r.get(0)?,
+                    path: join_path(&dir, &name),
+                    kind: r.get(3)?,
+                    mtime: r.get(4)?,
+                    size: r.get(5)?,
+                })
+            },
+        )?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -590,8 +625,8 @@ pub fn upsert_meta_batch(conn: &mut Connection, rows: &[MetaUpsert]) -> Result<(
         let mut ins = tx.prepare_cached(
             "INSERT INTO media_meta(file_id, width, height, taken_at, date_source, camera,
                                     orientation, duration_ms, vcodec, acodec, bitrate, fps,
-                                    meta_state)
-             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
+                                    meta_state, gps_lat, gps_lon, meta_ver)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?16, ?17, ?18
              WHERE EXISTS(SELECT 1 FROM files
                           WHERE id = ?1 AND mtime = ?14 AND size = ?15)
              ON CONFLICT(file_id) DO UPDATE SET
@@ -600,7 +635,9 @@ pub fn upsert_meta_batch(conn: &mut Connection, rows: &[MetaUpsert]) -> Result<(
                camera = excluded.camera, orientation = excluded.orientation,
                duration_ms = excluded.duration_ms, vcodec = excluded.vcodec,
                acodec = excluded.acodec, bitrate = excluded.bitrate,
-               fps = excluded.fps, meta_state = excluded.meta_state",
+               fps = excluded.fps, meta_state = excluded.meta_state,
+               gps_lat = excluded.gps_lat, gps_lon = excluded.gps_lon,
+               meta_ver = excluded.meta_ver",
         )?;
         for m in rows {
             ins.execute(params![
@@ -618,7 +655,10 @@ pub fn upsert_meta_batch(conn: &mut Connection, rows: &[MetaUpsert]) -> Result<(
                 m.fps,
                 m.meta_state,
                 m.src_mtime,
-                m.src_size
+                m.src_size,
+                m.gps_lat,
+                m.gps_lon,
+                META_VERSION,
             ])?;
         }
     }
@@ -731,7 +771,8 @@ pub fn get_file_detail(conn: &Connection, file_id: i64) -> Result<Option<FileDet
         .query_row(
             "SELECT f.id, f.name, d.path, f.kind, f.status, f.size, f.mtime,
                     m.width, m.height, m.taken_at, m.camera, m.orientation,
-                    m.duration_ms, m.vcodec, m.acodec, m.fps, m.meta_state
+                    m.duration_ms, m.vcodec, m.acodec, m.fps, m.meta_state,
+                    m.gps_lat, m.gps_lon
              FROM files f
              JOIN dirs d ON d.id = f.dir_id
              LEFT JOIN media_meta m ON m.file_id = f.id
@@ -756,6 +797,10 @@ pub fn get_file_detail(conn: &Connection, file_id: i64) -> Result<Option<FileDet
                     acodec: r.get(14)?,
                     fps: r.get(15)?,
                     meta_state: r.get(16)?,
+                    gps_lat: r.get(17)?,
+                    gps_lon: r.get(18)?,
+                    // Tầng lệnh tra tên rồi điền — xem doc của field
+                    place: None,
                 })
             },
         )

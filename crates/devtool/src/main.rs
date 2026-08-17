@@ -43,9 +43,11 @@ fn main() -> Result<()> {
         Some("gen-tree") => gen_tree(&args[1..]),
         Some("bench-scan") => bench_scan(&args[1..]),
         Some("gen-geo") => geo::gen_geo(&args[1..]),
+        Some("probe-place") => probe_place(&args[1..]),
+        Some("db-info") => db_info(&args[1..]),
         _ => {
             eprintln!(
-                "usage:\n  devtool gen-tree --root <path> --files <n> [--dupe-sets <n>]\n  devtool bench-scan --root <path> --db <dir>"
+                "usage:\n  devtool gen-tree --root <path> --files <n> [--dupe-sets <n>]\n  devtool bench-scan --root <path> --db <dir>\n  devtool probe-place --path <file|dir>\n  devtool db-info --db <dir>"
             );
             std::process::exit(2);
         }
@@ -155,6 +157,83 @@ fn bench_scan(args: &[String]) -> Result<()> {
             t.elapsed().as_secs_f64() * 1000.0
         );
     }
+    Ok(())
+}
+
+/// Mở một thư mục dữ liệu rồi in trạng thái index. Mở là CHẠY MIGRATION, nên
+/// đây cũng là cách thử nâng cấp schema trên BẢN SAO của kho thật trước khi
+/// đụng vào kho thật.
+fn db_info(args: &[String]) -> Result<()> {
+    let dir = PathBuf::from(flag(args, "--db").context("--db <dir> là bắt buộc")?);
+    let db = core_db::Db::open(&dir)?;
+    let (ver, files, meta, pending) = db.pool.with(|c| -> anyhow::Result<_> {
+        Ok((
+            c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))?,
+            c.query_row("SELECT COUNT(*) FROM files WHERE status = 0", [], |r| {
+                r.get::<_, i64>(0)
+            })?,
+            c.query_row("SELECT COUNT(*) FROM media_meta", [], |r| {
+                r.get::<_, i64>(0)
+            })?,
+            core_db::ops::count_pending_meta(c, true)?,
+        ))
+    })?;
+    println!(
+        "schema v{ver}\t{files} file present\t{meta} dong meta\t{pending} cho trich (meta_ver < {})",
+        core_db::ops::META_VERSION
+    );
+    Ok(())
+}
+
+/// Đọc GPS từ ảnh thật rồi tra tên địa điểm — để kiểm cả đường đi trên kho ảnh
+/// của chính mình chứ không chỉ trên fixture. In cả tên có dấu (bản HIỂN THỊ)
+/// lẫn tên đã bỏ dấu (bản ĐẶT THƯ MỤC) để soi hai bên có khớp nhau không.
+fn probe_place(args: &[String]) -> Result<()> {
+    let path = PathBuf::from(flag(args, "--path").context("--path <file|dir> là bắt buộc")?);
+    let mut files: Vec<PathBuf> = Vec::new();
+    if path.is_dir() {
+        for e in fs::read_dir(&path)?.flatten() {
+            if e.path().is_file() {
+                files.push(e.path());
+            }
+        }
+        files.sort();
+    } else {
+        files.push(path);
+    }
+
+    let (mut with_gps, mut named) = (0usize, 0usize);
+    for f in &files {
+        let m = core_media::extract_image_meta(f);
+        let name = f.file_name().unwrap_or_default().to_string_lossy();
+        let (Some(lat), Some(lon)) = (m.gps_lat, m.gps_lon) else {
+            println!("{name}\tKHONG CO GPS");
+            continue;
+        };
+        with_gps += 1;
+        let p = core_geo::lookup(lat, lon);
+        let show = |v: Option<&str>| v.unwrap_or("-").to_string();
+        let dir: Vec<String> = [p.province, p.district, p.ward]
+            .into_iter()
+            .flatten()
+            .map(core_geo::fold_ascii)
+            .collect();
+        if !p.is_empty() {
+            named += 1;
+        }
+        println!(
+            "{name}\t{lat:.6},{lon:.6}\t{} | {} | {} | {}\t-> {}",
+            show(p.city),
+            show(p.province),
+            show(p.district),
+            show(p.ward),
+            dir.join("\\")
+        );
+    }
+    println!(
+        "\n{} file, {with_gps} co GPS, {named} tra duoc ten",
+        files.len()
+    );
     Ok(())
 }
 

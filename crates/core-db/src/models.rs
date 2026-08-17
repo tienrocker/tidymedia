@@ -100,6 +100,10 @@ pub struct MetaUpsert {
     pub acodec: Option<String>,
     pub bitrate: Option<i64>,
     pub fps: Option<f64>,
+    /// Toạ độ nơi chụp, độ thập phân. `meta_ver` KHÔNG nằm ở đây: upsert luôn
+    /// đóng dấu `ops::META_VERSION` hiện tại, caller không có quyền chọn.
+    pub gps_lat: Option<f64>,
+    pub gps_lon: Option<f64>,
     /// 1 = done, 2 = failed (không đọc nổi dimensions).
     pub meta_state: i64,
     /// Snapshot từ PendingMeta — upsert chỉ ghi khi files.mtime/size còn khớp
@@ -142,6 +146,16 @@ pub struct FileDetail {
     pub acodec: Option<String>,
     pub fps: Option<f64>,
     pub meta_state: Option<i64>,
+    pub gps_lat: Option<f64>,
+    pub gps_lon: Option<f64>,
+    /// Tên nơi chụp để HIỂN THỊ — GIỮ NGUYÊN DẤU ("Phường Lý Thái Tổ, Hà Nội"),
+    /// khác hẳn tên dùng đặt thư mục.
+    ///
+    /// core-db KHÔNG điền field này (luôn `None`): tên tra từ toạ độ bằng
+    /// `core-geo`, mà tra tên là việc của tầng lệnh chứ không phải tầng lưu
+    /// trữ. Và cố ý KHÔNG lưu vào DB — bộ dữ liệu địa điểm sẽ cập nhật, tên đã
+    /// lưu thì đứng yên rồi lệch dần với tên đang hiện ở chỗ khác.
+    pub place: Option<String>,
 }
 
 /// File chờ hash (quick hoặc full) — M4 dedup.
@@ -305,6 +319,8 @@ pub struct OrgCandidateRow {
     pub taken_at: Option<i64>,
     pub date_source: Option<i64>,
     pub camera: Option<String>,
+    /// Toạ độ nơi chụp cho token {place}… — chỉ Some khi có ĐỦ cả lat lẫn lon.
+    pub gps: Option<(f64, f64)>,
     pub full_hash: Option<Vec<u8>>,
     pub hashed_size: Option<i64>,
     pub hashed_mtime: Option<i64>,

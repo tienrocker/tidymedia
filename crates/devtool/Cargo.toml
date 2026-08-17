@@ -11,5 +11,7 @@ path = "src/main.rs"
 unicode-normalization = "0.1"
 core-db.workspace = true
 core-index.workspace = true
+core-media.workspace = true
+core-geo.workspace = true
 anyhow.workspace = true
 filetime = "0.2"

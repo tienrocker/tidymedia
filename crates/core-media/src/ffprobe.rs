@@ -21,6 +21,9 @@ pub struct VideoMeta {
     pub taken_at: Option<i64>,
     /// 1 = QuickTime tag (creationdate có offset hoặc creation_time UTC).
     pub date_source: Option<i64>,
+    /// Toạ độ nơi quay, độ thập phân — cùng quy ước với ảnh.
+    pub gps_lat: Option<f64>,
+    pub gps_lon: Option<f64>,
     /// false = probe fail / không có video stream → meta_state=2.
     pub ok: bool,
 }
@@ -154,7 +157,43 @@ fn parse_probe_json_with_offset(json: &str, offset_at: &dyn Fn(i64) -> i64) -> V
     if m.taken_at.is_some() {
         m.date_source = Some(1);
     }
+
+    // Toạ độ: iPhone ghi com.apple.quicktime.location.ISO6709, Android ghi
+    // cùng định dạng vào tag `location`. Đọc từ `format.tags` đã có sẵn ở trên
+    // nên KHÔNG tốn thêm lần gọi ffprobe nào.
+    if let Some((lat, lon)) = ["com.apple.quicktime.location.ISO6709", "location"]
+        .iter()
+        .filter_map(|k| tags[*k].as_str())
+        .find_map(parse_iso6709)
+    {
+        m.gps_lat = Some(lat);
+        m.gps_lon = Some(lon);
+    }
     m
+}
+
+/// ISO 6709 kiểu QuickTime: `+21.0287+105.8524+010.000/` (có thể thiếu độ cao).
+///
+/// Chuẩn ISO còn cho phép dạng độ-phút liền nhau (`+2101.72+10551.14/`) nhưng
+/// iPhone/Android đều ghi độ thập phân. Không đoán giữa hai dạng: `+2101.72`
+/// đọc theo độ thập phân sẽ ra vĩ độ 2101° — quá dải hợp lệ nên
+/// [`sane_coord`](crate::meta::sane_coord) tự loại. Thà không có toạ độ còn hơn
+/// gắn ảnh vào sai chỗ.
+fn parse_iso6709(s: &str) -> Option<(f64, f64)> {
+    let s = s.trim().trim_end_matches('/');
+    // Cắt tại mỗi dấu +/- (trừ ký tự đầu) → [vĩ độ, kinh độ, (độ cao)]
+    let mut parts: Vec<&str> = Vec::new();
+    let mut start = 0usize;
+    for (i, c) in s.char_indices() {
+        if i > 0 && (c == '+' || c == '-') {
+            parts.push(&s[start..i]);
+            start = i;
+        }
+    }
+    parts.push(&s[start..]);
+    let lat: f64 = parts.first()?.parse().ok()?;
+    let lon: f64 = parts.get(1)?.parse().ok()?;
+    crate::meta::sane_coord(lat, lon)
 }
 
 fn timezone_offset_minutes(timezone: &str, epoch_ms: i64) -> Option<i32> {
@@ -306,6 +345,53 @@ mod tests {
         }"#;
         let m = parse_probe_json(json, 420); // UTC+7
         assert_eq!(m.taken_at, Some(1_560_526_222_000)); // 08:30 UTC + 7h = 15:30 wall
+    }
+
+    #[test]
+    fn iso6709_location_variants() {
+        // iPhone: vĩ độ, kinh độ, độ cao
+        assert_eq!(
+            parse_iso6709("+21.0287+105.8524+010.000/"),
+            Some((21.0287, 105.8524))
+        );
+        // Không có độ cao, không có '/'
+        assert_eq!(
+            parse_iso6709("+21.0287+105.8524"),
+            Some((21.0287, 105.8524))
+        );
+        // Nam bán cầu + tây kinh tuyến
+        assert_eq!(
+            parse_iso6709("-33.8688-151.2093/"),
+            Some((-33.8688, -151.2093))
+        );
+        // Dạng độ-phút liền: ra ngoài dải hợp lệ → loại, KHÔNG đoán
+        assert_eq!(parse_iso6709("+2101.72+10551.14/"), None);
+        // 0,0 = "không có định vị" của vài app
+        assert_eq!(parse_iso6709("+00.0000+000.0000/"), None);
+        assert_eq!(parse_iso6709(""), None);
+        assert_eq!(parse_iso6709("rac"), None);
+        assert_eq!(parse_iso6709("+21.0287"), None); // thiếu kinh độ
+    }
+
+    #[test]
+    fn probe_json_reads_location_from_tags() {
+        let json = r#"{
+          "streams":[{"codec_type":"video","codec_name":"h264","width":1280,"height":720}],
+          "format":{"tags":{"com.apple.quicktime.location.ISO6709":"+21.0287+105.8524+010.000/"}}
+        }"#;
+        let m = parse_probe_json(json, 420);
+        assert_eq!(m.gps_lat, Some(21.0287));
+        assert_eq!(m.gps_lon, Some(105.8524));
+        // Tag của Android cũng cùng định dạng
+        let android = r#"{
+          "streams":[{"codec_type":"video","codec_name":"h264","width":1280,"height":720}],
+          "format":{"tags":{"location":"+16.0678+108.2208/"}}
+        }"#;
+        let m = parse_probe_json(android, 420);
+        assert_eq!(m.gps_lat, Some(16.0678));
+        // Không có tag nào → không có toạ độ, không phải 0,0
+        let none = r#"{"streams":[{"codec_type":"video","width":1,"height":1}],"format":{}}"#;
+        assert_eq!(parse_probe_json(none, 0).gps_lat, None);
     }
 
     #[test]

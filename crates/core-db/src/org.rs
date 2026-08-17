@@ -105,7 +105,7 @@ pub fn select_org_candidates(
                 h.full_hash, h.hashed_size, h.hashed_mtime,
                 pv.id, pd.path, pv.name, pv.ext, pv.status, pv.size, pv.mtime,
                 ph.full_hash, ph.hashed_size, ph.hashed_mtime,
-                f.original_name
+                f.original_name, m.gps_lat, m.gps_lon
          FROM files f
          JOIN dirs d ON d.id = f.dir_id
          LEFT JOIN media_meta m ON m.file_id = f.id
@@ -156,6 +156,11 @@ pub fn select_org_candidates(
                 full_hash: r.get(11)?,
                 hashed_size: r.get(12)?,
                 hashed_mtime: r.get(13)?,
+                // Nửa toạ độ là vô dụng — chỉ nhận khi có đủ cả hai
+                gps: match (r.get::<_, Option<f64>>(25)?, r.get::<_, Option<f64>>(26)?) {
+                    (Some(lat), Some(lon)) => Some((lat, lon)),
+                    _ => None,
+                },
                 pair,
             })
         })?

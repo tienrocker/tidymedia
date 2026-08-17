@@ -1037,9 +1037,14 @@ fn finish_root_scan_updates_bookkeeping_without_reconcile() {
 fn schema_v5_migrates_recovery_terminal_state_columns() {
     let mut conn = rusqlite::Connection::open_in_memory().unwrap();
     ops::ensure_schema(&mut conn).unwrap();
+    // Hoàn tác MỌI cột thêm sau v5, không riêng cột của bước đang xét: một DB
+    // v5 thật thì chưa có cột nào cả, mà ensure_schema sẽ chạy hết v5 → v8.
     conn.execute_batch(
         "ALTER TABLE org_ops DROP COLUMN recovery_error;
          ALTER TABLE org_ops DROP COLUMN recovery_attempted_at;
+         ALTER TABLE media_meta DROP COLUMN gps_lat;
+         ALTER TABLE media_meta DROP COLUMN gps_lon;
+         ALTER TABLE media_meta DROP COLUMN meta_ver;
          PRAGMA user_version = 5;",
     )
     .unwrap();
@@ -1058,6 +1063,58 @@ fn schema_v5_migrates_recovery_terminal_state_columns() {
         .unwrap();
     assert!(names.iter().any(|name| name == "recovery_error"));
     assert!(names.iter().any(|name| name == "recovery_attempted_at"));
+}
+
+/// v7 → v8: thêm toạ độ + dấu phiên bản bộ trích. Meta ĐANG CÓ phải còn nguyên
+/// — nâng cấp app không được làm kho ảnh mất ngày chụp rồi bắt quét lại từ đầu.
+#[test]
+fn schema_v8_adds_gps_without_losing_existing_meta() {
+    let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+    ops::ensure_schema(&mut conn).unwrap();
+    conn.execute_batch(
+        "ALTER TABLE media_meta DROP COLUMN gps_lat;
+         ALTER TABLE media_meta DROP COLUMN gps_lon;
+         ALTER TABLE media_meta DROP COLUMN meta_ver;
+         PRAGMA user_version = 7;",
+    )
+    .unwrap();
+    let file_id = {
+        ops::upsert_root(&mut conn, "D:\\P").unwrap();
+        let mut cache = HashMap::new();
+        ops::upsert_scan_batch(
+            &mut conn,
+            1,
+            1,
+            &[entry("D:\\P", "IMG_1.JPG", "jpg", 0, 100, 1)],
+            &mut cache,
+        )
+        .unwrap();
+        conn.query_row("SELECT id FROM files", [], |r| r.get::<_, i64>(0))
+            .unwrap()
+    };
+    conn.execute(
+        "INSERT INTO media_meta(file_id, width, height, taken_at, camera, meta_state)
+         VALUES(?1, 4032, 3024, 1560526222000, 'Apple iPhone 12', 1)",
+        rusqlite::params![file_id],
+    )
+    .unwrap();
+
+    ops::ensure_schema(&mut conn).unwrap();
+
+    let (w, taken, cam, ver): (i64, i64, String, i64) = conn
+        .query_row(
+            "SELECT width, taken_at, camera, meta_ver FROM media_meta WHERE file_id = ?1",
+            rusqlite::params![file_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (w, taken, cam.as_str()),
+        (4032, 1_560_526_222_000, "Apple iPhone 12")
+    );
+    // meta_ver = 0 < META_VERSION → job meta tự chọn lại để trích bù toạ độ
+    assert_eq!(ver, 0);
+    assert!(ops::count_pending_meta(&conn, true).unwrap() >= 1);
 }
 
 #[test]

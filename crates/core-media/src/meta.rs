@@ -17,6 +17,10 @@ pub struct ImageMeta {
     pub date_source: Option<i64>,
     pub camera: Option<String>,
     pub orientation: Option<u16>,
+    /// Toạ độ nơi chụp, độ thập phân (bắc/đông dương). Cả hai cùng có hoặc
+    /// cùng không — một nửa toạ độ thì vô dụng.
+    pub gps_lat: Option<f64>,
+    pub gps_lon: Option<f64>,
     /// false = không đọc nổi dimensions (file hỏng/format lạ) → meta_state=2.
     pub ok: bool,
 }
@@ -75,6 +79,15 @@ pub fn extract_image_meta(path: &Path) -> ImageMeta {
                 }
                 (mk, md) => mk.or(md),
             };
+
+            let lat = gps_degrees(&exif, Tag::GPSLatitude, Tag::GPSLatitudeRef, 'S');
+            let lon = gps_degrees(&exif, Tag::GPSLongitude, Tag::GPSLongitudeRef, 'W');
+            if let (Some(lat), Some(lon)) = (lat, lon) {
+                if let Some((lat, lon)) = sane_coord(lat, lon) {
+                    m.gps_lat = Some(lat);
+                    m.gps_lon = Some(lon);
+                }
+            }
         }
     }
 
@@ -83,6 +96,52 @@ pub fn extract_image_meta(path: &Path) -> ImageMeta {
         std::mem::swap(&mut m.width, &mut m.height);
     }
     m
+}
+
+/// EXIF ghi toạ độ thành 3 phân số độ/phút/giây, dấu nằm ở tag `*Ref` riêng
+/// ("N"/"S", "E"/"W"). Máy nào ghi thiếu phần giây (chỉ độ + phút thập phân)
+/// vẫn đọc được — cộng đúng những phần có.
+fn gps_degrees(exif: &exif::Exif, tag: Tag, ref_tag: Tag, negative: char) -> Option<f64> {
+    let Value::Rational(parts) = &exif.get_field(tag, In::PRIMARY)?.value else {
+        return None;
+    };
+    if parts.is_empty() {
+        return None;
+    }
+    let mut deg = 0.0;
+    for (i, r) in parts.iter().take(3).enumerate() {
+        if r.denom == 0 {
+            return None;
+        }
+        deg += r.to_f64() / 60_f64.powi(i as i32);
+    }
+    // Thiếu tag Ref thì KHÔNG đoán bán cầu — toạ độ sai dấu đưa ảnh sang châu
+    // lục khác, tệ hơn hẳn việc không có toạ độ.
+    let hemi = exif
+        .get_field(ref_tag, In::PRIMARY)
+        .and_then(|f| ascii_string(&f.value))?;
+    let sign = if hemi.to_ascii_uppercase().starts_with(negative) {
+        -1.0
+    } else {
+        1.0
+    };
+    Some(sign * deg)
+}
+
+/// Chặn toạ độ rác trước khi ghi vào DB. Đúng 0,0 là giá trị vài app điền khi
+/// KHÔNG có định vị (giữa vịnh Guinea) — `core_geo::lookup` cũng từ chối nó,
+/// nhưng chặn ngay đây để bộ đếm "ảnh có toạ độ" không bị thổi phồng.
+pub(crate) fn sane_coord(lat: f64, lon: f64) -> Option<(f64, f64)> {
+    if !lat.is_finite() || !lon.is_finite() {
+        return None;
+    }
+    if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
+        return None;
+    }
+    if lat.abs() < 1e-6 && lon.abs() < 1e-6 {
+        return None;
+    }
+    Some((lat, lon))
 }
 
 fn ascii_string(v: &Value) -> Option<String> {

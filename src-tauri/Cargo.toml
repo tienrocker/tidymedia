@@ -11,6 +11,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 core-db.workspace = true
 core-hash.workspace = true
+core-geo.workspace = true
 core-index.workspace = true
 core-ingest.workspace = true
 core-jobs.workspace = true
