@@ -115,6 +115,33 @@ fn date_sort_and_filter_prefer_capture_time() {
         .with(|c| query::query_ids(c, &f))
         .unwrap()
         .is_empty());
+
+    // Job warm thumbnail phải cày theo ĐÚNG thứ tự user sẽ cuộn, nếu không thì
+    // ảnh trên màn hình đầu tiên lại được warm sau cùng.
+    //
+    // So THỨ TỰ TƯƠNG ĐỐI chứ không so nguyên danh sách: hai bên cố ý khác tập
+    // hợp. Browse hiện cả file cloud (status=2) mà warm thì không được đụng
+    // (đọc là kéo file về từ mạng), còn warm có cả MOV của Live Photo mà browse
+    // ẩn đi. Ràng "bằng nhau" là test sẽ vỡ oan khi hai ca đó xuất hiện.
+    let warm = db.pool.with(ops::select_present_ids_by_date).unwrap();
+    let browse = db
+        .pool
+        .with(|c| query::query_ids(c, &FileFilter::default()))
+        .unwrap();
+    let keep = |src: &[i64], other: &[i64]| -> Vec<i64> {
+        src.iter()
+            .copied()
+            .filter(|id| other.contains(id))
+            .collect()
+    };
+    assert_eq!(
+        keep(&warm, &browse),
+        keep(&browse, &warm),
+        "thu tu warm phai khop thu tu browse mac dinh"
+    );
+    // Cụ thể: ảnh mới nhất theo NGÀY CHỤP đứng đầu, không phải file index trước
+    assert_eq!(warm[0], mid_id);
+    assert_eq!(warm.last(), Some(&old_id));
 }
 
 /// `low` = 64 bit thấp nhất của hash 256-bit; 3 word còn lại để 0 nên khoảng

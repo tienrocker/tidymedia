@@ -423,19 +423,16 @@ fn run_thumb_warm_job(
     let mut done = 0u64;
     let mut made = 0u64;
     let mut throttle = Throttle::new(500);
-    let mut cursor = 0i64;
     // Đang nhường đường hay không — chỉ bắn event lúc trạng thái ĐỔI.
     let mut paused = false;
-    loop {
+    // Thứ tự user sẽ cuộn (ảnh mới nhất trước), KHÔNG phải thứ tự quét — xem
+    // doc của select_present_ids_by_date để biết đo được gì.
+    let ids = db.pool.with(core_db::ops::select_present_ids_by_date)?;
+    for chunk in ids.chunks(256) {
         if cancel.load(Ordering::Relaxed) {
             return Ok(made);
         }
-        let ids = db
-            .pool
-            .with(|c| core_db::ops::select_present_ids(c, cursor, 256))?;
-        let Some(&last) = ids.last() else { break };
-        cursor = last;
-        for id in ids {
+        for &id in chunk {
             // User bấm ⏸ → ngủ hẳn, không đụng đĩa cho tới khi bấm ▶
             if !crate::dedup::hold_if_paused(
                 pause,

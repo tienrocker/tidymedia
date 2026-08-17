@@ -666,13 +666,33 @@ pub fn upsert_meta_batch(conn: &mut Connection, rows: &[MetaUpsert]) -> Result<(
     Ok(())
 }
 
-/// Lookup cho protocol thumb:// / media://.
-/// Trang id file đang hiện diện (status=0) — job warm thumb nền duyệt tuần tự.
-pub fn select_present_ids(conn: &Connection, after_id: i64, limit: i64) -> Result<Vec<i64>> {
-    let mut st = conn
-        .prepare_cached("SELECT id FROM files WHERE status = 0 AND id > ?1 ORDER BY id LIMIT ?2")?;
+/// Mọi file đang hiện diện (status=0), sắp theo ĐÚNG THỨ TỰ USER SẼ CUỘN —
+/// ngày chụp giảm dần, thiếu EXIF thì lùi về mtime, y hệt `query::query_ids`
+/// mặc định. Dùng cho job warm thumbnail nền.
+///
+/// # Vì sao không duyệt theo id
+///
+/// id là thứ tự QUÉT (thư mục nào gặp trước), không liên quan gì tới ngày chụp.
+/// Đo trên kho thật 24.739 file: để phủ được **60 ảnh đầu tiên** trên màn hình,
+/// duyệt theo id phải cày qua **24.706** file — nghĩa là gần cả kho, và màn hình
+/// đầu tiên user nhìn thấy lại được warm CUỐI CÙNG. Đúng ngược mục đích của job.
+///
+/// # Vì sao trả hết một lượt chứ không phân trang
+///
+/// Keyset theo một biểu thức tính (`COALESCE`) thì mỗi trang phải quét-và-sắp
+/// lại cả bảng. Danh sách id là 8 byte/file — 200k file = 1,6 MB, đổi lấy đúng
+/// một lần sắp. `query_ids` của tầng browse cũng trả hết một lượt như vậy.
+/// Đánh đổi: file được index THÊM trong lúc job chạy thì lượt này bỏ qua — lượt
+/// sau (scan xong là job chạy lại) sẽ nhận.
+pub fn select_present_ids_by_date(conn: &Connection) -> Result<Vec<i64>> {
+    let mut st = conn.prepare_cached(
+        "SELECT f.id FROM files f
+         LEFT JOIN media_meta m ON m.file_id = f.id
+         WHERE f.status = 0
+         ORDER BY COALESCE(m.taken_at, f.mtime) DESC, f.id DESC",
+    )?;
     let ids = st
-        .query_map(params![after_id, limit], |r| r.get(0))?
+        .query_map([], |r| r.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ids)
 }
