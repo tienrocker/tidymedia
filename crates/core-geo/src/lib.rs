@@ -22,6 +22,9 @@
 
 use std::sync::OnceLock;
 
+use unicode_normalization::char::is_combining_mark;
+use unicode_normalization::UnicodeNormalization;
+
 /// Bán kính coi là "ảnh chụp ở đây". Bên ngoài nó thì tên thành phố là bịa.
 pub const CITY_RADIUS_KM: f64 = 25.0;
 /// Ngoài bán kính thành phố nhưng còn trong khoảng này thì chỉ dám nói quốc gia
@@ -86,6 +89,95 @@ impl Place {
             && self.province.is_none()
             && self.country.is_none()
             && self.ward.is_none()
+    }
+}
+
+/// Bỏ dấu để ĐẶT TÊN THƯ MỤC: "Phường Lý Thái Tổ" → "Phuong Ly Thai To".
+/// Tên trong [`Place`] giữ nguyên dấu — đó là tên để HIỂN THỊ cho người đọc.
+///
+/// # Vì sao thư mục không được có dấu
+///
+/// NTFS lưu UTF-16 nên tự nó không sao, nhưng công cụ chạy TRÊN nó thì có. Đo
+/// trên đúng máy dev, thư mục thật tên `Phường Lý Thái Tổ`:
+///
+/// | Việc | Kết quả |
+/// |---|---|
+/// | `dir /b` ở codepage 437 hoặc 1258 | ra `Ph?ng L? Th�i T?` |
+/// | batch đọc tên từ `dir` rồi `cd` vào lại | **fail cả ở codepage 65001** |
+///
+/// Cái thứ hai mới là lý do thật: `for /f` của cmd đọc pipe theo codepage ANSI
+/// nên tên có dấu KHÔNG round-trip, kể cả khi console đang ở UTF-8. Nghĩa là mọi
+/// script batch duyệt thư mục ảnh sẽ trượt — mà kho ảnh là chỗ người ta hay
+/// viết script để backup/đổi tên/đồng bộ. Thêm nữa: ZIP không cờ UTF-8, và
+/// robocopy log ở OEM codepage, cũng mất tên như vậy.
+///
+/// # Chỉ áp cho tên do CHÍNH TA sinh
+///
+/// Token `{relpath}`/`{folder}`/`{name}` vẫn giữ nguyên dấu: đó là tên thư mục
+/// SẴN CÓ của user ("Bác Tuấn"), bỏ dấu nghĩa là tự ý đổi tên dữ liệu của người
+/// ta. Tên địa điểm thì do ta sinh ra từ toạ độ nên ta được chọn cách viết.
+///
+/// # Hợp đồng
+///
+/// Kết quả **hoặc** là ASCII thuần, **hoặc** đúng bằng chuỗi vào (tên không có
+/// phần Latin nào để bỏ dấu). Không bao giờ có trường hợp thứ ba, và không bao
+/// giờ rỗng khi chuỗi vào không rỗng.
+pub fn fold_ascii(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.nfd() {
+        if is_combining_mark(c) {
+            continue;
+        }
+        match c {
+            // NFD không tách được mấy chữ này (dấu nằm THÂN chữ chứ không phải
+            // dấu tổ hợp) nên phải kê tay. `ð`/`Ð` U+00F0/U+00D0 là eth của
+            // tiếng Iceland, nhưng cũng chính là chữ Đ bị GeoNames ghi sai mã.
+            'đ' | 'ð' => out.push('d'),
+            'Đ' | 'Ð' => out.push('D'),
+            'ø' => out.push('o'),
+            'Ø' => out.push('O'),
+            'ł' => out.push('l'),
+            'Ł' => out.push('L'),
+            'ħ' => out.push('h'),
+            'Ħ' => out.push('H'),
+            'ŧ' => out.push('t'),
+            'Ŧ' => out.push('T'),
+            'ı' => out.push('i'),
+            // schwa của tiếng Azerbaijan — 69 tên cấp tỉnh dùng nó
+            'ə' | 'ǝ' => out.push('e'),
+            'Ə' | 'Ǝ' => out.push('E'),
+            'æ' => out.push_str("ae"),
+            'Æ' => out.push_str("Ae"),
+            'œ' => out.push_str("oe"),
+            'Œ' => out.push_str("Oe"),
+            'þ' => out.push_str("th"),
+            'Þ' => out.push_str("Th"),
+            'ß' | 'ẞ' => out.push_str("ss"),
+            // 1.053 tên trong bộ dữ liệu dùng nháy CONG ("Qacha’s Nek"), và
+            // ʻokina của tiếng Hawaii là U+02BB ("Kakaʻako") — chữ thật trong
+            // tên, không phải rác, nên đổi thành nháy thẳng chứ không bỏ.
+            '\u{2019}' | '\u{2018}' | '\u{02bb}' | '\u{02bc}' | '\u{02bd}' | '\u{00b4}'
+            | '\u{0060}' => out.push('\''),
+            '\u{2013}' | '\u{2014}' | '\u{2212}' => out.push('-'),
+            _ => out.push(c),
+        }
+    }
+    if out.is_ascii() {
+        return out;
+    }
+    // Còn ký tự ngoài ASCII = chữ không phải Latin, không có khái niệm "bỏ dấu".
+    // Tên TRỘN hai bảng chữ thì phần Latin đã đủ ("Al-Medy Village, قرية المدي"
+    // → "Al-Medy Village"); tên thuần Hán/Thái/Kirin thì bỏ hết sẽ ra rỗng, nên
+    // trả lại nguyên bản — thư mục tên tiếng Trung vẫn mở được, tên rỗng thì
+    // không, mà bịa ra phiên âm còn tệ hơn cả hai.
+    let ascii_only: String = out.chars().filter(char::is_ascii).collect();
+    if ascii_only.chars().any(|c| c.is_ascii_alphanumeric()) {
+        // Bỏ chữ giữa câu hay để lại dấu phẩy/space lẻ ở hai đầu
+        ascii_only
+            .trim_matches(|c: char| c.is_whitespace() || c == ',' || c == ';')
+            .to_string()
+    } else {
+        s.to_string()
     }
 }
 
@@ -341,6 +433,119 @@ mod tests {
             .chain(d.districts.iter().copied())
             .find(|s| s.nfc().collect::<String>() != **s);
         assert_eq!(bad, None, "ten chua o dang NFC");
+    }
+
+    /// `Ð` U+00D0 (eth) và `Đ` U+0110 (D có gạch) HIỂN THỊ y hệt nhau nhưng là
+    /// hai ký tự khác nhau, và GeoNames nhầm chúng có hệ thống — không riêng
+    /// tiếng Việt, cả tên Croatia. Bộ sinh dữ liệu chữa theo mã nước, nên trong
+    /// dữ liệu đã ghi ra không được còn eth ở nước không dùng eth.
+    #[test]
+    fn no_eth_outside_iceland_and_faroe() {
+        let d = data();
+        // Iceland/Faroe dùng ð thật, ở đây chỉ kiểm tên VN
+        let bad: Vec<_> = d
+            .fine
+            .iter()
+            .map(|f| f.name)
+            .chain(d.districts.iter().copied())
+            .filter(|s| s.contains('\u{d0}') || s.contains('\u{f0}'))
+            .collect();
+        assert!(bad.is_empty(), "ten Viet con dung eth: {bad:?}");
+        // Bất kể dữ liệu thế nào, fold vẫn phải quy cả hai về 'D'
+        assert_eq!(fold_ascii("Huyện \u{d0}ông Hưng"), "Huyen Dong Hung");
+        assert_eq!(fold_ascii("Huyện \u{110}ông Hưng"), "Huyen Dong Hung");
+    }
+
+    /// Tên thư mục phải bỏ dấu — xem [`fold_ascii`] để biết vì sao (batch của
+    /// cmd không round-trip được tên có dấu, kể cả ở codepage 65001).
+    #[test]
+    fn folding_strips_vietnamese_marks() {
+        assert_eq!(fold_ascii("Phường Lý Thái Tổ"), "Phuong Ly Thai To");
+        assert_eq!(fold_ascii("Quận Hoàn Kiếm"), "Quan Hoan Kiem");
+        assert_eq!(fold_ascii("Hà Nội"), "Ha Noi");
+        assert_eq!(fold_ascii("Đà Nẵng"), "Da Nang");
+        assert_eq!(fold_ascii("Xã Đạ M’Ri"), "Xa Da M'Ri");
+        // Tra thật rồi fold: đúng đường mà organize sẽ đi
+        let p = lookup(21.0287, 105.8524);
+        let path: Vec<String> = [p.province, p.district, p.ward]
+            .into_iter()
+            .flatten()
+            .map(fold_ascii)
+            .collect();
+        assert_eq!(path, ["Ha Noi", "Quan Hoan Kiem", "Phuong Ly Thai To"]);
+    }
+
+    /// Chữ Latin của nước khác cũng phải ra ASCII: dữ liệu là toàn cầu, mà ảnh
+    /// đi du lịch thì đường dẫn vẫn phải gõ được.
+    #[test]
+    fn folding_handles_other_latin_alphabets() {
+        assert_eq!(fold_ascii("Zürich"), "Zurich");
+        assert_eq!(fold_ascii("São Paulo"), "Sao Paulo");
+        assert_eq!(fold_ascii("Kraków"), "Krakow");
+        assert_eq!(fold_ascii("Malmö"), "Malmo");
+        assert_eq!(fold_ascii("Tromsø"), "Tromso");
+        assert_eq!(fold_ascii("Straßburg"), "Strassburg");
+        assert_eq!(fold_ascii("Þórshöfn"), "Thorshofn");
+        assert_eq!(fold_ascii("Beyləqan"), "Beyleqan");
+        assert_eq!(fold_ascii("Ærøskøbing"), "Aeroskobing");
+        assert_eq!(fold_ascii("Łódź"), "Lodz");
+        // Đã ASCII thì không được đổi gì
+        assert_eq!(fold_ascii("New York City"), "New York City");
+    }
+
+    /// Chữ không phải Latin không có cách bỏ dấu. Trả nguyên bản chứ đừng ra
+    /// rỗng — thư mục tên tiếng Trung vẫn mở được, tên rỗng thì không.
+    #[test]
+    fn folding_keeps_non_latin_names_intact() {
+        assert_eq!(fold_ascii("東京"), "東京");
+        assert_eq!(fold_ascii("Владивосток"), "Владивосток");
+        assert_eq!(fold_ascii(""), "");
+        // ʻokina của tiếng Hawaii là chữ trong tên, không phải rác
+        assert_eq!(fold_ascii("Kakaʻako"), "Kaka'ako");
+        // Tên TRỘN hai bảng chữ: phần Latin đã đủ để đặt thư mục
+        assert_eq!(fold_ascii("Al-Medy Village, قرية المدي"), "Al-Medy Village");
+    }
+
+    /// Kiểm trên TOÀN BỘ dữ liệu, không phải vài ví dụ tự chọn.
+    #[test]
+    fn folding_covers_the_whole_dataset() {
+        let d = data();
+        let all = || {
+            d.fine
+                .iter()
+                .map(|f| f.name)
+                .chain(d.cities.iter().map(|c| c.name))
+                .chain(d.admin1.iter().copied())
+                .chain(d.districts.iter().copied())
+        };
+        // Hợp đồng: hoặc ASCII thuần, hoặc y nguyên chuỗi vào — không có ca thứ ba
+        let broken: Vec<&str> = all()
+            .filter(|s| {
+                let f = fold_ascii(s);
+                !f.is_ascii() && f != **s
+            })
+            .collect();
+        assert!(
+            broken.is_empty(),
+            "{} ten khong ASCII ma cung khong nguyen ban: {:?}",
+            broken.len(),
+            &broken[..broken.len().min(10)]
+        );
+        // Và tên không phải ASCII còn lại phải là tên KHÔNG có chữ Latin nào
+        let latin_left: Vec<&str> = all()
+            .filter(|s| !fold_ascii(s).is_ascii())
+            .filter(|s| s.chars().any(|c| c.is_ascii_alphanumeric()))
+            .collect();
+        assert!(
+            latin_left.is_empty(),
+            "{} ten co phan Latin ma fold ra van ngoai ASCII: {:?}",
+            latin_left.len(),
+            &latin_left[..latin_left.len().min(10)]
+        );
+        // fold rồi fold nữa không đổi gì — nếu không thì render 2 lần ra 2 tên
+        assert!(all().all(|s| fold_ascii(&fold_ascii(s)) == fold_ascii(s)));
+        // Không tên nào biến thành rỗng: segment rỗng là mất một tầng thư mục
+        assert!(all().all(|s| s.is_empty() || !fold_ascii(s).trim().is_empty()));
     }
 
     /// Tầng phường/xã đi RIÊNG với tầng thành phố: cùng một toạ độ cho ra cả

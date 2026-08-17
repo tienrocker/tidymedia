@@ -53,6 +53,28 @@ fn norm(s: &str) -> String {
     nfc.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Bảng chữ có `ð` là chữ THẬT — không được "sửa" chữ của người ta.
+const HAS_ETH: &[&str] = &["IS", "FO"];
+
+/// [`norm`] + chữa chữ Đ bị ghi bằng mã sai, cho tầng dữ liệu bản địa.
+///
+/// 5 tên Việt trong dump viết Đ bằng `Ð` U+00D0 — eth của tiếng Iceland — thay
+/// vì `Đ` U+0110: "Huyện Ðông Hưng". Hai ký tự HIỂN THỊ y hệt nhau nhưng khác
+/// byte, đúng cái bẫy NFC/NFD ở trên, nên `Huyện Ðông Hưng` và
+/// `Huyện Đông Hưng` là hai thư mục mà mắt không phân biệt được.
+///
+/// Không riêng tiếng Việt: `Ðurići`, `Selci Ðakovački`, `Ðurđevo` của Croatia
+/// cũng vậy — bảng chữ Croatia có Đ chứ không có eth. Nên chữa theo mã nước của
+/// TỪNG dòng, chỉ chừa các nước dùng eth thật ([`HAS_ETH`]).
+fn norm_native(s: &str, cc: &str) -> String {
+    let n = norm(s);
+    if HAS_ETH.contains(&cc) {
+        n
+    } else {
+        n.replace('\u{d0}', "\u{110}").replace('\u{f0}', "\u{111}")
+    }
+}
+
 pub fn gen_geo(args: &[String]) -> Result<()> {
     let src = PathBuf::from(super::flag(args, "--src").context("--src <thư mục dump> bắt buộc")?);
     let out = PathBuf::from(super::flag(args, "--out").context("--out <file> bắt buộc")?);
@@ -103,7 +125,7 @@ pub fn gen_geo(args: &[String]) -> Result<()> {
             let preferred = f.get(4).is_some_and(|v| *v == "1");
             // Bản "preferred" thắng tuyệt đối; ngoài ra lấy bản đầu gặp
             if preferred || !local.contains_key(&id) {
-                local.insert(id, norm(f[3]));
+                local.insert(id, norm_native(f[3], cc));
             }
         }
     }
@@ -134,12 +156,13 @@ pub fn gen_geo(args: &[String]) -> Result<()> {
             continue;
         }
         let id = f.get(3).and_then(|s| s.parse::<i64>().ok()).unwrap_or(-1);
+        let cc = f[0].split('.').next().unwrap_or("");
         // Thứ tự ưu tiên: bảng tay > tên bản địa từ alternatenames > tên gốc
         let name = override_admin1
             .get(f[0])
             .cloned()
             .or_else(|| local.get(&id).cloned())
-            .unwrap_or_else(|| strip_admin_suffix(&norm(f[1])));
+            .unwrap_or_else(|| strip_admin_suffix(&norm_native(f[1], cc)));
         admin1_idx.insert(f[0].to_string(), admin1.len());
         admin1.push(name);
     }
@@ -153,9 +176,12 @@ pub fn gen_geo(args: &[String]) -> Result<()> {
             continue;
         }
         let id = f[0].parse::<i64>().unwrap_or(-1);
-        // Tên bản địa nếu có, không thì tên phổ thông của GeoNames
-        let name = local.get(&id).cloned().unwrap_or_else(|| norm(f[1]));
         let cc = f[8].trim();
+        // Tên bản địa nếu có, không thì tên phổ thông của GeoNames
+        let name = local
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| norm_native(f[1], cc));
         // Tên rỗng thì bỏ (nước lạ cũng bỏ)
         let (Some(&ci), false) = (country_idx.get(cc), name.is_empty()) else {
             skipped += 1;
@@ -217,7 +243,7 @@ pub fn gen_geo(args: &[String]) -> Result<()> {
                 (f[10].trim().to_string(), f[11].trim().to_string()),
                 districts.len(),
             );
-            districts.push(norm(f[1]));
+            districts.push(norm_native(f[1], cc));
         }
         for line in &lines {
             let f: Vec<&str> = line.split('\t').collect();
@@ -235,7 +261,7 @@ pub fn gen_geo(args: &[String]) -> Result<()> {
             fine.push((
                 (lat * COORD_SCALE).round() as i32,
                 (lon * COORD_SCALE).round() as i32,
-                norm(f[1]),
+                norm_native(f[1], cc),
                 ci,
                 d,
             ));

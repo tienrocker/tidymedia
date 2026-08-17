@@ -4,7 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-
-[dev-dependencies]
-# Chi de TEST kiem chung du lieu dung NFC that su - runtime khong can
+# fold_ascii: NFD tach dau roi bo dau. Bang tay 134 chu Viet + Latin-1 thi
+# dai va con thieu; NFD lam dung cho moi bang chu Latin.
 unicode-normalization = "0.1"
