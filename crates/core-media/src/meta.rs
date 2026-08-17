@@ -16,6 +16,17 @@ pub struct ImageMeta {
     /// mtime) vào ở M3/M5.
     pub date_source: Option<i64>,
     pub camera: Option<String>,
+    /// EXIF `Artist` — tên người chụp, do chủ máy tự đặt trong cài đặt camera.
+    ///
+    /// CỐ Ý KHÔNG lưu vào DB và KHÔNG có token `{author}`. Đo trên kho thật
+    /// (`devtool probe-meta`): 4/6560 file có tag này — iPhone 3, một ảnh tải
+    /// về của người khác 1, máy ảnh rời 0. Gần như không ai đụng vào ô "Artist"
+    /// trong cài đặt máy. Thêm cột thì phải bump `META_VERSION`, tức bắt 25.597
+    /// file trích lại chỉ để điền một cột rỗng 99,94%.
+    ///
+    /// Giữ lại phần đọc để `probe-meta` đo được: kho ảnh của dân chụp chuyên có
+    /// thể khác hẳn, và lúc đó đo lại là ra ngay chứ không phải đoán.
+    pub author: Option<String>,
     pub orientation: Option<u16>,
     /// Toạ độ nơi chụp, độ thập phân (bắc/đông dương). Cả hai cùng có hoặc
     /// cùng không — một nửa toạ độ thì vô dụng.
@@ -80,6 +91,13 @@ pub fn extract_image_meta(path: &Path) -> ImageMeta {
                 (mk, md) => mk.or(md),
             };
 
+            // Nhiều máy ghi sẵn chuỗi rỗng/placeholder thay vì bỏ hẳn tag —
+            // "unknown" mà thành một tầng thư mục thì tệ hơn là không có tầng.
+            m.author = exif
+                .get_field(Tag::Artist, In::PRIMARY)
+                .and_then(|f| ascii_string(&f.value))
+                .filter(|s| !is_placeholder(s));
+
             let lat = gps_degrees(&exif, Tag::GPSLatitude, Tag::GPSLatitudeRef, 'S');
             let lon = gps_degrees(&exif, Tag::GPSLongitude, Tag::GPSLongitudeRef, 'W');
             if let (Some(lat), Some(lon)) = (lat, lon) {
@@ -96,6 +114,20 @@ pub fn extract_image_meta(path: &Path) -> ImageMeta {
         std::mem::swap(&mut m.width, &mut m.height);
     }
     m
+}
+
+/// Giá trị "có tag nhưng không có nội dung". Máy/phần mềm hay ghi sẵn mấy chuỗi
+/// này thay vì bỏ hẳn tag; để nguyên thì đẻ ra thư mục tên "unknown".
+///
+/// Danh sách CỐ TÌNH ngắn: đây là tên người, đoán thừa là xoá mất tên thật của
+/// một ai đó. Chỉ chặn thứ chắc chắn không phải tên.
+fn is_placeholder(s: &str) -> bool {
+    let t = s.trim().trim_matches(['-', '_', '.']).to_ascii_lowercase();
+    t.is_empty()
+        || matches!(
+            t.as_str(),
+            "unknown" | "none" | "null" | "n/a" | "na" | "unknown artist" | "camera owner"
+        )
 }
 
 /// EXIF ghi toạ độ thành 3 phân số độ/phút/giây, dấu nằm ở tag `*Ref` riêng

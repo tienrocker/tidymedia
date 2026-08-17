@@ -9,6 +9,7 @@
 
 mod geo;
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -43,11 +44,11 @@ fn main() -> Result<()> {
         Some("gen-tree") => gen_tree(&args[1..]),
         Some("bench-scan") => bench_scan(&args[1..]),
         Some("gen-geo") => geo::gen_geo(&args[1..]),
-        Some("probe-place") => probe_place(&args[1..]),
+        Some("probe-meta") => probe_meta(&args[1..]),
         Some("db-info") => db_info(&args[1..]),
         _ => {
             eprintln!(
-                "usage:\n  devtool gen-tree --root <path> --files <n> [--dupe-sets <n>]\n  devtool bench-scan --root <path> --db <dir>\n  devtool probe-place --path <file|dir>\n  devtool db-info --db <dir>"
+                "usage:\n  devtool gen-tree --root <path> --files <n> [--dupe-sets <n>]\n  devtool bench-scan --root <path> --db <dir>\n  devtool probe-meta --path <file|dir>\n  devtool db-info --db <dir>"
             );
             std::process::exit(2);
         }
@@ -185,11 +186,17 @@ fn db_info(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Đọc GPS từ ảnh thật rồi tra tên địa điểm — để kiểm cả đường đi trên kho ảnh
-/// của chính mình chứ không chỉ trên fixture. In cả tên có dấu (bản HIỂN THỊ)
-/// lẫn tên đã bỏ dấu (bản ĐẶT THƯ MỤC) để soi hai bên có khớp nhau không.
-fn probe_place(args: &[String]) -> Result<()> {
+/// Trích meta ảnh thật rồi in ra — để kiểm cả đường đi trên kho ảnh của chính
+/// mình chứ không chỉ trên fixture, và để ĐO độ phủ của từng tag trước khi
+/// quyết có đáng làm token cho nó không.
+///
+/// Với địa điểm, in cả tên có dấu (bản HIỂN THỊ) lẫn tên đã bỏ dấu (bản ĐẶT
+/// THƯ MỤC) để soi hai bên có khớp nhau không.
+///
+/// `--quiet` chỉ in phần tổng kết — dùng khi quét thư mục hàng nghìn file.
+fn probe_meta(args: &[String]) -> Result<()> {
     let path = PathBuf::from(flag(args, "--path").context("--path <file|dir> là bắt buộc")?);
+    let quiet = args.iter().any(|a| a == "--quiet");
     let mut files: Vec<PathBuf> = Vec::new();
     if path.is_dir() {
         for e in fs::read_dir(&path)?.flatten() {
@@ -202,38 +209,57 @@ fn probe_place(args: &[String]) -> Result<()> {
         files.push(path);
     }
 
-    let (mut with_gps, mut named) = (0usize, 0usize);
+    let (mut with_gps, mut named, mut with_author, mut with_camera) = (0usize, 0, 0, 0);
+    let mut authors: HashMap<String, usize> = HashMap::new();
     for f in &files {
         let m = core_media::extract_image_meta(f);
         let name = f.file_name().unwrap_or_default().to_string_lossy();
+        if m.camera.is_some() {
+            with_camera += 1;
+        }
+        if let Some(a) = &m.author {
+            with_author += 1;
+            *authors.entry(a.clone()).or_default() += 1;
+        }
         let (Some(lat), Some(lon)) = (m.gps_lat, m.gps_lon) else {
-            println!("{name}\tKHONG CO GPS");
+            if !quiet {
+                println!("{name}\tKHONG CO GPS\tauthor={:?}", m.author);
+            }
             continue;
         };
         with_gps += 1;
         let p = core_geo::lookup(lat, lon);
-        let show = |v: Option<&str>| v.unwrap_or("-").to_string();
-        let dir: Vec<String> = [p.province, p.district, p.ward]
-            .into_iter()
-            .flatten()
-            .map(core_geo::fold_ascii)
-            .collect();
         if !p.is_empty() {
             named += 1;
         }
-        println!(
-            "{name}\t{lat:.6},{lon:.6}\t{} | {} | {} | {}\t-> {}",
-            show(p.city),
-            show(p.province),
-            show(p.district),
-            show(p.ward),
-            dir.join("\\")
-        );
+        if !quiet {
+            let show = |v: Option<&str>| v.unwrap_or("-").to_string();
+            let dir: Vec<String> = [p.province, p.district, p.ward]
+                .into_iter()
+                .flatten()
+                .map(core_geo::fold_ascii)
+                .collect();
+            println!(
+                "{name}\t{lat:.6},{lon:.6}\t{} | {} | {} | {}\t-> {}\tauthor={:?}",
+                show(p.city),
+                show(p.province),
+                show(p.district),
+                show(p.ward),
+                dir.join("\\"),
+                m.author
+            );
+        }
     }
     println!(
-        "\n{} file, {with_gps} co GPS, {named} tra duoc ten",
+        "\n{} file: {with_gps} co GPS ({named} tra duoc ten), {with_camera} co camera, \
+         {with_author} co author",
         files.len()
     );
+    let mut top: Vec<_> = authors.into_iter().collect();
+    top.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    for (a, n) in top.iter().take(10) {
+        println!("  author {a:?}: {n}");
+    }
     Ok(())
 }
 
