@@ -1285,13 +1285,14 @@ pub fn rebuild_similar_groups(conn: &mut Connection, max_dist: u32) -> Result<(i
     let clusters = cluster_similar(&items, max_dist);
 
     let tx = conn.transaction()?;
-    // Giữ group id theo file_id nhỏ nhất của cụm — UI đang mở nhóm nào thì
-    // rebuild không đá nó đi (cùng lý do như rebuild_dup_groups).
+    // Giữ group id qua mỗi lượt rebuild. Trước đây khóa theo file_id NHỎ NHẤT
+    // của cụm, và đó là bug: quét thêm một ảnh có id nhỏ hơn vào đúng cụm đó là
+    // cụm nhận id mới, UI thấy nhóm cũ biến mất và VỨT TICK user vừa đánh dấu.
+    // Nay tra theo TỪNG member: cụm to thêm bao nhiêu cũng giữ nguyên id.
     let existing: HashMap<i64, i64> = {
         let mut stmt = tx.prepare(
-            "SELECT MIN(m.file_id), m.group_id FROM dup_members m
-             JOIN dup_groups g ON g.id = m.group_id AND g.kind = 1
-             GROUP BY m.group_id",
+            "SELECT m.file_id, m.group_id FROM dup_members m
+             JOIN dup_groups g ON g.id = m.group_id AND g.kind = 1",
         )?;
         let rows = stmt
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
@@ -1310,14 +1311,32 @@ pub fn rebuild_similar_groups(conn: &mut Connection, max_dist: u32) -> Result<(i
             tx.prepare("INSERT INTO dup_members(group_id, file_id, keep) VALUES(?1, ?2, 0)")?;
         let mut size_of = tx.prepare("SELECT size FROM files WHERE id = ?1")?;
         let now = now_ms();
+        // Một id cũ chỉ được cấp lại cho ĐÚNG MỘT cụm: nhóm cũ có thể vỡ đôi
+        // (hash mịn hơn tách ra), hai nửa cùng đòi id đó là dup_members có 2 cụm
+        // chung group_id — UI hiện thành một nhóm hổ lốn.
+        let mut taken: std::collections::HashSet<i64> = std::collections::HashSet::new();
         for cluster in &clusters {
-            let gid = match existing.get(&cluster[0]) {
-                Some(id) => *id,
+            // Nhóm cũ nào giữ được nhiều member nhất của cụm này thì cụm kế thừa
+            // id đó; hòa phiếu thì lấy id nhỏ nhất cho kết quả tất định.
+            let mut votes: HashMap<i64, usize> = HashMap::new();
+            for fid in cluster {
+                if let Some(gid) = existing.get(fid) {
+                    if !taken.contains(gid) {
+                        *votes.entry(*gid).or_default() += 1;
+                    }
+                }
+            }
+            let gid = match votes
+                .into_iter()
+                .max_by_key(|(id, n)| (*n, std::cmp::Reverse(*id)))
+            {
+                Some((id, _)) => id,
                 None => {
                     ins_group.execute(params![now])?;
                     tx.last_insert_rowid()
                 }
             };
+            taken.insert(gid);
             let mut sizes: Vec<i64> = Vec::with_capacity(cluster.len());
             for &fid in cluster {
                 ins_member.execute(params![gid, fid])?;

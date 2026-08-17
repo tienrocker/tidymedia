@@ -66,9 +66,11 @@ pub async fn start_phash_scan(state: State<'_, AppState>) -> CmdResult<Option<i6
                 .writer
                 .exec(|c| core_db::ops::rebuild_similar_groups(c, MAX_DIST))
                 .map_err(err)?;
-            let _ = jobs
-                .sender()
-                .send(JobEvent::DupGroupsChanged { groups, waste });
+            let _ = jobs.sender().send(JobEvent::DupGroupsChanged {
+                kind: 1,
+                groups,
+                waste,
+            });
             return Ok(None);
         }
         let job_id = db
@@ -151,6 +153,7 @@ fn run_phash_job(
     let mut hashed: u64 = 0;
     let mut cursor = 0i64;
     let mut throttle = Throttle::new(200);
+    let mut dups = crate::dedup::DupRefresher::new_similar(crate::dedup::DUP_REFRESH_MS, MAX_DIST);
     let _ = events.send(JobEvent::Progress(JobProgress {
         job_id,
         kind: "phash".into(),
@@ -158,6 +161,10 @@ fn run_phash_job(
         total: Some(total),
         message: None,
     }));
+    // Gom ngay từ đầu: lượt quét trước bị hủy/tắt app giữa chừng vẫn để lại
+    // hash trong DB, nhưng nhóm chỉ được dựng lúc job kết thúc — không có lượt
+    // này thì user nhìn màn hình trống suốt dù dữ liệu đã có sẵn.
+    dups.refresh(db, events)?;
     loop {
         if !crate::dedup::hold_if_paused(
             pause,
@@ -190,10 +197,13 @@ fn run_phash_job(
         }
         done += batch.len() as u64;
         hashed += ups.len() as u64;
+        dups.mark(ups.len());
         if !ups.is_empty() {
             db.writer
                 .exec(move |c| core_db::ops::upsert_phash_batch(c, &ups))?;
         }
+        // Nhóm gần giống vừa lộ ra hiện luôn, không đợi hết job
+        dups.refresh_if_due(db, events)?;
         if throttle.ready() {
             let _ = events.send(JobEvent::Progress(JobProgress {
                 job_id,
@@ -208,7 +218,11 @@ fn run_phash_job(
     let (groups, waste) = db
         .writer
         .exec(|c| core_db::ops::rebuild_similar_groups(c, MAX_DIST))?;
-    let _ = events.send(JobEvent::DupGroupsChanged { groups, waste });
+    let _ = events.send(JobEvent::DupGroupsChanged {
+        kind: 1,
+        groups,
+        waste,
+    });
     if cancel.load(Ordering::Relaxed) {
         return Ok(String::new());
     }
@@ -370,9 +384,13 @@ pub async fn delete_similar_files(
         return Err("ERR_INDEX_BUSY|hash/delete operation is active".into());
     }
     let guard = GateGuard(gate);
-    if state.jobs.active_job_of_kind("hash").is_some()
-        || state.jobs.active_job_of_kind("org_hash").is_some()
-        || state.jobs.active_job_of_kind("phash").is_some()
+    // `running_*` bỏ qua job ĐANG TẠM DỪNG: luồng của nó nằm ngủ, không đọc
+    // file, không ghi DB, và cũng không gom lại nhóm (refresher nằm trong vòng
+    // lặp) — nên xóa lúc đó an toàn y như lúc không có job nào. UI tự pause hộ
+    // trước khi gọi, user không phải hủy cả lượt quét để dọn vài file.
+    if state.jobs.running_job_of_kind("hash").is_some()
+        || state.jobs.running_job_of_kind("org_hash").is_some()
+        || state.jobs.running_job_of_kind("phash").is_some()
     {
         return Err("ERR_INDEX_BUSY|hash job is active".into());
     }

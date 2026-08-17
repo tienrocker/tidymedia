@@ -52,6 +52,43 @@ export type AppMode = "browse" | "dedup" | "organize";
 export type { DedupRule, RuleMember } from "../lib/dedupRule";
 export { groupCheckState, rangeIds, ruleChecked } from "../lib/dedupRule";
 
+/** Job quét chặn lệnh xóa ở backend (nó đang ghi hash + gom lại nhóm). */
+const SCAN_KINDS = ["hash", "org_hash", "phash"];
+
+/** Tạm dừng job quét đang chạy để cú bấm xóa của user không bị từ chối, thay vì
+ *  bắt user hủy cả lượt quét. Trả về id các job DO TA dừng — job user tự dừng
+ *  từ trước thì không đụng tới, chạy tiếp hộ là làm sai ý họ.
+ *
+ *  Đây là pause JOB NỀN, không liên quan tới việc chọn/xóa: danh sách file vẫn
+ *  do user tự tick và tự bấm. */
+async function pauseScansForDelete(get: () => AppStore): Promise<number[]> {
+  const ids = [...get().activeJobs.values()]
+    .filter(
+      (j) =>
+        SCAN_KINDS.includes(j.kind) &&
+        j.message !== "user_paused" &&
+        j.message !== "user_pausing",
+    )
+    .map((j) => j.jobId);
+  if (ids.length === 0) return [];
+  await Promise.all(ids.map((id) => get().pauseJob(id, true)));
+  // Cờ pause bật KHÔNG có nghĩa là luồng đã ngủ - nó có thể đang chạy nốt batch
+  // dở. Xóa lúc đó vẫn an toàn (backend verify lại từng file ngay trước khi
+  // đụng đĩa), nhưng chờ nó báo "đã dừng" thì tránh được việc nhóm bị gom lại
+  // ngay giữa lúc xóa. Hết giờ thì cứ xóa, không treo tay user.
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const jobs = get().activeJobs;
+    const pending = ids.filter((id) => {
+      const j = jobs.get(id);
+      return j != null && j.message !== "user_paused";
+    });
+    if (pending.length === 0) break;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return ids;
+}
+
 /** Nạp MỘT lần member rút gọn của mọi nhóm (cache trong store). null = lỗi,
  *  caller không được đánh dấu gì cả. Gộp các lần gọi chồng nhau: user bấm
  *  liên tiếp trong lúc đang tải không được bắn nhiều lượt 1MB. */
@@ -389,7 +426,7 @@ export const useStore = create<AppStore>((set, get) => ({
       // Đang quét thì số nhóm thay đổi liên tục → vào tab là nạp lại cho tươi
       // (dup://changed chỉ nạp khi ĐANG ở tab dedup, tránh IPC thừa).
       const hashing = [...get().activeJobs.values()].some(
-        (j) => j.kind === "hash" || j.kind === "org_hash",
+        (j) => j.kind === "hash" || j.kind === "org_hash" || j.kind === "phash",
       );
       if (get().dupGroups == null || hashing) void get().loadDupData();
     }
@@ -566,6 +603,11 @@ export const useStore = create<AppStore>((set, get) => ({
     if (ids.length === 0) return;
     set({ dupDeleting: true });
     let res;
+    // Job quét đang chạy thì backend từ chối xóa. Thay vì bắt user hủy cả lượt
+    // quét, tạm dừng hộ rồi chạy tiếp — user KHÔNG mất tiến độ và cũng không
+    // phải làm thêm thao tác nào. Đây là pause JOB, không đụng gì tới việc
+    // chọn/xóa: ids đã do user tự tick và tự bấm.
+    const paused = await pauseScansForDelete(get);
     try {
       // Hai đường xóa TÁCH HẲN nhau ở backend vì bất biến khác nhau: nhóm
       // tuyệt đối verify BLAKE3 trùng, nhóm gần giống không thể verify điều đó.
@@ -575,6 +617,7 @@ export const useStore = create<AppStore>((set, get) => ({
           : await api.deleteDupFiles(ids);
     } finally {
       set({ dupDeleting: false });
+      for (const id of paused) void get().pauseJob(id, false);
     }
     // Reset lựa chọn + reload mọi thứ dính tới file đã xóa
     set({

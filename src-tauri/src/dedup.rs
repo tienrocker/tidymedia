@@ -149,6 +149,8 @@ pub(crate) const DUP_REFRESH_MS: u64 = 8_000;
 pub(crate) struct DupRefresher {
     throttle: Throttle,
     dirty: bool,
+    /// `None` = nhóm trùng tuyệt đối; `Some(d)` = nhóm gần giống với ngưỡng d.
+    similar_dist: Option<u32>,
 }
 
 impl DupRefresher {
@@ -156,6 +158,16 @@ impl DupRefresher {
         Self {
             throttle: Throttle::new(interval_ms),
             dirty: false,
+            similar_dist: None,
+        }
+    }
+
+    /// Bản cho job phash: gom nhóm gần giống thay vì nhóm tuyệt đối.
+    pub(crate) fn new_similar(interval_ms: u64, max_dist: u32) -> Self {
+        Self {
+            throttle: Throttle::new(interval_ms),
+            dirty: false,
+            similar_dist: Some(max_dist),
         }
     }
 
@@ -188,8 +200,19 @@ impl DupRefresher {
         events: &crossbeam_channel::Sender<JobEvent>,
     ) -> anyhow::Result<()> {
         self.dirty = false;
-        let (groups, waste) = db.writer.exec(core_db::ops::rebuild_dup_groups)?;
-        let _ = events.send(JobEvent::DupGroupsChanged { groups, waste });
+        let (kind, (groups, waste)) = match self.similar_dist {
+            None => (0, db.writer.exec(core_db::ops::rebuild_dup_groups)?),
+            Some(d) => (
+                1,
+                db.writer
+                    .exec(move |c| core_db::ops::rebuild_similar_groups(c, d))?,
+            ),
+        };
+        let _ = events.send(JobEvent::DupGroupsChanged {
+            kind,
+            groups,
+            waste,
+        });
         Ok(())
     }
 }
@@ -361,7 +384,11 @@ fn run_hash_job(
 
     // Phase 3: rebuild nhóm trùng từ full_hash (chốt trạng thái cuối)
     let (groups, waste) = db.writer.exec(core_db::ops::rebuild_dup_groups)?;
-    let _ = events.send(JobEvent::DupGroupsChanged { groups, waste });
+    let _ = events.send(JobEvent::DupGroupsChanged {
+        kind: 0,
+        groups,
+        waste,
+    });
     Ok(format!("{groups} groups, waste {waste}"))
 }
 
@@ -717,8 +744,10 @@ pub async fn delete_dup_files(
         return Err("ERR_INDEX_BUSY|hash/delete operation is active".into());
     }
     let guard = GateGuard(gate);
-    if state.jobs.active_job_of_kind("hash").is_some()
-        || state.jobs.active_job_of_kind("org_hash").is_some()
+    // Xem chú thích ở `similar::delete_similar_files`: job đang tạm dừng không
+    // chặn xóa, vì luồng của nó đang ngủ chứ không đụng gì.
+    if state.jobs.running_job_of_kind("hash").is_some()
+        || state.jobs.running_job_of_kind("org_hash").is_some()
     {
         return Err("ERR_INDEX_BUSY|hash job is active".into());
     }

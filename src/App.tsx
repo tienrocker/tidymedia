@@ -123,9 +123,13 @@ export default function App() {
       }),
       // Nhóm trùng vừa được gom lại giữa chừng job hash — chỉ nạp khi user
       // đang ở tab Dedup (backend đã throttle 8s nên không cần debounce nữa).
-      listen("dup://changed", () => {
-        if (useStore.getState().appMode !== "dedup") return;
-        void useStore.getState().loadDupData();
+      listen<{ kind: number }>("dup://changed", (e) => {
+        const st = useStore.getState();
+        if (st.appMode !== "dedup") return;
+        // Job phash gom nhóm gần giống trong lúc user đang xem tab tuyệt đối
+        // (và ngược lại) — nạp lại là vứt tick của tab đang mở mà chẳng đổi gì.
+        if (e.payload.kind !== st.dupKind) return;
+        void st.loadDupData();
       }),
       listen("index://changed", () => {
         // Dry-run organize là snapshot. Bất kỳ thay đổi index/meta/hash nào

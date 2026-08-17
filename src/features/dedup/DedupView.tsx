@@ -713,7 +713,10 @@ export function DedupView() {
         <label className="ml-3 flex cursor-pointer items-center gap-1.5 text-sm text-neutral-300">
           <TriCheckbox
             state={allState}
-            disabled={marking || anyHashJob || deleting || (groups?.length ?? 0) === 0}
+            // Quét dở thì danh sách chưa đủ, nhưng "chọn tất cả" vẫn có nghĩa:
+            // nó đánh dấu đúng những nhóm ĐANG thấy. Nhóm hiện ra sau đó không
+            // bị tick, và id nhóm nay ổn định nên tick cũ không bị vứt.
+            disabled={marking || deleting || (groups?.length ?? 0) === 0}
             onChange={(c) => runSafe(() => useStore.getState().setAllChecked(c))}
           />
           {t("dedup.selectAll")}
@@ -742,7 +745,9 @@ export function DedupView() {
           </select>
           <button
             className="rounded border border-red-800 bg-red-950 px-3 py-1 text-sm text-red-200 hover:bg-red-900 disabled:opacity-40"
-            disabled={totalChecked === 0 || deleting || anyHashJob}
+            // Đang quét vẫn xóa được: store tạm dừng job hộ rồi cho chạy tiếp.
+            disabled={totalChecked === 0 || deleting}
+            title={anyHashJob ? t("dedup.deleteWhileScanning") : undefined}
             onClick={confirmAndDelete}
           >
             {deleteJob != null

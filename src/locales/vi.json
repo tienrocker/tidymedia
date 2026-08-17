@@ -141,7 +141,8 @@
     "phaseVerify": "Đối chiếu",
     "live": "đang cập nhật",
     "deleting": "Đang xóa {{done}} / {{total}}",
-    "keys": "Checkbox: đánh dấu xóa · Shift+click: chọn cả dải · Ctrl+A / Ctrl+D: đánh dấu / bỏ hết · Del: xóa bản đã đánh dấu · Space, 1-9, mũi tên, Enter: trong 1 nhóm"
+    "keys": "Checkbox: đánh dấu xóa · Shift+click: chọn cả dải · Ctrl+A / Ctrl+D: đánh dấu / bỏ hết · Del: xóa bản đã đánh dấu · Space, 1-9, mũi tên, Enter: trong 1 nhóm",
+    "deleteWhileScanning": "Lượt quét tạm dừng trong lúc chuyển file vào Thùng rác rồi chạy tiếp từ đúng chỗ đó — không quét lại gì cả."
   },
   "sort": {
     "newest": "Mới nhất",

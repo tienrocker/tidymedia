@@ -38,6 +38,9 @@ pub enum JobEvent {
     /// sách nhóm ngay thay vì đợi job xong (quét 34k file trên HDD là hàng giờ).
     /// Không gắn với job row nào: pump chỉ emit sự kiện, không ghi bảng jobs.
     DupGroupsChanged {
+        /// 0 = trùng tuyệt đối, 1 = gần giống. Hai tab đọc hai tập dữ liệu khác
+        /// nhau; thiếu trường này thì tab đang mở nạp lại vì lượt gom của tab kia.
+        kind: i64,
         groups: i64,
         waste: i64,
     },
@@ -192,6 +195,29 @@ impl JobManager {
             .map(|(id, _)| *id)
     }
 
+    /// Như [`Self::active_job_of_kind`] nhưng BỎ QUA job đang tạm dừng.
+    ///
+    /// Dùng cho các guard kiểu "đang hash thì không cho xóa": job đã pause thì
+    /// luồng của nó nằm ngủ trong [`wait_while_paused`] — không đọc file, không
+    /// ghi DB, không gom lại nhóm — nên nó không còn là lý do để chặn. Nhờ vậy
+    /// user bấm xóa giữa chừng được mà không phải hủy cả lượt quét.
+    pub fn running_job_of_kind(&self, kind: &str) -> Option<i64> {
+        self.active
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, info)| info.kind == kind && !info.pause.load(Ordering::Relaxed))
+            .map(|(id, _)| *id)
+    }
+
+    pub fn is_paused(&self, job_id: i64) -> bool {
+        self.active
+            .lock()
+            .unwrap()
+            .get(&job_id)
+            .is_some_and(|i| i.pause.load(Ordering::Relaxed))
+    }
+
     /// Snapshot jobs owned by this process. Used when frontend listeners attach
     /// after an early startup job (notably crash recovery) has already registered.
     pub fn active_jobs(&self) -> Vec<JobProgress> {
@@ -299,6 +325,29 @@ mod tests {
             "job dung file that khong duoc pause (om lock)"
         );
         assert!(!jobs.set_paused(99, true), "job khong ton tai");
+    }
+
+    /// Guard "đang hash thì không cho xóa" phải bỏ qua job đã tạm dừng — nếu
+    /// không thì bấm ⏸ xong vẫn bị chặn, đúng cái wart mà pause sinh ra để bỏ.
+    #[test]
+    fn paused_job_no_longer_blocks_delete_guards() {
+        let jobs = JobManager::new();
+        jobs.register_pausable(1, "hash", None);
+        assert_eq!(jobs.running_job_of_kind("hash"), Some(1));
+        assert!(!jobs.is_paused(1));
+
+        assert!(jobs.set_paused(1, true));
+        assert!(jobs.is_paused(1));
+        assert_eq!(
+            jobs.running_job_of_kind("hash"),
+            None,
+            "job dang ngu khong con la ly do de chan"
+        );
+        // Vẫn phải nằm trong panel để user bấm ▶ chạy tiếp
+        assert_eq!(jobs.active_job_of_kind("hash"), Some(1));
+
+        jobs.set_paused(1, false);
+        assert_eq!(jobs.running_job_of_kind("hash"), Some(1));
     }
 
     #[test]

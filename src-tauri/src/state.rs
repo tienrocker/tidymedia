@@ -455,10 +455,14 @@ pub fn init(app: &AppHandle) -> Result<()> {
                     // Nhóm trùng dựng lại giữa chừng: KHÔNG đụng bảng jobs, KHÔNG
                     // invalidate org preview (không có file nào thay đổi) — chỉ báo
                     // UI nạp lại danh sách nhóm.
-                    JobEvent::DupGroupsChanged { groups, waste } => {
+                    JobEvent::DupGroupsChanged {
+                        kind,
+                        groups,
+                        waste,
+                    } => {
                         let _ = handle.emit(
                             "dup://changed",
-                            &serde_json::json!({ "groups": groups, "waste": waste }),
+                            &serde_json::json!({ "kind": kind, "groups": groups, "waste": waste }),
                         );
                     }
                     JobEvent::Failed { job_id, kind, error } => {

@@ -1121,7 +1121,11 @@ fn run_org_hash_job(
     }
     if hashed > 0 {
         let (groups, waste) = db.writer.exec(core_db::ops::rebuild_dup_groups)?;
-        let _ = events.send(JobEvent::DupGroupsChanged { groups, waste });
+        let _ = events.send(JobEvent::DupGroupsChanged {
+            kind: 0,
+            groups,
+            waste,
+        });
     }
     if cancelled {
         return Ok(String::new());

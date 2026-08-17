@@ -320,6 +320,70 @@ fn similar_groups_are_stable_and_measure_reclaimable_bytes() {
     assert_eq!(ctx.len(), 2);
 }
 
+/// Id nhóm phải sống sót qua rebuild kể cả khi thành viên NHỎ NHẤT rời nhóm.
+/// Khóa cũ là `MIN(file_id)` nên mất đúng member đó là nhóm nhận id mới, UI
+/// tưởng nhóm biến mất và vứt sạch tick user vừa đánh dấu.
+#[test]
+fn similar_group_id_survives_losing_its_smallest_member() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(tmp.path()).unwrap();
+    db.writer.exec(|c| ops::upsert_root(c, "D:\\S")).unwrap();
+    let entries = vec![
+        entry("D:\\S", "a.jpg", "jpg", 0, 3_000_000, 10),
+        entry("D:\\S", "b.jpg", "jpg", 0, 2_000_000, 20),
+        entry("D:\\S", "c.jpg", "jpg", 0, 1_000_000, 30),
+    ];
+    db.writer
+        .exec(move |c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(c, 1, 1, &entries, &mut cache)
+        })
+        .unwrap();
+    let pending = db
+        .pool
+        .with(|c| ops::select_pending_phash(c, 0, 100))
+        .unwrap();
+    let rows: Vec<core_db::PhashUpsert> = pending
+        .iter()
+        .map(|p| core_db::PhashUpsert {
+            file_id: p.file_id,
+            hash: Some([0b1010_1010, 0, 0, 0]),
+            src_mtime: p.mtime,
+            src_size: p.size,
+        })
+        .collect();
+    db.writer
+        .exec(move |c| ops::upsert_phash_batch(c, &rows))
+        .unwrap();
+    db.writer
+        .exec(|c| ops::rebuild_similar_groups(c, 6))
+        .unwrap();
+    let before = db.pool.with(|c| ops::list_dup_groups(c, 1)).unwrap();
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0].count, 3);
+    let gid = before[0].id;
+
+    // File nhỏ nhất biến mất khỏi kho (xóa ngoài app / ổ tháo ra)
+    let smallest = pending.iter().map(|p| p.file_id).min().unwrap();
+    db.writer
+        .exec(move |c| {
+            c.execute("UPDATE files SET status = 1 WHERE id = ?1", [smallest])?;
+            Ok(())
+        })
+        .unwrap();
+    db.writer
+        .exec(|c| ops::rebuild_similar_groups(c, 6))
+        .unwrap();
+
+    let after = db.pool.with(|c| ops::list_dup_groups(c, 1)).unwrap();
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].count, 2);
+    assert_eq!(
+        after[0].id, gid,
+        "mat member nho nhat khong duoc lam doi id nhom"
+    );
+}
+
 #[test]
 fn scan_upsert_query_reconcile() {
     let tmp = tempfile::tempdir().unwrap();

@@ -141,7 +141,8 @@
     "noPrecheckHint": "Exact groups are proven identical, so the rule marks them for you. Similar groups are a guess, so nothing is marked until you say so - tick a group in the left column (or Select all) to apply the rule.",
     "phaseCompare": "Comparing",
     "emptySimilar": "No similar photos yet. Hit \"Scan for similar photos\" - it's quick when thumbnails are already cached.",
-    "confirmSimilar": "Move {{n}} files ({{size}}) to the Recycle Bin?\n\nThese are SIMILAR, not identical: the copies may differ in resolution and compression. The app only guarantees that every group keeps at least one copy and that the kept copy is still intact on disk - judging which one to keep is up to you."
+    "confirmSimilar": "Move {{n}} files ({{size}}) to the Recycle Bin?\n\nThese are SIMILAR, not identical: the copies may differ in resolution and compression. The app only guarantees that every group keeps at least one copy and that the kept copy is still intact on disk - judging which one to keep is up to you.",
+    "deleteWhileScanning": "The scan pauses while the files go to the bin, then picks up where it left off - nothing is re-scanned."
   },
   "sort": {
     "newest": "Newest first",
