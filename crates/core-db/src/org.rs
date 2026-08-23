@@ -89,21 +89,72 @@ const CANDIDATE_WHERE: &str = "f.volume_id = ?1 AND f.id > ?2
        AND f.status IN (0, 2)
        AND (f.kind = 0 OR f.live_pair_id IS NULL)";
 
-/// Giới hạn ứng viên vào các THƯ MỤC NGUỒN user chọn. Danh sách rỗng = cả
-/// volume, tức đúng hành vi cũ.
+/// File ĐANG nằm đúng chỗ organize đặt nó: có một op ORGANIZE đã hoàn tất,
+/// chưa bị undo, và đích của op ĐÚNG BẰNG vị trí hiện tại của file. Dùng
+/// `org_ops` chứ không phải `files.original_name`, vì undo KHÔNG xoá
+/// `original_name` (`update_file_location` đặt nó bằng
+/// `COALESCE(original_name, name)` và không bao giờ gỡ ra) — file đã undo vẫn
+/// mang cột đó, nên nó chỉ nói "đã từng bị organize đổi tên", không nói "đang
+/// nằm trong kho". `org_ops` thì undo có dọn: `mark_org_op_undone` đặt
+/// `undone_at`.
 ///
-/// Vì sao cần: không có nó thì bấm organize là ôm mọi file trên ổ. Kho thật
-/// dùng để phát triển có 25.624 file, trong đó `vod` là 99 GB video tải về —
-/// trộn nó vào cây ảnh theo ngày là sai, mà undo 25 nghìn file thì vẫn là một
+/// Vế `o.new_path = ...` không phải trang trí: lịch sử op không chứng minh
+/// HIỆN TẠI. Crash giữa lượt undo để lại op organize còn active trong khi file
+/// đã về chỗ cũ — thiếu vế này thì lần organize sau tự "redo" cái user vừa
+/// undo. User tự tay dời file đã organize đi chỗ khác rồi rescan cũng vậy.
+/// So sánh path là exact-match theo đúng chuỗi organize đã ghi vào cả `files`
+/// lẫn `org_ops` trong cùng lượt; user đổi CASE thư mục cha sau đó thì file
+/// rơi khỏi tập managed — hướng an toàn: bớt ứng viên chứ không kéo nhầm vào.
+///
+/// Vế `o.reverses_op_id IS NULL` loại op undo: đích của op undo là chỗ CŨ của
+/// file, khớp vị trí hiện tại sau khi undo xong — không lọc thì chính nó lại
+/// biến file thành "đang được organize giữ".
+/// Mảnh WHERE dùng chung cho cả hai câu hỏi về op đó (managed? + lib_root nào?)
+/// — hai bản chép tay là hai cơ hội cho một bên quên thêm điều kiện.
+/// Ghép path như `join_path`: dir kết thúc bằng '\' (gốc ổ) thì không chèn thêm.
+const ACTIVE_ORG_OP_AT_CURRENT_PATH: &str =
+    "o.file_id = f.id AND o.done_at IS NOT NULL AND o.undone_at IS NULL
+               AND o.reverses_op_id IS NULL
+               AND o.new_path = CASE WHEN substr(d.path, -1) = '\\'
+                                     THEN d.path || f.name
+                                     ELSE d.path || '\\' || f.name END";
+
+/// Giới hạn ứng viên vào các THƯ MỤC NGUỒN user chọn, CỘNG những file organize
+/// đang giữ. Danh sách rỗng = cả volume, tức đúng hành vi cũ.
+///
+/// Vì sao cần giới hạn: không có nó thì bấm organize là ôm mọi file trên ổ. Kho
+/// thật dùng để phát triển có 25.624 file, trong đó `vod` là 99 GB video tải về
+/// — trộn nó vào cây ảnh theo ngày là sai, mà undo 25 nghìn file thì vẫn là một
 /// mớ dù có undo được.
+///
+/// Vì sao vẫn phải nới cho file organize đang giữ: bỏ chúng ra thì hỏng hai thứ
+/// mà phần còn lại của organize dựa vào —
+///
+/// 1. **Đổi template rồi gom lại**: file cũ nằm im ở đường dẫn cũ, kho thành
+///    nửa theo cách đặt tên này nửa theo cách kia, mà planner vốn idempotent
+///    đúng để chuyện đó không xảy ra.
+/// 2. **Hàn lại cặp Live Photo gom hụt**: khi ảnh chuyển xong mà MOV fail,
+///    đường sửa nằm ở nhánh `SkipOrganized` của planner (nó phát lệnh chuyển
+///    nốt MOV). Ảnh không còn được chọn thì nhánh đó không bao giờ chạy, mà MOV
+///    thì luôn bị ẩn khỏi ứng viên — cặp xé vĩnh viễn.
+///
+/// Nới theo [`ACTIVE_ORG_OP_AT_CURRENT_PATH`] chứ KHÔNG phải theo cây thư mục kho. Nới
+/// theo cây kho là một lỗ thật: đặt kho đích ở `E:\images` trong khi nguồn là
+/// `E:\images\icloud` thì hợp của hai tập là cả `E:\images`, và `vod` 99 GB lọt
+/// vào đúng cái mà phạm vi sinh ra để chặn — im lặng, không cảnh báo. Kho ở
+/// `E:\` thì phạm vi mất tác dụng trên cả ổ. Bám theo op cũng là thứ duy nhất
+/// sống sót qua việc ĐỔI thư mục kho: `set_library_root` chỉ ghi đè `path` chứ
+/// không dời file, nên file nằm ở kho cũ không thuộc nguồn lẫn kho mới.
+///
+/// Đánh đổi đã biết: file user tự tay quăng vào thư mục kho không có op nào nên
+/// không được nới. Đúng nghĩa — user đặt phạm vi tức là nói "chỉ mấy thư mục
+/// này", còn phạm vi rỗng (mặc định) thì cả volume vẫn được quét như cũ.
 ///
 /// Dùng lại [`path_range`] — CÙNG phép so prefix với root scope, nên
 /// `E:\images\anh` không bao giờ nuốt nhầm `E:\images\anh cuoi`: dải kết thúc
 /// ở `']'` (0x5D), ngay sau `'\'` (0x5C), nên chỉ khớp đúng con trực thuộc.
 ///
 /// `next_idx` = số thứ tự tham số kế tiếp còn trống của câu SQL gọi tới.
-///
-/// Danh sách đưa vào đây PHẢI đi qua [`effective_scopes`] trước.
 fn scope_sql(scopes: &[String], next_idx: usize) -> (String, Vec<String>) {
     if scopes.is_empty() {
         return (String::new(), Vec::new());
@@ -123,40 +174,17 @@ fn scope_sql(scopes: &[String], next_idx: usize) -> (String, Vec<String>) {
         args.push(end);
         i += 3;
     }
+    parts.push(format!(
+        "EXISTS(SELECT 1 FROM org_ops o WHERE {ACTIVE_ORG_OP_AT_CURRENT_PATH})"
+    ));
     (format!(" AND ({})", parts.join(" OR ")), args)
 }
 
-/// Thư mục nguồn user chọn + THƯ MỤC KHO ĐÍCH. Kho luôn nằm trong tầm quét, kể
-/// cả khi user giới hạn nguồn.
-///
-/// Bỏ kho ra khỏi tầm quét thì file ĐÃ gom biến mất khỏi tập ứng viên, và hỏng
-/// hai thứ mà phần còn lại của organize dựa vào:
-///
-/// 1. **Đổi template rồi gom lại**: file cũ nằm im ở đường dẫn cũ, kho thành
-///    nửa theo cách đặt tên này nửa theo cách kia — mà planner vốn idempotent
-///    đúng để chuyện đó không xảy ra.
-/// 2. **Hàn lại cặp Live Photo gom hụt**: khi ảnh chuyển xong mà MOV fail,
-///    đường sửa nằm ở nhánh `SkipOrganized` của planner (nó phát lệnh chuyển
-///    nốt MOV). Ảnh không còn được chọn thì nhánh đó không bao giờ chạy, mà
-///    MOV thì luôn bị ẩn khỏi ứng viên — cặp xé vĩnh viễn.
-///
-/// Rỗng = cả volume nên không cần thêm gì.
-fn effective_scopes(conn: &Connection, scopes: &[String]) -> Result<Vec<String>> {
-    if scopes.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut out: Vec<String> = scopes.to_vec();
-    let mut st = conn.prepare_cached("SELECT path FROM library_roots")?;
-    let roots = st
-        .query_map([], |r| r.get::<_, String>(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    out.extend(roots);
-    Ok(out)
-}
-
-/// Ứng viên organize trên 1 volume, keyset theo f.id. Lấy CẢ file đang nằm
-/// trong library root — planner tự trả SkipOrganized (idempotent, và file
-/// user tự quăng vào root vẫn được xếp chỗ đúng). MOV có pair bị ẩn (đi theo
+/// Ứng viên organize trên 1 volume, keyset theo f.id. Lấy CẢ file organize
+/// đang giữ trong kho — planner tự trả SkipOrganized (idempotent). File user
+/// tự quăng vào thư mục kho chỉ được xếp khi scope RỖNG (cả volume) hoặc kho
+/// nằm trong scope user chọn — scope không rỗng nghĩa là "chỉ mấy thư mục
+/// này", không âm thầm nới thêm. MOV có pair bị ẩn (đi theo
 /// ảnh canonical mà MOV trỏ ngược qua cột `pair`), status=1 missing loại từ SQL.
 /// Nếu HEIC + JPG cùng trỏ một MOV, chỉ canonical owner được phép move MOV;
 /// ảnh còn lại vẫn organize độc lập và giữ link logic tới cùng MOV.
@@ -167,14 +195,17 @@ pub fn select_org_candidates(
     limit: i64,
     scopes: &[String],
 ) -> Result<Vec<OrgCandidateRow>> {
-    let (scope_where, scope_args) = scope_sql(&effective_scopes(conn, scopes)?, 4);
+    let (scope_where, scope_args) = scope_sql(scopes, 4);
     let sql = format!(
         "SELECT f.id, d.path, f.name, f.ext, f.kind, f.size, f.mtime, f.status,
                 m.taken_at, m.date_source, m.camera,
                 h.full_hash, h.hashed_size, h.hashed_mtime,
                 pv.id, pd.path, pv.name, pv.ext, pv.status, pv.size, pv.mtime,
                 ph.full_hash, ph.hashed_size, ph.hashed_mtime,
-                f.original_name, m.gps_lat, m.gps_lon
+                f.original_name, m.gps_lat, m.gps_lon,
+                (SELECT o.lib_root FROM org_ops o
+                  WHERE {ACTIVE_ORG_OP_AT_CURRENT_PATH}
+                  ORDER BY o.id DESC LIMIT 1)
          FROM files f
          JOIN dirs d ON d.id = f.dir_id
          LEFT JOIN media_meta m ON m.file_id = f.id
@@ -238,6 +269,7 @@ pub fn select_org_candidates(
                     (Some(lat), Some(lon)) => Some((lat, lon)),
                     _ => None,
                 },
+                managed_lib_root: r.get(27)?,
                 pair,
             })
         })?
@@ -248,7 +280,7 @@ pub fn select_org_candidates(
 /// Đếm phải dùng ĐÚNG điều kiện với `select_org_candidates` — lệch nhau thì
 /// progress bar của job chạy quá 100% hoặc không bao giờ tới đích.
 pub fn count_org_candidates(conn: &Connection, volume_id: i64, scopes: &[String]) -> Result<i64> {
-    let (scope_where, scope_args) = scope_sql(&effective_scopes(conn, scopes)?, 3);
+    let (scope_where, scope_args) = scope_sql(scopes, 3);
     let sql = format!(
         "SELECT COUNT(*) FROM files f JOIN dirs d ON d.id = f.dir_id
          WHERE {CANDIDATE_WHERE}{scope_where}"
@@ -308,17 +340,40 @@ pub fn valid_full_hash_at_path(conn: &Connection, path: &str) -> Result<Option<C
 
 // ---------- journal (write-ahead) ----------
 
-/// Ghi INTENT trước khi đụng fs. done_at NULL = chưa xong.
+/// Ghi INTENT organize trước khi đụng fs. done_at NULL = chưa xong.
+/// `lib_root` = thư mục kho tại thời điểm này — nguồn tính {relpath} cho các
+/// lần gom SAU khi user đổi kho (xem `OrgCandidateRow::managed_lib_root`).
 pub fn insert_org_op(
     conn: &Connection,
     batch_id: i64,
     file_id: i64,
     old_path: &str,
     new_path: &str,
+    lib_root: &str,
 ) -> Result<i64> {
     conn.execute(
-        "INSERT INTO org_ops(batch_id, file_id, old_path, new_path) VALUES(?1, ?2, ?3, ?4)",
-        params![batch_id, file_id, old_path, new_path],
+        "INSERT INTO org_ops(batch_id, file_id, old_path, new_path, lib_root)
+         VALUES(?1, ?2, ?3, ?4, ?5)",
+        params![batch_id, file_id, old_path, new_path, lib_root],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Ghi INTENT của lượt UNDO đảo op `reverses_op_id`. Recovery dựa vào liên kết
+/// này để chốt nốt op gốc thành undone khi crash giữa chừng — thiếu nó thì file
+/// đã về chỗ cũ vẫn mang op active và lần organize sau tự "redo" cái vừa undo.
+pub fn insert_undo_op(
+    conn: &Connection,
+    batch_id: i64,
+    file_id: i64,
+    old_path: &str,
+    new_path: &str,
+    reverses_op_id: i64,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO org_ops(batch_id, file_id, old_path, new_path, reverses_op_id)
+         VALUES(?1, ?2, ?3, ?4, ?5)",
+        params![batch_id, file_id, old_path, new_path, reverses_op_id],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -341,7 +396,7 @@ pub fn delete_org_op(conn: &Connection, op_id: i64) -> Result<()> {
 /// trước khi cho đợt organize/undo kế chạy.
 pub fn pending_org_ops(conn: &Connection) -> Result<Vec<OrgOpRow>> {
     let mut st = conn.prepare_cached(
-        "SELECT id, batch_id, file_id, old_path, new_path
+        "SELECT id, batch_id, file_id, old_path, new_path, reverses_op_id
          FROM org_ops
          WHERE done_at IS NULL AND recovery_attempted_at IS NULL
          ORDER BY id",
@@ -380,6 +435,7 @@ fn map_org_op(r: &rusqlite::Row) -> rusqlite::Result<OrgOpRow> {
         file_id: r.get(2)?,
         old_path: r.get(3)?,
         new_path: r.get(4)?,
+        reverses_op_id: r.get(5)?,
     })
 }
 
@@ -405,11 +461,14 @@ pub fn list_org_batches(conn: &Connection) -> Result<Vec<OrgBatchRow>> {
 }
 
 /// Op của 1 batch theo thứ tự NGƯỢC (undo replay từ op cuối về đầu).
+/// Chỉ op organize — op undo còn sót (crash trước khi kịp tự đánh dấu undone)
+/// không phải thứ "undo được": đảo nó là organize lại, đường đó đã có sẵn.
 pub fn ops_of_batch_for_undo(conn: &Connection, batch_id: i64) -> Result<Vec<OrgOpRow>> {
     let mut st = conn.prepare_cached(
-        "SELECT id, batch_id, file_id, old_path, new_path
+        "SELECT id, batch_id, file_id, old_path, new_path, reverses_op_id
          FROM org_ops
          WHERE batch_id = ?1 AND done_at IS NOT NULL AND undone_at IS NULL
+           AND reverses_op_id IS NULL
          ORDER BY id DESC",
     )?;
     let rows = st
@@ -471,6 +530,17 @@ pub fn file_verify_context(conn: &Connection, file_id: i64) -> Result<Option<Fil
 /// id/tags/hashes/meta (rename không đổi mtime nên trigger invalidate không
 /// bắn; thumb key theo file_id + mtime nên cache còn nguyên).
 pub fn update_file_location(conn: &mut Connection, file_id: i64, new_path: &str) -> Result<()> {
+    let tx = conn.transaction()?;
+    update_file_location_in(&tx, file_id, new_path)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Thân của [`update_file_location`] KHÔNG tự mở transaction — cho caller nào
+/// cần gộp nó với việc chốt journal (`mark_org_op_done`/`undone`) thành MỘT
+/// lượt commit: undo và recovery mà commit lắt nhắt thì crash giữa chừng để
+/// lại journal kể dở câu chuyện. `conn` phải đang ở trong transaction.
+pub fn update_file_location_in(conn: &Connection, file_id: i64, new_path: &str) -> Result<()> {
     let new_path = normalize_path(new_path);
     let (dir_path, name) = new_path
         .rsplit_once('\\')
@@ -484,8 +554,7 @@ pub fn update_file_location(conn: &mut Connection, file_id: i64, new_path: &str)
     let letter = drive_letter(&new_path).ok_or_else(|| anyhow!("ERR_ROOT_NO_DRIVE|{new_path}"))?;
     let guid = format!("{letter}:");
 
-    let tx = conn.transaction()?;
-    let volume_id: i64 = tx
+    let volume_id: i64 = conn
         .query_row(
             "SELECT id FROM volumes WHERE guid = ?1",
             params![guid],
@@ -495,24 +564,24 @@ pub fn update_file_location(conn: &mut Connection, file_id: i64, new_path: &str)
         .ok_or_else(|| anyhow!("ERR_INTERNAL|volume {guid} chưa có"))?;
     let dir_name = dir_path.rsplit('\\').next().unwrap_or(&dir_path);
     let path_key = dir_path.to_uppercase();
-    tx.execute(
+    conn.execute(
         "INSERT INTO dirs(volume_id, name, path, path_key) VALUES(?1, ?2, ?3, ?4)
          ON CONFLICT(volume_id, path_key) DO NOTHING",
         params![volume_id, dir_name, dir_path, path_key],
     )?;
-    let dir_id: i64 = tx.query_row(
+    let dir_id: i64 = conn.query_row(
         "SELECT id FROM dirs WHERE volume_id = ?1 AND path_key = ?2",
         params![volume_id, path_key],
         |r| r.get(0),
     )?;
     // Ghost row chiếm chỗ (dir_id, name) trong index nhưng fs target vừa được
     // verify là TRỐNG → row đó chắc chắn stale, dọn để khỏi vướng UNIQUE.
-    tx.execute(
+    conn.execute(
         "DELETE FROM files WHERE dir_id = ?1 AND name = ?2 AND id != ?3",
         params![dir_id, name, file_id],
     )?;
     let name_norm = normalize_for_search(name);
-    let updated = tx.execute(
+    let updated = conn.execute(
         "UPDATE files SET dir_id = ?2, volume_id = ?3, name = ?4, name_norm = ?5,
                 original_name = COALESCE(original_name, name), frn = NULL
          WHERE id = ?1",
@@ -521,6 +590,5 @@ pub fn update_file_location(conn: &mut Connection, file_id: i64, new_path: &str)
     if updated != 1 {
         bail!("ERR_FILE_GONE|file id {file_id} disappeared during organize");
     }
-    tx.commit()?;
     Ok(())
 }

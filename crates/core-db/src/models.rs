@@ -341,6 +341,11 @@ pub struct OrgCandidateRow {
     pub full_hash: Option<Vec<u8>>,
     pub hashed_size: Option<i64>,
     pub hashed_mtime: Option<i64>,
+    /// Library root TẠI THỜI ĐIỂM organize đặt file vào chỗ hiện tại (từ op
+    /// active khớp vị trí). {relpath} của file đã organize phải tính theo gốc
+    /// này — sau khi đổi thư mục kho, gốc hiện tại không còn chứa file nên suy
+    /// từ nó ra là lồng/flatten cây. None = file chưa từng qua organize.
+    pub managed_lib_root: Option<String>,
     pub pair: Option<OrgPairRow>,
 }
 
@@ -365,6 +370,9 @@ pub struct OrgOpRow {
     pub file_id: i64,
     pub old_path: String,
     pub new_path: String,
+    /// Some(id op gốc) = đây là intent của lượt UNDO đảo op đó. Recovery dùng
+    /// để chốt nốt trạng thái op gốc khi crash giữa undo.
+    pub reverses_op_id: Option<i64>,
 }
 
 /// Batch organize đã chạy (batch_id = job id) — cho UI undo.

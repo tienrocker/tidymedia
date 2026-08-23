@@ -315,6 +315,12 @@ fn org_scope_still_includes_files_already_in_the_library() {
         entry("D:\\P\\media\\Photos\\2019", "done.jpg", "jpg", 0, 100, 2),
         // Ngoài cả nguồn lẫn kho → vẫn phải bị loại
         entry("D:\\P\\vod", "phim.mp4", "mp4", 1, 100, 3),
+        // Từng được gom nhưng đã UNDO → đang nằm chỗ user để nó, không phải chỗ
+        // organize đặt. Ngoài phạm vi thì phải bị loại như mọi file khác.
+        entry("D:\\P\\reverted", "back.jpg", "jpg", 0, 100, 4),
+        // Op còn active nhưng user đã TỰ TAY dời file khỏi chỗ op đặt → lịch
+        // sử op không chứng minh hiện tại, phải bị loại như file thường.
+        entry("D:\\P\\strayed", "moved.jpg", "jpg", 0, 100, 5),
     ];
     db.writer
         .exec(move |c| {
@@ -326,29 +332,146 @@ fn org_scope_still_includes_files_already_in_the_library() {
         .exec(|c| org::set_library_root(c, "D:\\P\\media"))
         .unwrap();
 
+    let id_of = |dir: &str, name: &str| -> i64 {
+        let (dir, name) = (dir.to_string(), name.to_string());
+        db.pool.with(move |c| {
+            c.query_row(
+                "SELECT f.id FROM files f JOIN dirs d ON d.id = f.dir_id
+                 WHERE d.path = ?1 AND f.name = ?2",
+                rusqlite::params![dir, name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        })
+    };
+    let done_id = id_of("D:\\P\\media\\Photos\\2019", "done.jpg");
+    let back_id = id_of("D:\\P\\reverted", "back.jpg");
+    let moved_id = id_of("D:\\P\\strayed", "moved.jpg");
+    db.writer
+        .exec(move |c| {
+            // Op đặt done.jpg vào ĐÚNG chỗ nó đang nằm — marker đối chiếu
+            // new_path với vị trí hiện tại, đích bịa thì không còn là fixture
+            // của "đang được organize giữ".
+            let done = org::insert_org_op(
+                c,
+                1,
+                done_id,
+                "D:\\P\\icloud\\a.jpg",
+                "D:\\P\\media\\Photos\\2019\\done.jpg",
+                "D:\\P\\media",
+            )?;
+            org::mark_org_op_done(c, done)?;
+            // back.jpg: gom xong rồi undo. Kèm chính op undo (done, CHƯA kịp
+            // tự đánh dấu undone — residue của crash cuối lượt): đích của op
+            // undo trùng vị trí hiện tại, nhưng nó KHÔNG được làm file thành
+            // "đang được organize giữ" — nó là dấu user rút file RA.
+            let undone = org::insert_org_op(
+                c,
+                1,
+                back_id,
+                "D:\\P\\reverted\\back.jpg",
+                "D:\\P\\media\\Photos\\2019\\back.jpg",
+                "D:\\P\\media",
+            )?;
+            org::mark_org_op_done(c, undone)?;
+            org::mark_org_op_undone(c, undone)?;
+            let undo_intent = org::insert_undo_op(
+                c,
+                2,
+                back_id,
+                "D:\\P\\media\\Photos\\2019\\back.jpg",
+                "D:\\P\\reverted\\back.jpg",
+                undone,
+            )?;
+            org::mark_org_op_done(c, undo_intent)?;
+            // moved.jpg: op active trỏ vào kho nhưng file thật đã bị user dời
+            // về D:\P\strayed từ lâu (rescan cập nhật vị trí).
+            let strayed = org::insert_org_op(
+                c,
+                1,
+                moved_id,
+                "D:\\P\\icloud\\moved.jpg",
+                "D:\\P\\media\\Photos\\2019\\moved.jpg",
+                "D:\\P\\media",
+            )?;
+            org::mark_org_op_done(c, strayed)?;
+            Ok(())
+        })
+        .unwrap();
+
     let scopes = vec!["D:\\P\\icloud".to_string()];
-    let mut paths = db
+    let paths = |scopes: &[String]| {
+        let s = scopes.to_vec();
+        let mut p = db
+            .pool
+            .with(move |c| org::select_org_candidates(c, 1, 0, 100, &s))
+            .unwrap()
+            .into_iter()
+            .map(|r| r.path)
+            .collect::<Vec<_>>();
+        p.sort();
+        p
+    };
+    let expected = vec![
+        "D:\\P\\icloud\\new.jpg".to_string(),
+        "D:\\P\\media\\Photos\\2019\\done.jpg".to_string(),
+    ];
+    assert_eq!(
+        paths(&scopes),
+        expected,
+        "file organize dang giu phai con la ung vien; file da undo hoac da bi \
+         user doi di cho khac thi khong"
+    );
+    // Provenance đi kèm: ứng viên organize đang giữ phải mang gốc kho TẠI THỜI
+    // ĐIỂM đặt (nguồn tính {relpath} sau khi user đổi thư mục kho); file thường
+    // thì không có.
+    let s2 = scopes.clone();
+    let roots_of: Vec<(String, Option<String>)> = db
         .pool
-        .with(|c| org::select_org_candidates(c, 1, 0, 100, &scopes))
+        .with(move |c| org::select_org_candidates(c, 1, 0, 100, &s2))
         .unwrap()
         .into_iter()
-        .map(|r| r.path)
-        .collect::<Vec<_>>();
-    paths.sort();
-    assert_eq!(
-        paths,
-        vec![
-            "D:\\P\\icloud\\new.jpg".to_string(),
-            "D:\\P\\media\\Photos\\2019\\done.jpg".to_string(),
-        ],
-        "file da nam trong kho phai con trong tap ung vien"
-    );
+        .map(|r| (r.path, r.managed_lib_root))
+        .collect();
+    for (path, lib) in roots_of {
+        let want = if path.ends_with("done.jpg") {
+            Some("D:\\P\\media".to_string())
+        } else {
+            None
+        };
+        assert_eq!(lib, want, "managed_lib_root cua {path}");
+    }
+    let for_count = scopes.clone();
     assert_eq!(
         db.pool
-            .with(|c| org::count_org_candidates(c, 1, &scopes))
+            .with(move |c| org::count_org_candidates(c, 1, &for_count))
             .unwrap(),
         2,
         "dem phai khop select"
+    );
+
+    // Kho đích là THƯ MỤC CHA của thư mục nguồn. Bản sửa trước nới theo cây kho
+    // nên cấu hình này làm phạm vi mất sạch tác dụng: `vod` lọt vào đúng cái mà
+    // phạm vi sinh ra để chặn, im lặng, không một cảnh báo nào.
+    db.writer
+        .exec(|c| org::set_library_root(c, "D:\\P"))
+        .unwrap();
+    assert_eq!(
+        paths(&scopes),
+        expected,
+        "kho dich trum len nguon KHONG duoc keo ca o vao pham vi"
+    );
+
+    // Đổi thư mục kho: `set_library_root` chỉ ghi đè path chứ không dời file,
+    // nên bám theo cây kho thì file ở kho CŨ không thuộc nguồn lẫn kho mới —
+    // biến mất khỏi ứng viên, không bao giờ được xếp sang kho mới nữa.
+    db.writer
+        .exec(|c| org::set_library_root(c, "D:\\P\\media2"))
+        .unwrap();
+    assert_eq!(
+        paths(&scopes),
+        expected,
+        "doi thu muc kho khong duoc lam mat dau file dang o kho cu"
     );
 }
 
@@ -1337,7 +1460,14 @@ fn org_library_roots_journal_and_relocate() {
     let op = db
         .writer
         .exec(move |c| {
-            org::insert_org_op(c, jid, img_id, "D:\\Mess\\IMG_1.heic", "D:\\MyLib2\\x.heic")
+            org::insert_org_op(
+                c,
+                jid,
+                img_id,
+                "D:\\Mess\\IMG_1.heic",
+                "D:\\MyLib2\\x.heic",
+                "D:\\MyLib2",
+            )
         })
         .unwrap();
     assert_eq!(db.pool.with(org::pending_org_ops).unwrap().len(), 1);
@@ -1422,6 +1552,9 @@ fn schema_v5_migrates_recovery_terminal_state_columns() {
     conn.execute_batch(
         "ALTER TABLE org_ops DROP COLUMN recovery_error;
          ALTER TABLE org_ops DROP COLUMN recovery_attempted_at;
+         ALTER TABLE org_ops DROP COLUMN reverses_op_id;
+         ALTER TABLE org_ops DROP COLUMN lib_root;
+         DROP INDEX org_ops_file;
          ALTER TABLE media_meta DROP COLUMN gps_lat;
          ALTER TABLE media_meta DROP COLUMN gps_lon;
          ALTER TABLE media_meta DROP COLUMN meta_ver;
@@ -1445,6 +1578,50 @@ fn schema_v5_migrates_recovery_terminal_state_columns() {
     assert!(names.iter().any(|name| name == "recovery_attempted_at"));
 }
 
+/// v9 → v11: index tra org_ops theo file + cột phân loại undo/provenance.
+/// Gọt DB hiện hành về đúng hình dạng v9 rồi migrate — dựng thẳng schema mới
+/// xong hạ user_version thì index/cột đã có sẵn, test không chứng minh gì.
+#[test]
+fn schema_v9_migrates_org_ops_index_and_journal_columns() {
+    let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+    ops::ensure_schema(&mut conn).unwrap();
+    conn.execute_batch(
+        "DROP INDEX org_ops_file;
+         ALTER TABLE org_ops DROP COLUMN reverses_op_id;
+         ALTER TABLE org_ops DROP COLUMN lib_root;
+         PRAGMA user_version = 9;",
+    )
+    .unwrap();
+
+    ops::ensure_schema(&mut conn).unwrap();
+
+    let version: i64 = conn
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, ops::SCHEMA_VERSION);
+    let indexes: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND name = 'org_ops_file'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(indexes, 1, "migration phai tu tao index org_ops_file");
+    let names: Vec<String> = conn
+        .prepare("PRAGMA table_info(org_ops)")
+        .unwrap()
+        .query_map([], |r| r.get(1))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(
+        names.iter().any(|name| name == "reverses_op_id"),
+        "{names:?}"
+    );
+    assert!(names.iter().any(|name| name == "lib_root"), "{names:?}");
+}
+
 /// v7 → v8: thêm toạ độ + dấu phiên bản bộ trích. Meta ĐANG CÓ phải còn nguyên
 /// — nâng cấp app không được làm kho ảnh mất ngày chụp rồi bắt quét lại từ đầu.
 #[test]
@@ -1455,6 +1632,9 @@ fn schema_v8_adds_gps_without_losing_existing_meta() {
         "ALTER TABLE media_meta DROP COLUMN gps_lat;
          ALTER TABLE media_meta DROP COLUMN gps_lon;
          ALTER TABLE media_meta DROP COLUMN meta_ver;
+         ALTER TABLE org_ops DROP COLUMN reverses_op_id;
+         ALTER TABLE org_ops DROP COLUMN lib_root;
+         DROP INDEX org_ops_file;
          PRAGMA user_version = 7;",
     )
     .unwrap();

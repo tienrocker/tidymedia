@@ -71,14 +71,7 @@ pub async fn start_hash_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
             .exec(|c| core_db::ops::insert_job(c, "hash", None))
             .map_err(err)?;
         let (cancel, pause) = jobs.register_pausable(job_id, "hash", None);
-        if let Some(active_preview) = preview_cancel
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .as_ref()
-        {
-            active_preview.store(true, Ordering::Relaxed);
-        }
-        *preview.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        crate::organize::invalidate_preview_slots(&preview, &preview_cancel);
         let events = jobs.sender();
         let writer_cleanup = db.writer.clone();
 

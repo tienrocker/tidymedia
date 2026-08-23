@@ -1076,24 +1076,18 @@ pub async fn set_settings(
     if state.recovery_active.load(Ordering::Acquire) {
         return Err("ERR_RECOVERY_BUSY|".into());
     }
+    // Timezone là cấu hình organize như mọi cấu hình khác: nó đổi thư mục đích
+    // theo ngày chụp, nên phải đi qua đúng kỷ luật số đời — mở đời TRƯỚC mọi
+    // `.await` (lệnh này có thể chờ meta gate hàng chục giây, suốt lúc đó
+    // ticket cũ không được phép Execute) và đóng đời ở MỌI kết quả.
+    crate::organize::org_config_changing(&state);
     let db = state.db.clone();
     let jobs = state.jobs.clone();
     let gate = state.meta_start_gate.clone();
-    let preview = state.org_preview.clone();
-    let preview_cancel = state.org_preview_cancel.clone();
     let result =
         blocking(move || apply_settings(&db, &jobs, gate, timezone, tz_offset_minutes, setup_done))
             .await;
-    if result.is_ok() {
-        if let Some(cancel) = preview_cancel
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .as_ref()
-        {
-            cancel.store(true, Ordering::Relaxed);
-        }
-        *preview.lock().unwrap_or_else(|p| p.into_inner()) = None;
-    }
+    crate::organize::org_config_changed(&state);
     result
 }
 
@@ -1151,19 +1145,24 @@ fn apply_settings(
 
     db.writer
         .exec(move |c| {
+            // Một transaction cho cả cụm: mỗi statement tự commit riêng thì
+            // reader chen giữa thấy offset mới + zone cũ, hoặc zone mới mà
+            // media_meta cũ còn nguyên.
+            let tx = c.transaction()?;
             let new_offset = tz_offset_minutes.to_string();
-            core_db::ops::kv_set(c, "tz_offset_minutes", &new_offset)?;
-            core_db::ops::kv_set(c, "timezone", &timezone)?;
-            core_db::ops::kv_set(c, "setup_done", if setup_done { "1" } else { "0" })?;
+            core_db::ops::kv_set(&tx, "tz_offset_minutes", &new_offset)?;
+            core_db::ops::kv_set(&tx, "timezone", &timezone)?;
+            core_db::ops::kv_set(&tx, "setup_done", if setup_done { "1" } else { "0" })?;
             if timezone_changed {
                 // creation_time UTC của video đã được đổi thành wall-clock
                 // theo zone cũ; xóa để meta job probe lại với DST-aware zone.
-                c.execute(
+                tx.execute(
                     "DELETE FROM media_meta WHERE file_id IN
                            (SELECT id FROM files WHERE kind = 1)",
                     [],
                 )?;
             }
+            tx.commit()?;
             Ok(())
         })
         .map_err(err)

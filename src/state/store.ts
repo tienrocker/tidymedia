@@ -37,6 +37,13 @@ let lastRange: [number, number] = [0, 0];
 let querySeq = 0;
 let toastSeq = 0;
 let orgPreviewCancelRequested = false;
+// Đời bản xem trước phía UI. MỌI chỗ vứt preview đều tăng nó; `runOrgPreview`
+// so đời chụp trước IPC với đời lúc response về — lệch nghĩa là user đã đổi
+// cấu hình trong lúc chờ, response đó là bản đã chết, cài lại lên UI là hiện
+// số lượng/nút Gom của cấu hình cũ (backend vẫn chặn Execute, nhưng UI không
+// được nói dối). Module-level vì đây là chi tiết chống race, không phải state
+// để component subscribe.
+let orgPreviewEpoch = 0;
 /** Job id đã nhận terminal event - chặn placeholder đến muộn hồi sinh job ma. */
 const endedJobIds = new Set<number>();
 
@@ -324,31 +331,46 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   saveOrgSettings: async (dirTemplate, fileTemplate) => {
+    // Xóa TRƯỚC khi gọi, không phải sau: trong lúc chờ IPC, nút "Gom" vẫn hiện
+    // bản xem trước của template cũ. Backend đã chặn không cho chạy plan đó
+    // (số đời cấu hình), nhưng để user bấm vào một thứ chắc chắn báo lỗi thì vô
+    // duyên.
+    orgPreviewEpoch++;
+    set({ orgPreview: null });
     const settings = await api.setOrgSettings(dirTemplate, fileTemplate);
-    // Template đổi → preview cũ nói dối về đích mới
+    orgPreviewEpoch++;
     set({ orgSettings: settings, orgPreview: null });
     get().showToast(i18n.t("org.settingsSaved"), false);
   },
 
   setOrgScopes: async (scopes) => {
-    await api.setOrgScopes(scopes);
-    // Đổi phạm vi = tập file khác hẳn → preview cũ nói dối về số lượng
+    // Đổi phạm vi = tập file khác hẳn → preview cũ nói dối về số lượng. Xóa
+    // ngay, đừng chờ IPC trả về (xem `saveOrgSettings`).
+    orgPreviewEpoch++;
     set({ orgPreview: null });
+    await api.setOrgScopes(scopes);
     await get().loadOrgData();
   },
 
   addLibraryRoot: async (path) => {
+    orgPreviewEpoch++;
+    set({ orgPreview: null });
     await api.setLibraryRoot(path);
+    orgPreviewEpoch++;
     set({ libRoots: await api.listLibraryRoots(), orgPreview: null });
   },
 
   removeLibraryRoot: async (id) => {
+    orgPreviewEpoch++;
+    set({ orgPreview: null });
     await api.removeLibraryRoot(id);
+    orgPreviewEpoch++;
     set({ libRoots: await api.listLibraryRoots(), orgPreview: null });
   },
 
   setOrgIncludeUncertain: (v) => {
     // Đổi phạm vi → preview cũ hết giá trị, bắt chạy lại trước khi execute
+    orgPreviewEpoch++;
     set({ orgIncludeUncertain: v, orgPreview: null });
   },
 
@@ -356,9 +378,14 @@ export const useStore = create<AppStore>((set, get) => ({
     if (get().orgBusy) return;
     orgPreviewCancelRequested = false;
     set({ orgBusy: true, orgPreviewing: true });
+    // Chụp đời TRƯỚC IPC: đổi cấu hình trong lúc chờ sẽ tăng đời, và response
+    // này thành bản chết — không được cài lại lên UI.
+    const epoch = orgPreviewEpoch;
     try {
       const p = await api.orgPreview(get().orgIncludeUncertain);
-      set({ orgPreview: p });
+      if (epoch === orgPreviewEpoch) {
+        set({ orgPreview: p });
+      }
     } catch (e) {
       const error = String(e);
       const rejectedBeforeInvalidation =
@@ -367,6 +394,7 @@ export const useStore = create<AppStore>((set, get) => ({
         error.includes("ERR_RECOVERY_BUSY");
       if (!rejectedBeforeInvalidation) {
         // Once backend preflight accepted the new preview, the old ticket is gone.
+        orgPreviewEpoch++;
         set({ orgPreview: null });
       }
       if (
@@ -402,6 +430,7 @@ export const useStore = create<AppStore>((set, get) => ({
           total: null,
           message: null,
         });
+        orgPreviewEpoch++;
         set({ orgPreview: null });
       }
     } finally {
@@ -428,9 +457,11 @@ export const useStore = create<AppStore>((set, get) => ({
           message: null,
         });
       }
+      orgPreviewEpoch++;
       set({ orgPreview: null });
     } catch (e) {
       if (String(e).includes("ERR_ORG_PREVIEW_STALE")) {
+        orgPreviewEpoch++;
         set({ orgPreview: null });
       }
       get().showToast(errText(e), true);
@@ -922,6 +953,7 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   addRootAndScan: async (path) => {
+    orgPreviewEpoch++;
     set({ orgPreview: null });
     const rootId = await api.addRoot(path);
     await get().loadRoots();
@@ -931,6 +963,7 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   removeRoot: async (id) => {
+    orgPreviewEpoch++;
     set({ orgPreview: null });
     await api.removeRoot(id);
     await get().loadRoots();
@@ -938,6 +971,7 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   scanRoot: async (id) => {
+    orgPreviewEpoch++;
     set({ orgPreview: null });
     const jobId = await api.startScan(id);
     get().onJobProgress({ jobId, kind: "scan", done: 0, total: null, message: null });
@@ -1002,8 +1036,13 @@ export const useStore = create<AppStore>((set, get) => ({
       Date.now(),
       get().tzOffsetMinutes,
     );
+    // Timezone đổi thư mục đích theo ngày chụp → preview cũ nói dối. Xóa
+    // TRƯỚC await như mọi setter organize khác (xem `saveOrgSettings`) — lệnh
+    // này còn có thể chờ meta job dừng cả chục giây.
+    orgPreviewEpoch++;
+    set({ orgPreview: null });
     await api.setSettings(timezone, tzOffsetMinutes, true);
-    set({ timezone, tzOffsetMinutes, setupDone: true, orgPreview: null });
+    set({ timezone, tzOffsetMinutes, setupDone: true });
     // Video meta UTC đã encode theo zone cũ được backend invalidate khi đổi setting.
     void api.startMetaScan().catch((e) => get().showToast(errText(e), true));
   },

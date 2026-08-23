@@ -227,9 +227,24 @@ CREATE TABLE org_ops(
   done_at INTEGER,
   undone_at INTEGER,
   recovery_error TEXT,
-  recovery_attempted_at INTEGER
+  recovery_attempted_at INTEGER,
+  reverses_op_id INTEGER,
+  lib_root TEXT
 );
+-- (comment de NGOAI than CREATE TABLE: ALTER ... DROP COLUMN bat SQLite parse
+-- lai dinh nghia bang, va comment `--` ben trong lam buoc rewrite do gay.)
+-- reverses_op_id: id cua op organize ma op nay dao nguoc; NULL = op organize
+-- binh thuong. Recovery can biet intent dang cho la undo de chot not op goc
+-- thanh undone - thieu no thi crash giua undo lam file da ve cho cu van mang
+-- op active, va lan organize sau tu "redo" dung cai user vua undo.
+-- lib_root: library root TAI THOI DIEM chuyen file (NULL voi op undo).
+-- {relpath} cua file da organize phai tinh theo goc nay: sau khi user doi thu
+-- muc kho, goc hien tai khong con chua file nen suy tu no ra la long/flatten.
 CREATE INDEX org_ops_batch ON org_ops(batch_id);
+-- Tra "file nay co dang nam cho organize dat no khong" cho tung ung vien
+-- organize (xem scope_sql trong org.rs) - khong co index thi moi ung vien quet
+-- ca bang.
+CREATE INDEX org_ops_file ON org_ops(file_id);
 
 CREATE TABLE jobs(
   id INTEGER PRIMARY KEY AUTOINCREMENT,

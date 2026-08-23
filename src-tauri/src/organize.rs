@@ -100,16 +100,74 @@ pub(crate) fn cleanup_stale_preview_files(data_dir: &Path) {
     }
 }
 
+/// Vứt bản xem trước: HỦY lượt đang chạy rồi mới xóa ticket.
+///
+/// Chỉ xóa ticket là chưa đủ và đó là một lỗ thật: lượt preview đang chạy vẫn
+/// chạy tiếp tới cùng rồi CÀI LẠI ticket của nó — tính theo cấu hình CŨ.
+///
+/// ĐÂY LÀ BẢN DUY NHẤT — mọi chỗ hủy preview đều đi qua hàm này hoặc
+/// [`invalidate_preview_slots`] (cho code chỉ có Arc handle, không có
+/// `AppState`). Đoạn cancel-rồi-clear từng bị chép tay rải ở organize.rs,
+/// dedup.rs, commands.rs và state.rs; bug đổi phạm vi lẫn bug timezone đều là
+/// hệ quả của một bản chép thiếu. Thêm caller thì gọi hàm, đừng chép thân.
+///
+/// Lock lấy kiểu chịu được poison: một thread panic trước đó không được phép
+/// khóa vĩnh viễn đường hủy preview.
 pub(crate) fn invalidate_org_preview(state: &AppState) {
-    if let Some(cancel) = state
-        .org_preview_cancel
+    invalidate_preview_slots(&state.org_preview, &state.org_preview_cancel);
+}
+
+/// Phần lõi, tách ra để test gọi được — `AppState` chỉ dựng được lúc app chạy
+/// thật nên không unit-test thẳng vào command — và để job đã clone sẵn Arc
+/// handle (org_hash, dedup hash) gọi từ trong closure.
+pub(crate) fn invalidate_preview_slots(
+    preview: &Mutex<Option<OrgPreviewTicket>>,
+    cancel_slot: &Mutex<Option<core_jobs::CancelFlag>>,
+) {
+    if let Some(cancel) = cancel_slot
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .as_ref()
     {
         cancel.store(true, Ordering::Relaxed);
     }
-    *state.org_preview.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    *preview.lock().unwrap_or_else(|p| p.into_inner()) = None;
+}
+
+/// Tăng số đời cấu hình TRONG LÚC GIỮ mutex ticket. Không phải màu mè: cả hai
+/// chỗ tiêu thụ ticket (`start_organize` đọc-số-đời-rồi-`take`, `org_preview`
+/// kiểm-số-đời-rồi-cài) đều làm hai bước dưới cùng mutex này. Bump mà không
+/// qua mutex thì nó chen được vào GIỮA hai bước — validate thấy đời cũ còn
+/// hợp lệ, take xong thì đời đã đổi, plan đóng băng theo cấu hình cũ vẫn chạy.
+/// Qua cùng mutex thì bump chỉ có thể rơi hẳn trước (validate thấy stale) hoặc
+/// hẳn sau (ticket đã bị lấy/cài xong trước khi cấu hình kịp đổi).
+fn bump_org_config_gen(
+    preview: &Mutex<Option<OrgPreviewTicket>>,
+    gen: &std::sync::atomic::AtomicU64,
+) {
+    let _slot = preview.lock().unwrap_or_else(|p| p.into_inner());
+    gen.fetch_add(1, Ordering::AcqRel);
+}
+
+/// Một lệnh đổi cấu hình organize SẮP chạy. Gọi ngay khi vào lệnh, trước mọi
+/// `.await`: từ giây phút này mọi ticket đã tính đều hết đời.
+pub(crate) fn org_config_changing(state: &AppState) {
+    bump_org_config_gen(&state.org_preview, &state.org_config_gen);
+}
+
+/// Lệnh đổi cấu hình organize đã chạy xong — kể cả khi nó trả LỖI: validate
+/// thuần thì chưa ghi gì thật, nhưng lỗi rơi SAU khi bắt đầu ghi (kv ghi được
+/// một nửa, `load_scopes` fail...) mà không đóng đời thì một preview chạy song
+/// song có thể chụp số đời hiện hành + cấu hình ghi dở và thành ticket "hợp
+/// lệ". Giá của bump thừa chỉ là một preview bị vứt oan.
+///
+/// Tăng số đời LẦN THỨ HAI rồi vứt preview. Lần bump thứ hai không thừa: một
+/// lượt preview chạy TRONG lúc lệnh đang ghi kv sẽ đọc phải cấu hình cũ nhưng
+/// chụp được số đời mới, nên nếu chỉ bump một lần thì ticket đó trông vẫn hợp
+/// lệ. Bump lần hai giết nó.
+pub(crate) fn org_config_changed(state: &AppState) {
+    bump_org_config_gen(&state.org_preview, &state.org_config_gen);
+    invalidate_org_preview(state);
 }
 
 // ---------- settings / library roots ----------
@@ -202,6 +260,10 @@ pub async fn set_org_scopes(state: State<'_, AppState>, scopes: Vec<String>) -> 
     if state.recovery_active.load(Ordering::Acquire) {
         return Err("ERR_RECOVERY_BUSY|".into());
     }
+    // Đóng khe đua NGAY, trước mọi `.await`: giữa lúc user bấm đổi và lúc lệnh
+    // này ghi xong, ticket cũ vẫn hợp lệ và `start_organize` lấy được nguyên
+    // plan của cấu hình CŨ. Xem `org_config_changing`.
+    org_config_changing(&state);
     let db = state.db.clone();
     let result = blocking(move || {
         let mut clean: Vec<String> = Vec::new();
@@ -220,41 +282,8 @@ pub async fn set_org_scopes(state: State<'_, AppState>, scopes: Vec<String>) -> 
         Ok(())
     })
     .await;
-    if result.is_ok() {
-        invalidate_preview(&state);
-    }
+    org_config_changed(&state);
     result
-}
-
-/// Vứt bản xem trước: HỦY lượt đang chạy rồi mới xóa ticket.
-///
-/// Chỉ xóa ticket là chưa đủ và đó là một lỗ thật: lượt preview đang chạy vẫn
-/// chạy tiếp tới cùng rồi CÀI LẠI ticket của nó — tính theo cấu hình CŨ. User
-/// vừa thu hẹp phạm vi xong bấm "Gom N file" là chuyển đúng đám file vừa loại ra.
-///
-/// Mọi lệnh làm bản xem trước cũ mất nghĩa (đổi template, đổi phạm vi) đều phải
-/// gọi hàm này — để chung một chỗ cho hai đường không lệch nhau được nữa.
-///
-/// Lock lấy kiểu chịu được poison: một thread panic trước đó không được phép
-/// khóa vĩnh viễn đường hủy preview.
-fn invalidate_preview(state: &AppState) {
-    invalidate_preview_slots(&state.org_preview, &state.org_preview_cancel);
-}
-
-/// Phần lõi, tách ra để test gọi được — `AppState` chỉ dựng được lúc app chạy
-/// thật nên không unit-test thẳng vào command được.
-fn invalidate_preview_slots(
-    preview: &Mutex<Option<OrgPreviewTicket>>,
-    cancel_slot: &Mutex<Option<core_jobs::CancelFlag>>,
-) {
-    if let Some(cancel) = cancel_slot
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .as_ref()
-    {
-        cancel.store(true, Ordering::Relaxed);
-    }
-    *preview.lock().unwrap_or_else(|p| p.into_inner()) = None;
 }
 
 /// Validate + render ví dụ KHÔNG lưu — UI gọi debounce khi user đang gõ
@@ -278,6 +307,10 @@ pub async fn set_org_settings(
     if state.recovery_active.load(Ordering::Acquire) {
         return Err("ERR_RECOVERY_BUSY|".into());
     }
+    // Đóng khe đua NGAY, trước mọi `.await`: giữa lúc user bấm đổi và lúc lệnh
+    // này ghi xong, ticket cũ vẫn hợp lệ và `start_organize` lấy được nguyên
+    // plan của cấu hình CŨ. Xem `org_config_changing`.
+    org_config_changing(&state);
     let db = state.db.clone();
     let result = blocking(move || {
         // Validate TRƯỚC khi lưu — lỗi trả ERR_TPL_* cho UI dịch
@@ -286,8 +319,12 @@ pub async fn set_org_settings(
         let (d2, f2) = (dir_template.clone(), file_template.clone());
         db.writer
             .exec(move |c| {
-                core_db::ops::kv_set(c, "org_dir_template", &d2)?;
-                core_db::ops::kv_set(c, "org_file_template", &f2)?;
+                // Một transaction cho cả cặp: mỗi kv_set tự commit riêng thì
+                // reader chen giữa thấy dir mới + file cũ — nửa nọ nửa kia.
+                let tx = c.transaction()?;
+                core_db::ops::kv_set(&tx, "org_dir_template", &d2)?;
+                core_db::ops::kv_set(&tx, "org_file_template", &f2)?;
+                tx.commit()?;
                 Ok(())
             })
             .map_err(err)?;
@@ -299,9 +336,7 @@ pub async fn set_org_settings(
         })
     })
     .await;
-    if result.is_ok() {
-        invalidate_preview(&state);
-    }
+    org_config_changed(&state);
     result
 }
 
@@ -318,6 +353,10 @@ pub async fn set_library_root(state: State<'_, AppState>, path: String) -> CmdRe
     if state.recovery_active.load(Ordering::Acquire) {
         return Err("ERR_RECOVERY_BUSY|".into());
     }
+    // Đóng khe đua NGAY, trước mọi `.await`: giữa lúc user bấm đổi và lúc lệnh
+    // này ghi xong, ticket cũ vẫn hợp lệ và `start_organize` lấy được nguyên
+    // plan của cấu hình CŨ. Xem `org_config_changing`.
+    org_config_changing(&state);
     let db = state.db.clone();
     let result = blocking(move || {
         let canonical = canonicalize_root(&path)?;
@@ -326,9 +365,7 @@ pub async fn set_library_root(state: State<'_, AppState>, path: String) -> CmdRe
             .map_err(err)
     })
     .await;
-    if result.is_ok() {
-        invalidate_preview(&state);
-    }
+    org_config_changed(&state);
     result
 }
 
@@ -337,6 +374,10 @@ pub async fn remove_library_root(state: State<'_, AppState>, id: i64) -> CmdResu
     if state.recovery_active.load(Ordering::Acquire) {
         return Err("ERR_RECOVERY_BUSY|".into());
     }
+    // Đóng khe đua NGAY, trước mọi `.await`: giữa lúc user bấm đổi và lúc lệnh
+    // này ghi xong, ticket cũ vẫn hợp lệ và `start_organize` lấy được nguyên
+    // plan của cấu hình CŨ. Xem `org_config_changing`.
+    org_config_changing(&state);
     let db = state.db.clone();
     let result = blocking(move || {
         db.writer
@@ -344,9 +385,7 @@ pub async fn remove_library_root(state: State<'_, AppState>, id: i64) -> CmdResu
             .map_err(err)
     })
     .await;
-    if result.is_ok() {
-        invalidate_preview(&state);
-    }
+    org_config_changed(&state);
     result
 }
 
@@ -416,17 +455,31 @@ fn build_items(
         .iter()
         .map(|c| {
             let name = c.path.rsplit('\\').next().unwrap_or(&c.path);
-            // Gốc tính {relpath}: LIB ROOT TRƯỚC watch root — file đã organize
-            // phải render target == chính nó (SkipOrganized idempotent). Ưu
-            // tiên watch root bao ngoài kho sẽ lồng "Library\Library\..." thêm
-            // một tầng mỗi lần chạy. Không thuộc root nào (root đã remove sau
-            // scan) → None: {relpath} render rỗng, file về thẳng phần template
-            // còn lại thay vì đoán bừa.
-            let rel = rel_under(&c.dir_path, lib_root_path).or_else(|| {
-                watch_roots
-                    .iter()
-                    .find_map(|w| rel_under(&c.dir_path, &w.path))
-            });
+            // Gốc tính {relpath}, theo thứ tự:
+            //
+            // 1. Kho TẠI THỜI ĐIỂM organize đặt file (org_ops.lib_root). Sau
+            //    khi user đổi thư mục kho, file cũ không nằm dưới kho mới —
+            //    suy {relpath} từ kho mới là lồng thêm tầng (kho cũ trong
+            //    watch root) hoặc flatten cả cây (kho cũ ngoài watch root, ví
+            //    dụ E:\media trong khi chỉ quét E:\images). Gốc đã ghi lại là
+            //    thứ duy nhất tách được "phần organize tự dựng" khỏi path.
+            // 2. Kho hiện tại — file đã organize khi kho KHÔNG đổi phải render
+            //    target == chính nó (SkipOrganized idempotent).
+            // 3. Watch root. Ưu tiên watch root bao ngoài kho sẽ lồng
+            //    "Library\Library\..." thêm một tầng mỗi lần chạy.
+            //
+            // Không thuộc gốc nào (root đã remove sau scan) → None: {relpath}
+            // render rỗng, file về thẳng phần template còn lại thay vì đoán bừa.
+            let rel = c
+                .managed_lib_root
+                .as_deref()
+                .and_then(|m| rel_under(&c.dir_path, m))
+                .or_else(|| rel_under(&c.dir_path, lib_root_path))
+                .or_else(|| {
+                    watch_roots
+                        .iter()
+                        .find_map(|w| rel_under(&c.dir_path, &w.path))
+                });
             let rel_dir = rel.filter(|r| !r.is_empty()).map(str::to_string);
             let folder = match rel {
                 // File nằm ngay tại root: không lấy tên root làm {folder}
@@ -768,6 +821,9 @@ struct StoredPlanEntry {
     entry: PlanEntry,
     main_meta: ItemMeta,
     pair_meta: Option<ItemMeta>,
+    /// Thư mục kho của volume này lúc tính plan — executor ghi vào
+    /// `org_ops.lib_root` để {relpath} các lần gom sau còn gốc mà tính.
+    lib_root: String,
 }
 
 struct DiskClaimStore {
@@ -821,6 +877,29 @@ pub(crate) struct OrgPreviewTicket {
     id: u64,
     include_uncertain: bool,
     prepared: PreparedPlan,
+    /// Số đời cấu hình lúc plan này được tính. `start_organize` từ chối ticket
+    /// có số đời khác hiện tại — plan đóng băng theo cấu hình cũ không được
+    /// phép chạy dù ticket vẫn còn nằm đó. Xem `AppState::org_config_gen`.
+    gen: u64,
+}
+
+/// Ticket này còn được phép chạy không?
+///
+/// Tách ra vì `start_organize` hỏi câu này HAI lần (trước và sau khi tạo dòng
+/// job) — hai bản chép tay là hai cơ hội để một bên quên thêm điều kiện, mà
+/// bên quên chính là bên cho chạy nhầm.
+fn ticket_is_current(
+    t: &OrgPreviewTicket,
+    preview_id: u64,
+    include_uncertain: bool,
+    config_gen: u64,
+) -> bool {
+    t.id == preview_id
+        && t.include_uncertain == include_uncertain
+        // Cấu hình (template / phạm vi nguồn / thư mục kho) đổi sau khi plan
+        // được tính → plan đóng băng theo cấu hình cũ. Chạy nó là chuyển đúng
+        // đám file user vừa loại ra.
+        && t.gen == config_gen
 }
 
 fn action_name(a: &PlanAction) -> &'static str {
@@ -916,6 +995,8 @@ pub async fn org_preview(
     let seq = state.org_preview_seq.clone();
     let cancel_slot = state.org_preview_cancel.clone();
     let jobs = state.jobs.clone();
+    let config_gen = state.org_config_gen.clone();
+    let gen_at_start = config_gen.load(Ordering::Acquire);
     let id = seq.fetch_add(1, Ordering::Relaxed);
     let cancel: core_jobs::CancelFlag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let preflight_ticket = ticket.clone();
@@ -962,12 +1043,27 @@ pub async fn org_preview(
             return Err(e);
         }
     };
-    out.preview_id = id;
-    *ticket.lock().unwrap_or_else(|p| p.into_inner()) = Some(OrgPreviewTicket {
-        id,
-        include_uncertain,
-        prepared,
-    });
+    // Cấu hình đổi trong lúc đang tính → plan này tính trên cấu hình đã chết.
+    // Không cài ticket: thà UI không có gì để bấm còn hơn có một bản xem trước
+    // trông hợp lệ mà `start_organize` sẽ từ chối.
+    //
+    // Kiểm số đời phải nằm TRONG lock ticket: bump đi qua cùng mutex này (xem
+    // `bump_org_config_gen`), nên kiểm-rồi-cài là một khối nguyên tử — không có
+    // khe cho lệnh đổi cấu hình chen giữa "thấy đời còn đúng" và "cài ticket".
+    {
+        let mut t = ticket.lock().unwrap_or_else(|p| p.into_inner());
+        if config_gen.load(Ordering::Acquire) != gen_at_start {
+            *slot = None;
+            return Err("ERR_ORG_PREVIEW_STALE|config changed while previewing".into());
+        }
+        out.preview_id = id;
+        *t = Some(OrgPreviewTicket {
+            id,
+            include_uncertain,
+            prepared,
+            gen: gen_at_start,
+        });
+    }
     *slot = None;
     Ok(out)
 }
@@ -1036,14 +1132,7 @@ pub async fn start_org_hash_scan(
             .exec(|c| core_db::ops::insert_job(c, "org_hash", None))
             .map_err(err)?;
         let (cancel, pause) = jobs.register_pausable(job_id, "org_hash", None);
-        if let Some(active_preview) = preview_cancel
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .as_ref()
-        {
-            active_preview.store(true, Ordering::Relaxed);
-        }
-        *preview.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        invalidate_preview_slots(&preview, &preview_cancel);
         let events = jobs.sender();
         let writer_cleanup = db.writer.clone();
         std::thread::Builder::new()
@@ -1312,6 +1401,7 @@ fn compute_org_preview(
                         entry: e,
                         main_meta,
                         pair_meta,
+                        lib_root: root.path.clone(),
                     },
                 )?;
                 plan_out.write_all(b"\n")?;
@@ -1400,6 +1490,7 @@ pub async fn start_organize(
     let lock = state.delete_lock.clone();
     let op_gate = state.index_op_gate.clone();
     let preview_ticket = state.org_preview.clone();
+    let config_gen = state.org_config_gen.clone();
     blocking(move || {
         let _gate = guard;
         let _op = op_gate.lock().unwrap_or_else(|p| p.into_inner());
@@ -1419,9 +1510,14 @@ pub async fn start_organize(
         // chiếm thì executor fail-safe, tuyệt đối không tự đổi destination.
         {
             let slot = preview_ticket.lock().unwrap_or_else(|p| p.into_inner());
-            let valid = slot
-                .as_ref()
-                .is_some_and(|p| p.id == preview_id && p.include_uncertain == include_uncertain);
+            let valid = slot.as_ref().is_some_and(|p| {
+                ticket_is_current(
+                    p,
+                    preview_id,
+                    include_uncertain,
+                    config_gen.load(Ordering::Acquire),
+                )
+            });
             if !valid {
                 return Err("ERR_ORG_PREVIEW_STALE|missing or mismatched preview".into());
             }
@@ -1434,9 +1530,14 @@ pub async fn start_organize(
             .map_err(err)?;
         let prepared = {
             let mut slot = preview_ticket.lock().unwrap_or_else(|p| p.into_inner());
-            let valid = slot
-                .as_ref()
-                .is_some_and(|p| p.id == preview_id && p.include_uncertain == include_uncertain);
+            let valid = slot.as_ref().is_some_and(|p| {
+                ticket_is_current(
+                    p,
+                    preview_id,
+                    include_uncertain,
+                    config_gen.load(Ordering::Acquire),
+                )
+            });
             if !valid {
                 db.writer.exec_async(move |c| {
                     core_db::ops::finish_job(c, job_id, "failed", Some("ERR_ORG_PREVIEW_STALE"))
@@ -1559,13 +1660,21 @@ fn run_prepared_organize_job(
                     e,
                     &stored.main_meta,
                     stored.pair_meta.as_ref(),
+                    &stored.lib_root,
                     &mut tally,
                 );
             }
             // Ảnh đã đúng chỗ nhưng MOV của cặp còn kẹt lại (đợt trước
             // fail giữa 2 nửa) → move nốt MOV để hàn cặp
             PlanAction::SkipOrganized if e.pair_move.is_some() => {
-                execute_pair_fixup(db, job_id, e, stored.pair_meta.as_ref(), &mut tally);
+                execute_pair_fixup(
+                    db,
+                    job_id,
+                    e,
+                    stored.pair_meta.as_ref(),
+                    &stored.lib_root,
+                    &mut tally,
+                );
             }
             ref a => tally.skip(action_name(a)),
         }
@@ -1649,9 +1758,21 @@ pub(crate) fn recover_pending_ops(
                 break;
             }
             if matches {
+                // Op undo phải được chốt TRỌN chuyển trạng thái: đánh dấu op
+                // gốc undone và tự đánh dấu undone (y hệt đường chạy bình
+                // thường trong run_undo_job). Chỉ mark done rồi dừng là journal
+                // nói dối — file đã về chỗ cũ mà op gốc vẫn active, lần
+                // organize sau sẽ tự "redo" đúng cái user vừa undo.
+                let reverses = op.reverses_op_id;
                 db.writer.exec(move |c| {
-                    org::update_file_location(c, file_id, &new_path)?;
-                    org::mark_org_op_done(c, op_id)?;
+                    let tx = c.transaction()?;
+                    org::update_file_location_in(&tx, file_id, &new_path)?;
+                    org::mark_org_op_done(&tx, op_id)?;
+                    if let Some(original_op) = reverses {
+                        org::mark_org_op_undone(&tx, original_op)?;
+                        org::mark_org_op_undone(&tx, op_id)?;
+                    }
+                    tx.commit()?;
                     Ok(())
                 })?;
                 index_changed = true;
@@ -1848,6 +1969,7 @@ fn execute_move(
     e: &PlanEntry,
     meta: &ItemMeta,
     pair_meta: Option<&ItemMeta>,
+    lib_root: &str,
     tally: &mut OrgTally,
 ) {
     let Some(new_path) = e.new_path.clone() else {
@@ -1868,12 +1990,15 @@ fn execute_move(
     // Journal write-ahead cho ảnh + pair (nếu có) TRƯỚC mọi thao tác fs
     let (old_a, new_a, fid) = (e.old_path.clone(), new_path.clone(), e.file_id);
     let pair = e.pair_move.clone();
+    let lib = lib_root.to_string();
     let ops_ids = db.writer.exec({
         let pair = pair.clone();
         move |c| {
-            let a = org::insert_org_op(c, batch_id, fid, &old_a, &new_a)?;
+            let a = org::insert_org_op(c, batch_id, fid, &old_a, &new_a, &lib)?;
             let b = match &pair {
-                Some((pid, pold, pnew)) => Some(org::insert_org_op(c, batch_id, *pid, pold, pnew)?),
+                Some((pid, pold, pnew)) => {
+                    Some(org::insert_org_op(c, batch_id, *pid, pold, pnew, &lib)?)
+                }
                 None => None,
             };
             Ok((a, b))
@@ -1980,14 +2105,15 @@ fn execute_pair_fixup(
     batch_id: i64,
     e: &PlanEntry,
     pair_meta: Option<&ItemMeta>,
+    lib_root: &str,
     tally: &mut OrgTally,
 ) {
     let Some((pid, pold, pnew)) = e.pair_move.clone() else {
         return;
     };
     let ins = db.writer.exec({
-        let (po, pn) = (pold.clone(), pnew.clone());
-        move |c| org::insert_org_op(c, batch_id, pid, &po, &pn)
+        let (po, pn, lib) = (pold.clone(), pnew.clone(), lib_root.to_string());
+        move |c| org::insert_org_op(c, batch_id, pid, &po, &pn, &lib)
     });
     let Ok(op_b) = ins else {
         tally.skip("DB_ERROR");
@@ -2127,10 +2253,12 @@ fn run_undo_job(
         // Write-ahead intent cho CHÍNH bước undo (P1 review: crash giữa rename
         // và ghi DB làm op gốc mãi "done", file thì đã về chỗ cũ — không đường
         // nào sửa; có intent thì recovery hoàn tất nốt phần DB).
-        let (np, opath) = (op.new_path.clone(), op.old_path.clone());
+        // `reverses_op_id` để recovery còn biết đường chốt op GỐC thành undone
+        // — thiếu nó thì op gốc vẫn active và lần organize sau redo cái vừa undo.
+        let (np, opath, rev) = (op.new_path.clone(), op.old_path.clone(), op.id);
         let undo_op = db
             .writer
-            .exec(move |c| org::insert_org_op(c, undo_job_id, fid, &np, &opath))?;
+            .exec(move |c| org::insert_undo_op(c, undo_job_id, fid, &np, &opath, rev))?;
         // Cross-volume undo cần hash đối chiếu — hash bản hiện tại trước khi copy
         let hash = if same_volume(&op.new_path, &op.old_path) {
             None
@@ -2140,14 +2268,19 @@ fn run_undo_job(
         match move_file_fs(&op.new_path, &op.old_path, size, mtime, hash.as_ref()) {
             Ok(()) => {
                 let (op_id, old_path) = (op.id, op.old_path.clone());
+                // Một transaction cho cả 4 bước: mỗi statement tự commit riêng
+                // thì crash giữa chừng để lại journal kể dở câu chuyện — op gốc
+                // active trong khi file đã về chỗ cũ.
                 db.writer.exec(move |c| {
-                    org::update_file_location(c, fid, &old_path)?;
-                    org::mark_org_op_done(c, undo_op)?;
-                    org::mark_org_op_undone(c, op_id)?;
+                    let tx = c.transaction()?;
+                    org::update_file_location_in(&tx, fid, &old_path)?;
+                    org::mark_org_op_done(&tx, undo_op)?;
+                    org::mark_org_op_undone(&tx, op_id)?;
                     // Op undo tự đánh dấu undone luôn — batch undo không hiện
                     // như 1 đợt "undo được" trong history (tránh undo-của-undo
                     // rối loạn; muốn redo thì chạy organize lại là ra)
-                    org::mark_org_op_undone(c, undo_op)?;
+                    org::mark_org_op_undone(&tx, undo_op)?;
+                    tx.commit()?;
                     Ok(())
                 })?;
                 tally.moved += 1;
@@ -2177,11 +2310,73 @@ mod tests {
         (md.len() as i64, unix_ms(md.modified().ok()))
     }
 
+    /// Plan đã đóng băng KHÔNG được chạy sau khi cấu hình đổi.
+    ///
+    /// Vứt preview sau khi lệnh đổi cấu hình ghi xong là chưa đủ: giữa lúc user
+    /// bấm đổi phạm vi và lúc kv được ghi có một khe, và trong khe đó ticket cũ
+    /// vẫn hợp lệ nên `start_organize` lấy được nguyên plan của phạm vi CŨ rồi
+    /// chạy — vứt preview sau đó không gọi lại được plan đã chạy.
+    #[test]
+    fn a_frozen_plan_never_runs_after_the_config_moved_on() {
+        let ticket = OrgPreviewTicket {
+            id: 7,
+            include_uncertain: false,
+            prepared: PreparedPlan {
+                file: tempfile::NamedTempFile::new().unwrap(),
+                work_units: 0,
+                deferred_needs_hash: 0,
+            },
+            gen: 3,
+        };
+
+        assert!(
+            ticket_is_current(&ticket, 7, false, 3),
+            "dung id, dung co, dung so doi -> phai chay duoc"
+        );
+        assert!(
+            !ticket_is_current(&ticket, 7, false, 4),
+            "cau hinh da doi -> plan dong bang theo cau hinh cu KHONG duoc chay"
+        );
+        assert!(!ticket_is_current(&ticket, 8, false, 3), "sai preview id");
+        assert!(
+            !ticket_is_current(&ticket, 7, true, 3),
+            "doi include_uncertain la doi tap file"
+        );
+    }
+
     /// Vứt preview phải HỦY lượt đang chạy, không chỉ xóa ticket.
     ///
     /// Chỉ xóa ticket là bug thật đã mắc ở `set_org_scopes`: lượt đang chạy
     /// chạy nốt rồi CÀI LẠI ticket tính theo cấu hình CŨ, nên user vừa thu hẹp
     /// phạm vi xong bấm "Gom" là chuyển đúng đám file vừa loại ra.
+    /// Bump số đời phải XẾP HÀNG sau critical section đang giữ mutex ticket —
+    /// đó là thứ đóng khe TOCTOU giữa "đọc số đời thấy hợp lệ" và "take
+    /// ticket" trong `start_organize` (và "kiểm số đời rồi cài" trong
+    /// `org_preview`): hai bước diễn ra dưới mutex, bump không chen giữa được.
+    #[test]
+    fn config_bump_cannot_interleave_with_a_ticket_claim() {
+        use std::sync::atomic::AtomicU64;
+        let preview = Arc::new(Mutex::new(None::<OrgPreviewTicket>));
+        let gen = Arc::new(AtomicU64::new(0));
+
+        let claim = preview.lock().unwrap(); // start_organize đang validate+take
+        let bump = {
+            let (p, g) = (preview.clone(), gen.clone());
+            std::thread::spawn(move || bump_org_config_gen(&p, &g))
+        };
+        // Nhường thread bump chạy tới mutex; test này chứng minh THỨ TỰ (bump
+        // chờ mutex), không đo thời gian.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(
+            gen.load(Ordering::Acquire),
+            0,
+            "bump khong duoc chen vao giua critical section dang giu mutex"
+        );
+        drop(claim);
+        bump.join().unwrap();
+        assert_eq!(gen.load(Ordering::Acquire), 1);
+    }
+
     #[test]
     fn invalidating_preview_also_cancels_the_run_in_flight() {
         let preview: Mutex<Option<OrgPreviewTicket>> = Mutex::new(None);
@@ -2775,6 +2970,7 @@ mod tests {
                 date_source: None,
                 camera: None,
                 gps: None,
+                managed_lib_root: None,
                 full_hash: None,
                 hashed_size: None,
                 hashed_mtime: None,
@@ -2819,6 +3015,83 @@ mod tests {
         assert_eq!(items[3].rel_dir.as_deref(), Some("Bac Tuan"));
         // Prefix match không phân biệt hoa thường
         assert_eq!(items[4].rel_dir.as_deref(), Some("Bac Tuan"));
+    }
+
+    /// {relpath} của file organize đang giữ phải tính theo gốc kho ĐÃ ĐẶT nó
+    /// (org_ops.lib_root), không phải kho hiện tại. Sau khi user đổi thư mục
+    /// kho, suy từ kho mới ra là hai kiểu hỏng, mỗi kiểu một assert dưới đây:
+    /// kho cũ nằm trong watch root → fallback watch root lồng thêm tầng
+    /// ("media2\media\Photos\..."); kho cũ ngoài watch root (đúng cấu hình
+    /// thật E:\images nguồn, E:\media kho) → không gốc nào khớp, relpath rỗng,
+    /// cả cây flatten vào kho mới.
+    #[test]
+    fn relpath_of_managed_file_follows_the_root_that_placed_it() {
+        fn cand(id: i64, dir: &str, name: &str, managed: Option<&str>) -> OrgCandidateRow {
+            OrgCandidateRow {
+                file_id: id,
+                path: format!("{dir}\\{name}"),
+                dir_path: dir.into(),
+                original_name: None,
+                ext: "jpg".into(),
+                kind: 0,
+                size: 1,
+                mtime: 1,
+                status: 0,
+                taken_at: None,
+                date_source: None,
+                camera: None,
+                gps: None,
+                managed_lib_root: managed.map(str::to_string),
+                full_hash: None,
+                hashed_size: None,
+                hashed_mtime: None,
+                pair: None,
+            }
+        }
+        let tz = TimezoneSetting {
+            name: None,
+            fallback_offset_minutes: 0,
+        };
+        let roots = vec![RootInfo {
+            id: 1,
+            volume_id: 1,
+            path: r"D:\P".into(),
+            last_scan_at: None,
+            file_count: 0,
+        }];
+        let (items, _) = build_items(
+            &[
+                // Kho cũ D:\P\media nằm TRONG watch root D:\P
+                cand(
+                    1,
+                    r"D:\P\media\Photos\2019",
+                    "done.jpg",
+                    Some(r"D:\P\media"),
+                ),
+                // Kho cũ E:\media nằm NGOÀI watch root
+                cand(2, r"E:\media\Photos\2019", "far.jpg", Some(r"E:\media")),
+                // Kho không đổi: bất biến SkipOrganized giữ nguyên
+                cand(3, r"D:\P\media2\Photos", "same.jpg", Some(r"D:\P\media2")),
+                // File thường không có provenance: hành vi cũ
+                cand(4, r"D:\P\icloud", "new.jpg", None),
+            ],
+            &tz,
+            0,
+            r"D:\P\media2",
+            &roots,
+        );
+        assert_eq!(
+            items[0].rel_dir.as_deref(),
+            Some(r"Photos\2019"),
+            "khong duoc long them 'media\\' tu watch root"
+        );
+        assert_eq!(
+            items[1].rel_dir.as_deref(),
+            Some(r"Photos\2019"),
+            "khong duoc flatten khi kho cu ngoai moi watch root"
+        );
+        assert_eq!(items[2].rel_dir.as_deref(), Some("Photos"));
+        assert_eq!(items[3].rel_dir.as_deref(), Some("icloud"));
     }
 
     /// {relpath}+{name}: giữ nguyên cây thư mục + tên gốc; chạy lần 2 = 0 move
@@ -2978,11 +3251,125 @@ mod tests {
                 .to_string(),
         );
         db.writer
-            .exec(move |c| org::insert_org_op(c, jid, 1, &src_s, &dst_s))
+            .exec(move |c| org::insert_org_op(c, jid, 1, &src_s, &dst_s, "X:"))
             .unwrap();
         recover_pending_ops(&db, None, None).unwrap();
         assert!(db.pool.with(org::pending_org_ops).unwrap().is_empty());
         assert!(src.exists());
+    }
+
+    /// Crash GIỮA lượt undo: fs đã move file về chỗ cũ nhưng chưa kịp chốt
+    /// journal. Recovery phải hoàn tất TRỌN chuyển trạng thái — op organize
+    /// gốc thành undone, intent undo done + tự undone — chứ không chỉ cập nhật
+    /// vị trí. Chốt thiếu là journal nói dối: file user vừa undo vẫn mang op
+    /// active, marker "đang được organize giữ" ép nó vào ứng viên dù nằm ngoài
+    /// phạm vi, và lần Gom sau tự "redo" đúng cái user vừa hoàn tác.
+    #[test]
+    fn crash_mid_undo_is_finalized_by_recovery_and_leaves_the_managed_set() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = core_db::Db::open(&tmp.path().join("db")).unwrap();
+        let mess = tmp.path().join("mess");
+        let lib = tmp.path().join("lib");
+        fs::create_dir_all(&lib).unwrap();
+
+        // Hiện trường lúc crash: file đã VỀ chỗ cũ trên đĩa...
+        let back_home = mess.join("a.jpg");
+        let (size, mtime) = write_file(&back_home, b"anh");
+        let old_s = back_home.to_str().unwrap().to_string();
+        let new_s = lib.join("2019").join("a.jpg").to_str().unwrap().to_string();
+
+        // ...nhưng index còn trỏ vào kho (undo chưa kịp ghi DB).
+        let mess_s = mess.to_str().unwrap().to_string();
+        db.writer
+            .exec(move |c| core_db::ops::upsert_root(c, &mess_s))
+            .unwrap();
+        let lib_2019 =
+            core_db::ops::normalize_path(tmp.path().join("lib").join("2019").to_str().unwrap());
+        db.writer
+            .exec(move |c| {
+                let mut cache = HashMap::new();
+                core_db::ops::upsert_scan_batch(
+                    c,
+                    1,
+                    1,
+                    &[core_db::ScanEntry {
+                        dir_path: lib_2019,
+                        name: "a.jpg".into(),
+                        ext: "jpg".into(),
+                        kind: 0,
+                        size,
+                        mtime,
+                        attrs: 0,
+                        status: 0,
+                    }],
+                    &mut cache,
+                )
+            })
+            .unwrap();
+        let fid: i64 = db.pool.with(|c| {
+            c.query_row("SELECT id FROM files", [], |r| r.get(0))
+                .unwrap()
+        });
+
+        // Journal lúc crash: op organize done + active, intent undo còn treo.
+        let lib_s = lib.to_str().unwrap().to_string();
+        let (o1, o2) = db
+            .writer
+            .exec({
+                let (old_s, new_s) = (old_s.clone(), new_s.clone());
+                move |c| {
+                    let org_op = org::insert_org_op(c, 7, fid, &old_s, &new_s, &lib_s)?;
+                    org::mark_org_op_done(c, org_op)?;
+                    let undo_op = org::insert_undo_op(c, 8, fid, &new_s, &old_s, org_op)?;
+                    Ok((org_op, undo_op))
+                }
+            })
+            .unwrap();
+
+        recover_pending_ops(&db, None, None).unwrap();
+
+        // Index đã về chỗ cũ, journal chốt đủ cả ba dấu.
+        let (path, done1, undone1, done2, undone2): (String, bool, bool, bool, bool) =
+            db.pool.with(move |c| {
+                let path = c
+                    .query_row(
+                        "SELECT d.path || '\\' || f.name FROM files f
+                         JOIN dirs d ON d.id = f.dir_id WHERE f.id = ?1",
+                        [fid],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                let flags = |id: i64| -> (bool, bool) {
+                    c.query_row(
+                        "SELECT done_at IS NOT NULL, undone_at IS NOT NULL
+                         FROM org_ops WHERE id = ?1",
+                        [id],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .unwrap()
+                };
+                let (d1, u1) = flags(o1);
+                let (d2, u2) = flags(o2);
+                (path, d1, u1, d2, u2)
+            });
+        assert_eq!(path, old_s);
+        assert!(done1 && undone1, "op organize goc phai thanh undone");
+        assert!(
+            done2 && undone2,
+            "intent undo phai done va tu danh dau undone"
+        );
+
+        // Và file KHÔNG còn là ứng viên khi nằm ngoài phạm vi — không redo undo.
+        let scope = vec![lib.to_str().unwrap().to_string()];
+        let cands = db
+            .pool
+            .with(move |c| org::select_org_candidates(c, 1, 0, 100, &scope))
+            .unwrap();
+        assert!(
+            cands.is_empty(),
+            "file da undo khong duoc bi keo lai vao kho: {:?}",
+            cands.iter().map(|r| r.path.clone()).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -2998,7 +3385,7 @@ mod tests {
         let src_s = src.to_string_lossy().into_owned();
         let dst_s = tmp.path().join("b.jpg").to_string_lossy().into_owned();
         db.writer
-            .exec(move |c| org::insert_org_op(c, jid, 1, &src_s, &dst_s))
+            .exec(move |c| org::insert_org_op(c, jid, 1, &src_s, &dst_s, "X:"))
             .unwrap();
 
         let cancel = core_jobs::CancelFlag::default();
@@ -3029,7 +3416,7 @@ mod tests {
         );
         let op_id = db
             .writer
-            .exec(move |c| org::insert_org_op(c, jid, 1, &src_s, &dst_s))
+            .exec(move |c| org::insert_org_op(c, jid, 1, &src_s, &dst_s, "X:"))
             .unwrap();
 
         recover_pending_ops(&db, None, None).unwrap();
@@ -3061,7 +3448,7 @@ mod tests {
         let new_path = dst.to_str().unwrap().to_string();
         let op_id = db
             .writer
-            .exec(move |c| org::insert_org_op(c, jid, 999_999, &old_path, &new_path))
+            .exec(move |c| org::insert_org_op(c, jid, 999_999, &old_path, &new_path, "X:"))
             .unwrap();
 
         recover_pending_ops(&db, None, None).unwrap();

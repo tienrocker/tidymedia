@@ -12,7 +12,7 @@ use crate::models::{
 
 /// Bump khi đổi schema. Có migration tăng dần từ v2 trở đi (giữ index của
 /// user); version lạ/quá cũ → wipe & recreate (rebuild bằng rescan, ok pre-1.0).
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 11;
 
 /// Phiên bản của BỘ TRÍCH metadata. Bump khi extractor học thêm field: dòng
 /// `media_meta` cũ hơn sẽ được [`select_pending_meta`] chọn lại, nên job `meta`
@@ -101,6 +101,19 @@ const MIGRATIONS: &[&str] = &[
        PRIMARY KEY(album_id, file_id)
      ) WITHOUT ROWID;
      CREATE INDEX album_files_file ON album_files(file_id);",
+    // v9 -> v10: organize hỏi "file này có đang nằm chỗ tôi đặt nó không" cho
+    // TỪNG ứng viên (xem `scope_sql`). Không có index thì mỗi ứng viên quét cả
+    // `org_ops` — bảng này dài bằng tổng số lần chuyển file từ trước tới nay.
+    //
+    // Chỉ thêm index, không đụng một dòng dữ liệu nào.
+    "CREATE INDEX IF NOT EXISTS org_ops_file ON org_ops(file_id);",
+    // v10 -> v11: journal phải phân biệt op organize với op undo, và nhớ
+    // library root tại thời điểm chuyển (xem chú thích trong schema.sql).
+    // Row cũ nhận NULL cả hai: op undo cũ đã được chốt undone ngay trong cùng
+    // lượt ghi nên không cần phân biệt hồi tố; lib_root NULL thì {relpath}
+    // rơi về cách tính theo root hiện tại như trước.
+    "ALTER TABLE org_ops ADD COLUMN reverses_op_id INTEGER;
+     ALTER TABLE org_ops ADD COLUMN lib_root TEXT;",
 ];
 const OLDEST_MIGRATABLE: i64 = 2;
 

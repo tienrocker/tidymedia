@@ -192,6 +192,16 @@ pub struct AppState {
     /// Preview có thể full-hash thư viện lớn; cho UI hủy giữa từng file.
     pub(crate) org_preview_cancel: Arc<Mutex<Option<core_jobs::CancelFlag>>>,
     pub org_preview_seq: Arc<std::sync::atomic::AtomicU64>,
+    /// Số đời của CẤU HÌNH organize (template, phạm vi nguồn, thư mục kho).
+    ///
+    /// Mỗi lệnh đổi cấu hình tăng nó lên NGAY khi vào lệnh — trước mọi `.await`
+    /// — và ticket preview nhớ số đời lúc nó được tính. Vứt preview sau khi lưu
+    /// xong là chưa đủ: giữa lúc user bấm đổi phạm vi và lúc lệnh đó ghi xong
+    /// kv có một khe, và trong khe đó ticket cũ vẫn hợp lệ nên `start_organize`
+    /// lấy được nguyên cái plan của phạm vi CŨ rồi chạy — vứt preview sau đó
+    /// không gọi lại được plan đã chạy. So số đời thì khe biến mất: ticket tính
+    /// theo cấu hình cũ không bao giờ khớp số đời hiện tại nữa.
+    pub org_config_gen: Arc<std::sync::atomic::AtomicU64>,
     /// True while startup crash recovery runs on its background thread.
     pub recovery_active: Arc<std::sync::atomic::AtomicBool>,
     /// Serialize TOÀN BỘ delete_dup_files: 2 đợt xóa chạy song song có thể
@@ -289,6 +299,7 @@ pub fn init(app: &AppHandle) -> Result<()> {
         org_preview: Arc::new(Mutex::new(None)),
         org_preview_cancel: Arc::new(Mutex::new(None)),
         org_preview_seq: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        org_config_gen: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         recovery_active: recovery_active.clone(),
         delete_lock: delete_lock.clone(),
     });
@@ -393,20 +404,10 @@ pub fn init(app: &AppHandle) -> Result<()> {
         .name("job-event-pump".into())
         .spawn(move || {
             let mut last_changed: Option<Instant> = None;
+            // Bản sao thứ ba của đoạn này từng nằm ngay đây. Ba bản chép tay
+            // là ba cơ hội để một chỗ quên cập nhật — và đã xảy ra thật.
             let invalidate_preview = |handle: &AppHandle| {
-                let state = handle.state::<AppState>();
-                if let Some(cancel) = state
-                    .org_preview_cancel
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .as_ref()
-                {
-                    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
-                *state
-                    .org_preview
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner()) = None;
+                crate::organize::invalidate_org_preview(&handle.state::<AppState>());
             };
             let emit_changed = |handle: &AppHandle, last: &mut Option<Instant>| {
                 invalidate_preview(handle);
