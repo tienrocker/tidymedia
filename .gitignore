@@ -16,6 +16,10 @@ src-tauri/binaries/*.exe
 .testdata/
 bench-out/
 
+# Phieu trao doi code review (tao/codex/user) - vong doi tinh bang ngay,
+# khong phai tai lieu du an
+feedback.md
+
 # Env / editor
 .env*
 .vscode/*
