@@ -52,7 +52,7 @@
     "dirTemplate": "Folders",
     "fileTemplate": "File name",
     "tokens": "Tokens",
-    "tokensHint": "Date/time tokens come from the photo's capture date. {hash4} {hash8} {hash16} = first 4/8/16 characters of the file's content fingerprint (keeps identical names apart). {camera} = camera model from EXIF, e.g. \"Apple iPhone 12\" - left empty when the file has none. {relpath} = the file's original subfolders under its watched folder (keeps your manual sorting, e.g. \"Bac Tuan\\Tet 2008\"); {folder} = just the closest folder name; both are folder-template only. {name} = the original file name without extension. {place} {province} {district} {ward} {country} come from the GPS coordinates in the photo - a photo without them leaves those folder levels out entirely. {place} is the most populated town within 25 km, which is NOT the same as which district the photo legally sits in: a photo taken in the forest gets the name of a town 20 km away. {district} and {ward} only exist for Vietnam. Place names are written without accents (\"Phuong Ly Thai To\") so scripts and older tools can still read the paths.",
+    "tokensHint": "Date/time tokens come from the photo's capture date. {hash4} {hash8} {hash16} = first 4/8/16 characters of the file's content fingerprint (keeps identical names apart). {camera} = camera model from EXIF, e.g. \"Apple iPhone 12\" - left empty when the file has none. {relpath} = the file's original subfolders under its watched folder (keeps your manual sorting, e.g. \"Bac Tuan\\Tet 2008\"); {folder} = just the closest folder name; both are folder-template only. {name} = the original file name without extension. {place} {province} {district} {ward} {country} come from the GPS coordinates in the photo - a photo without them leaves those folder levels out entirely. {place} is the most populated town within 25 km, which is NOT the same as which district the photo legally sits in: a photo taken in the forest gets the name of a town 20 km away. {district} and {ward} only exist for Vietnam. Place names are written without accents (\"Phuong Ly Thai To\") so scripts and older tools can still read the paths. {kind} = Photos or Videos, so the two never mix. The name is fixed, not translated: a folder tree on disk has no UI language, and swapping it would rename thousands of files. A Live Photo movie always follows its photo into Photos - splitting the pair breaks it.",
     "presets": "Presets",
     "presetByDate": "By date",
     "presetKeepStructure": "Keep folder structure",
@@ -92,7 +92,13 @@
     "batch": "{{n}} files moved",
     "undone": "{{n}} undone",
     "undo": "Undo",
-    "undoConfirm": "Move {{n}} files back to where they were? Files whose target changed since are skipped and reported."
+    "undoConfirm": "Move {{n}} files back to where they were? Files whose target changed since are skipped and reported.",
+    "scopes": "Source folders",
+    "scopesHint": "Only these folders get organized. Subfolders included. Leave empty to organize the whole drive.",
+    "scopesAll": "Empty = the WHOLE drive gets organized, including things that do not belong in a date tree (downloaded videos, studio deliveries). Pick folders to narrow it down.",
+    "addScope": "Add folder",
+    "pickScope": "Pick a source folder to organize",
+    "presetByKind": "Photos/Videos by date"
   },
   "dedup": {
     "scan": "Scan for duplicates",

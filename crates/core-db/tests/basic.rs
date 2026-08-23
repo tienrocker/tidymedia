@@ -229,6 +229,73 @@ fn camera_filter_matches_exactly_and_lists_only_live_devices() {
     assert!(!cams.iter().any(|c| c.camera == "Canon EOS R5"), "{cams:?}");
 }
 
+/// Organize giới hạn theo thư mục nguồn. Ca nguy hiểm là hai thư mục mà tên
+/// cái này là TIỀN TỐ của cái kia — kho thật có đúng `anh` và `anh cuoi` cạnh
+/// nhau, chọn `anh` mà nuốt luôn `anh cuoi` là chuyển nhầm hàng nghìn file.
+#[test]
+fn org_scope_limits_to_chosen_folders_without_prefix_bleed() {
+    use core_db::org;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(tmp.path()).unwrap();
+    db.writer.exec(|c| ops::upsert_root(c, "D:\\P")).unwrap();
+    let entries = vec![
+        entry("D:\\P\\anh", "a.jpg", "jpg", 0, 100, 1),
+        entry("D:\\P\\anh\\2019", "b.jpg", "jpg", 0, 100, 2),
+        entry("D:\\P\\anh cuoi", "c.jpg", "jpg", 0, 100, 3),
+        entry("D:\\P\\vod", "d.mp4", "mp4", 1, 100, 4),
+    ];
+    db.writer
+        .exec(move |c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(c, 1, 1, &entries, &mut cache)
+        })
+        .unwrap();
+
+    let names = |scopes: Vec<String>| -> Vec<String> {
+        let mut v = db
+            .pool
+            .with(|c| org::select_org_candidates(c, 1, 0, 100, &scopes))
+            .unwrap()
+            .into_iter()
+            .map(|r| r.path)
+            .collect::<Vec<_>>();
+        v.sort();
+        v
+    };
+    let count = |scopes: Vec<String>| -> i64 {
+        db.pool
+            .with(|c| org::count_org_candidates(c, 1, &scopes))
+            .unwrap()
+    };
+
+    // Rỗng = cả volume, đúng hành vi trước khi có tham số này
+    assert_eq!(names(vec![]).len(), 4);
+    assert_eq!(count(vec![]), 4);
+
+    // Chọn "anh": lấy cả thư mục con, KHÔNG đụng "anh cuoi"
+    let only_anh = names(vec!["D:\\P\\anh".into()]);
+    assert_eq!(
+        only_anh,
+        vec![
+            "D:\\P\\anh\\2019\\b.jpg".to_string(),
+            "D:\\P\\anh\\a.jpg".to_string()
+        ],
+        "chon 'anh' khong duoc nuot 'anh cuoi'"
+    );
+    assert_eq!(count(vec!["D:\\P\\anh".into()]), 2, "dem phai khop select");
+
+    // Nhiều scope cùng lúc
+    assert_eq!(
+        count(vec!["D:\\P\\anh cuoi".into(), "D:\\P\\vod".into()]),
+        2
+    );
+    // Thư mục không tồn tại → rỗng, không nổ
+    assert_eq!(count(vec!["D:\\P\\khong co".into()]), 0);
+    // Không phân biệt hoa thường, và dấu \ thừa ở cuối vẫn nhận
+    assert_eq!(count(vec!["d:\\p\\ANH\\".into()]), 2);
+}
+
 /// Nhãn + album là dữ liệu user tự tạo, KHÔNG dựng lại được bằng quét — nên
 /// test ở đây soi kỹ mấy đường mất mát âm thầm.
 #[test]
@@ -1197,7 +1264,7 @@ fn org_library_roots_journal_and_relocate() {
         .unwrap();
     let cands = db
         .pool
-        .with(|c| org::select_org_candidates(c, 1, 0, 100))
+        .with(|c| org::select_org_candidates(c, 1, 0, 100, &[]))
         .unwrap();
     assert_eq!(cands.len(), 2, "MOV co pair phai an, di theo anh");
     let img = cands.iter().find(|x| x.ext == "heic").unwrap();
@@ -1229,7 +1296,7 @@ fn org_library_roots_journal_and_relocate() {
     // path moi phan anh trong candidates lan sau + original_name giu ten cu
     let cands = db
         .pool
-        .with(|c| org::select_org_candidates(c, 1, 0, 100))
+        .with(|c| org::select_org_candidates(c, 1, 0, 100, &[]))
         .unwrap();
     let moved = cands.iter().find(|x| x.file_id == img_id).unwrap();
     assert_eq!(moved.path, "D:\\MyLib2\\2019\\x.heic");

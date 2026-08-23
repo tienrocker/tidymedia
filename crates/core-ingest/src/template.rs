@@ -34,7 +34,15 @@ pub enum Token {
     District,
     Ward,
     Country,
+    /// ảnh hay video — xem [`KIND_PHOTOS`]
+    Kind,
 }
+
+/// Tên thư mục của token `{kind}`. CỐ ĐỊNH, KHÔNG đi qua i18n: đổi theo ngôn
+/// ngữ giao diện nghĩa là mỗi lần user chuyển ngôn ngữ thì hàng nghìn file phải
+/// đổi đường dẫn, mà cây thư mục trên đĩa thì không có khái niệm "ngôn ngữ".
+pub const KIND_PHOTOS: &str = "Photos";
+pub const KIND_VIDEOS: &str = "Videos";
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum TemplateError {
@@ -115,6 +123,7 @@ pub fn parse_template(src: &str, kind: TemplateKind) -> Result<Template, Templat
                 "district" => Token::District,
                 "ward" => Token::Ward,
                 "country" => Token::Country,
+                "kind" => Token::Kind,
                 other => return Err(TemplateError::UnknownToken(other.to_string())),
             };
             // {relpath}/{folder} có thể render nhiều segment thư mục — trong
@@ -181,6 +190,12 @@ pub struct RenderCtx<'a> {
     /// đây — render bị gọi lại nhiều lượt khi escalate độ dài hash, tra trong
     /// render là quét lại 170k điểm mỗi lượt.
     pub place: core_geo::Place,
+    /// 0 = ảnh, 1 = video (khớp `files.kind`).
+    ///
+    /// `Option` chứ không phải `i64` mặc định 0 là CỐ Ý: quên nối dây thì cả
+    /// tầng thư mục biến mất — nhìn phát ra ngay ở preview. Mặc định 0 thì
+    /// video lặng lẽ chui vào thư mục `Photos`, sai mà không ai thấy.
+    pub kind: Option<i64>,
 }
 
 impl<'a> RenderCtx<'a> {
@@ -202,6 +217,7 @@ impl<'a> RenderCtx<'a> {
             folder: None,
             orig_stem: None,
             place: core_geo::Place::default(),
+            kind: None,
         }
     }
 
@@ -223,6 +239,12 @@ impl<'a> RenderCtx<'a> {
     /// và segment thư mục tương ứng biến mất, KHÔNG sinh ra "Unknown".
     pub fn with_place(mut self, place: core_geo::Place) -> Self {
         self.place = place;
+        self
+    }
+
+    /// Gắn phân loại cho token {kind}. `kind` khớp `files.kind` (0 ảnh, 1 video).
+    pub fn with_kind(mut self, kind: i64) -> Self {
+        self.kind = Some(kind);
         self
     }
 }
@@ -353,6 +375,13 @@ impl Template {
                 Token::District => push_place(&mut out, ctx.place.district),
                 Token::Ward => push_place(&mut out, ctx.place.ward),
                 Token::Country => push_place(&mut out, ctx.place.country),
+                Token::Kind => match ctx.kind {
+                    Some(0) => out.push_str(KIND_PHOTOS),
+                    Some(1) => out.push_str(KIND_VIDEOS),
+                    // Chưa nối dây, hoặc kind lạ từ bản schema mới hơn — bỏ
+                    // trống để segment biến mất, đừng đoán bừa sang một bên
+                    _ => {}
+                },
             }
         }
         out
@@ -613,6 +642,36 @@ mod tests {
         let c = ctx(None).with_place(core_geo::lookup(21.027450, 105.822258));
         let f = parse_template("{YYYYMMDD}_{place}", TemplateKind::File).unwrap();
         assert_eq!(f.render_file(&c, None), "20190614_Ha Noi");
+    }
+
+    /// Tên thư mục của {kind} là CHUỖI CỐ ĐỊNH, không đi qua i18n — test này
+    /// khoá nó lại: đổi theo ngôn ngữ giao diện nghĩa là mỗi lần user chuyển
+    /// ngôn ngữ thì hàng nghìn file phải đổi đường dẫn.
+    #[test]
+    fn kind_token_splits_photos_and_videos() {
+        let d = parse_template(r"{kind}\{YYYY}\{YYYY}-{MM}", TemplateKind::Dir).unwrap();
+        assert_eq!(
+            d.render_dir(&ctx(None).with_kind(0)),
+            vec!["Photos", "2019", "2019-06"]
+        );
+        assert_eq!(
+            d.render_dir(&ctx(None).with_kind(1)),
+            vec!["Videos", "2019", "2019-06"]
+        );
+        // Dùng được cả trong tên file, luôn ra đúng 1 component
+        let f = parse_template("{kind}_{YYYYMMDD}", TemplateKind::File).unwrap();
+        assert_eq!(
+            f.render_file(&ctx(None).with_kind(1), None),
+            "Videos_20190614"
+        );
+    }
+
+    /// Quên nối dây thì cả TẦNG THƯ MỤC biến mất — nhìn phát ra ngay ở preview.
+    /// Mặc định về 0 thì video lặng lẽ chui vào `Photos`, sai mà không ai thấy.
+    #[test]
+    fn kind_token_renders_nothing_when_not_wired() {
+        let d = parse_template(r"{kind}\{YYYY}", TemplateKind::Dir).unwrap();
+        assert_eq!(d.render_dir(&ctx(None)), vec!["2019"]);
     }
 
     #[test]

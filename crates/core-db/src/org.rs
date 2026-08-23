@@ -7,7 +7,9 @@ use anyhow::{anyhow, bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::models::{LibraryRootRow, OrgBatchRow, OrgCandidateRow, OrgOpRow, OrgPairRow};
-use crate::ops::{drive_letter, join_path, normalize_for_search, normalize_path, now_ms};
+use crate::ops::{
+    drive_letter, join_path, normalize_for_search, normalize_path, now_ms, path_range,
+};
 
 // ---------- library roots ----------
 
@@ -87,6 +89,41 @@ const CANDIDATE_WHERE: &str = "f.volume_id = ?1 AND f.id > ?2
        AND f.status IN (0, 2)
        AND (f.kind = 0 OR f.live_pair_id IS NULL)";
 
+/// Giới hạn ứng viên vào các THƯ MỤC NGUỒN user chọn. Danh sách rỗng = cả
+/// volume, tức đúng hành vi cũ.
+///
+/// Vì sao cần: không có nó thì bấm organize là ôm mọi file trên ổ. Kho thật
+/// dùng để phát triển có 25.624 file, trong đó `vod` là 99 GB video tải về —
+/// trộn nó vào cây ảnh theo ngày là sai, mà undo 25 nghìn file thì vẫn là một
+/// mớ dù có undo được.
+///
+/// Dùng lại [`path_range`] — CÙNG phép so prefix với root scope, nên
+/// `E:\images\anh` không bao giờ nuốt nhầm `E:\images\anh cuoi`: dải kết thúc
+/// ở `']'` (0x5D), ngay sau `'\'` (0x5C), nên chỉ khớp đúng con trực thuộc.
+///
+/// `next_idx` = số thứ tự tham số kế tiếp còn trống của câu SQL gọi tới.
+fn scope_sql(scopes: &[String], next_idx: usize) -> (String, Vec<String>) {
+    if scopes.is_empty() {
+        return (String::new(), Vec::new());
+    }
+    let mut parts = Vec::new();
+    let mut args = Vec::new();
+    let mut i = next_idx;
+    for s in scopes {
+        let (eq, start, end) = path_range(&normalize_path(s));
+        parts.push(format!(
+            "(d.path_key = ?{i} OR (d.path_key >= ?{} AND d.path_key < ?{}))",
+            i + 1,
+            i + 2
+        ));
+        args.push(eq);
+        args.push(start);
+        args.push(end);
+        i += 3;
+    }
+    (format!(" AND ({})", parts.join(" OR ")), args)
+}
+
 /// Ứng viên organize trên 1 volume, keyset theo f.id. Lấy CẢ file đang nằm
 /// trong library root — planner tự trả SkipOrganized (idempotent, và file
 /// user tự quăng vào root vẫn được xếp chỗ đúng). MOV có pair bị ẩn (đi theo
@@ -98,7 +135,9 @@ pub fn select_org_candidates(
     volume_id: i64,
     after_id: i64,
     limit: i64,
+    scopes: &[String],
 ) -> Result<Vec<OrgCandidateRow>> {
+    let (scope_where, scope_args) = scope_sql(scopes, 4);
     let sql = format!(
         "SELECT f.id, d.path, f.name, f.ext, f.kind, f.size, f.mtime, f.status,
                 m.taken_at, m.date_source, m.camera,
@@ -114,12 +153,20 @@ pub fn select_org_candidates(
                            AND pv.live_pair_id = f.id
          LEFT JOIN dirs pd ON pd.id = pv.dir_id
          LEFT JOIN hashes ph ON ph.file_id = pv.id
-         WHERE {CANDIDATE_WHERE}
+         WHERE {CANDIDATE_WHERE}{scope_where}
          ORDER BY f.id LIMIT ?3"
     );
     let mut st = conn.prepare_cached(&sql)?;
+    // ?1 ?2 ?3 cố định, scope nối tiếp từ ?4 (xem scope_sql)
+    let mut args: Vec<Box<dyn rusqlite::ToSql>> =
+        vec![Box::new(volume_id), Box::new(after_id), Box::new(limit)];
+    args.extend(
+        scope_args
+            .into_iter()
+            .map(|s| Box::new(s) as Box<dyn rusqlite::ToSql>),
+    );
     let rows = st
-        .query_map(params![volume_id, after_id, limit], |r| {
+        .query_map(rusqlite::params_from_iter(args.iter()), |r| {
             let dir: String = r.get(1)?;
             let name: String = r.get(2)?;
             let pair = match (
@@ -168,9 +215,21 @@ pub fn select_org_candidates(
     Ok(rows)
 }
 
-pub fn count_org_candidates(conn: &Connection, volume_id: i64) -> Result<i64> {
-    let sql = format!("SELECT COUNT(*) FROM files f WHERE {CANDIDATE_WHERE}");
-    Ok(conn.query_row(&sql, params![volume_id, 0i64], |r| r.get(0))?)
+/// Đếm phải dùng ĐÚNG điều kiện với `select_org_candidates` — lệch nhau thì
+/// progress bar của job chạy quá 100% hoặc không bao giờ tới đích.
+pub fn count_org_candidates(conn: &Connection, volume_id: i64, scopes: &[String]) -> Result<i64> {
+    let (scope_where, scope_args) = scope_sql(scopes, 3);
+    let sql = format!(
+        "SELECT COUNT(*) FROM files f JOIN dirs d ON d.id = f.dir_id
+         WHERE {CANDIDATE_WHERE}{scope_where}"
+    );
+    let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(volume_id), Box::new(0i64)];
+    args.extend(
+        scope_args
+            .into_iter()
+            .map(|s| Box::new(s) as Box<dyn rusqlite::ToSql>),
+    );
+    Ok(conn.query_row(&sql, rusqlite::params_from_iter(args.iter()), |r| r.get(0))?)
 }
 
 /// Cached full hash of an indexed file plus the index snapshot it was hashed against.

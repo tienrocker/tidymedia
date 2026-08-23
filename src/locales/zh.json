@@ -52,7 +52,7 @@
     "dirTemplate": "文件夹",
     "fileTemplate": "文件名",
     "tokens": "令牌",
-    "tokensHint": "日期/时间令牌取自照片的拍摄时间。{hash4} {hash8} {hash16} = 文件内容指纹的前 4/8/16 个字符（同秒拍摄的不同照片也不会重名）。{camera} = EXIF 中的相机型号，如 \"Apple iPhone 12\"，文件没有则留空。{relpath} = 文件在受监控文件夹下的原始子目录（保留你手工整理的分类，如 \"Bac Tuan\\Tet 2008\"）；{folder} = 仅最近一级文件夹名；两者仅用于文件夹模板。{name} = 不含扩展名的原始文件名。{place} {province} {district} {ward} {country} 来自照片中的 GPS 坐标 - 没有 GPS 的照片会直接省略这几层文件夹。{place} 是 25 公里内人口最多的城镇，这与照片在行政区划上归属哪里并不相同：在森林里拍的照片会用 20 公里外小镇的名字。{district} 和 {ward} 仅限越南。地名一律不带变音符号写出（\"Phuong Ly Thai To\"），这样脚本和老工具仍能读取路径。",
+    "tokensHint": "日期/时间令牌取自照片的拍摄时间。{hash4} {hash8} {hash16} = 文件内容指纹的前 4/8/16 个字符（同秒拍摄的不同照片也不会重名）。{camera} = EXIF 中的相机型号，如 \"Apple iPhone 12\"，文件没有则留空。{relpath} = 文件在受监控文件夹下的原始子目录（保留你手工整理的分类，如 \"Bac Tuan\\Tet 2008\"）；{folder} = 仅最近一级文件夹名；两者仅用于文件夹模板。{name} = 不含扩展名的原始文件名。{place} {province} {district} {ward} {country} 来自照片中的 GPS 坐标 - 没有 GPS 的照片会直接省略这几层文件夹。{place} 是 25 公里内人口最多的城镇，这与照片在行政区划上归属哪里并不相同：在森林里拍的照片会用 20 公里外小镇的名字。{district} 和 {ward} 仅限越南。地名一律不带变音符号写出（\"Phuong Ly Thai To\"），这样脚本和老工具仍能读取路径。 {kind} = Photos 或 Videos，两类不会混在一起。名称固定且不随界面语言翻译：磁盘上的目录树没有\"界面语言\"，跟着改会导致数千个文件改路径。实况照片的视频始终跟随其照片进入 Photos - 拆开配对就失效了。",
     "presets": "预设",
     "presetByDate": "按日期",
     "presetKeepStructure": "保留文件夹结构",
@@ -92,7 +92,13 @@
     "batch": "已移动 {{n}} 个文件",
     "undone": "已撤销 {{n}} 个",
     "undo": "撤销",
-    "undoConfirm": "将 {{n}} 个文件移回原处？期间被改动的文件会跳过并报告。"
+    "undoConfirm": "将 {{n}} 个文件移回原处？期间被改动的文件会跳过并报告。",
+    "scopes": "源文件夹",
+    "scopesHint": "只整理这些文件夹（含子文件夹）。留空则整理整个磁盘。",
+    "scopesAll": "留空 = 整理整个磁盘，包括不该进入日期目录的内容（下载的视频、影楼交付件）。请选择文件夹以缩小范围。",
+    "addScope": "添加文件夹",
+    "pickScope": "选择要整理的源文件夹",
+    "presetByKind": "照片/视频按日期"
   },
   "dedup": {
     "scan": "扫描重复项",

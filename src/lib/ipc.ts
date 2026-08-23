@@ -180,6 +180,8 @@ export interface OrgSettings {
   dirTemplate: string;
   fileTemplate: string;
   sample: string;
+  /** Thư mục NGUỒN được phép gom. Rỗng = cả ổ. */
+  scopes: string[];
 }
 
 export interface LibraryRootRow {
@@ -287,6 +289,7 @@ export const api = {
   getOrgSettings: () => invoke<OrgSettings>("get_org_settings"),
   setOrgSettings: (dirTemplate: string, fileTemplate: string) =>
     invoke<OrgSettings>("set_org_settings", { dirTemplate, fileTemplate }),
+  setOrgScopes: (scopes: string[]) => invoke<void>("set_org_scopes", { scopes }),
   previewOrgTemplate: (dirTemplate: string, fileTemplate: string) =>
     invoke<string>("preview_org_template", { dirTemplate, fileTemplate }),
   listLibraryRoots: () => invoke<LibraryRootRow[]>("list_library_roots"),

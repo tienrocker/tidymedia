@@ -211,6 +211,7 @@ interface AppStore {
 
   loadOrgData: () => Promise<void>;
   saveOrgSettings: (dirTemplate: string, fileTemplate: string) => Promise<void>;
+  setOrgScopes: (scopes: string[]) => Promise<void>;
   addLibraryRoot: (path: string) => Promise<void>;
   removeLibraryRoot: (id: number) => Promise<void>;
   setOrgIncludeUncertain: (v: boolean) => void;
@@ -327,6 +328,13 @@ export const useStore = create<AppStore>((set, get) => ({
     // Template đổi → preview cũ nói dối về đích mới
     set({ orgSettings: settings, orgPreview: null });
     get().showToast(i18n.t("org.settingsSaved"), false);
+  },
+
+  setOrgScopes: async (scopes) => {
+    await api.setOrgScopes(scopes);
+    // Đổi phạm vi = tập file khác hẳn → preview cũ nói dối về số lượng
+    set({ orgPreview: null });
+    await get().loadOrgData();
   },
 
   addLibraryRoot: async (path) => {

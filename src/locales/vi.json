@@ -52,7 +52,7 @@
     "dirTemplate": "Thư mục",
     "fileTemplate": "Tên file",
     "tokens": "Token",
-    "tokensHint": "Token ngày/giờ lấy từ ngày chụp của ảnh. {hash4} {hash8} {hash16} = 4/8/16 ký tự đầu của vân tay nội dung file (2 ảnh khác nhau chụp cùng giây vẫn ra tên khác). {camera} = tên máy ảnh từ EXIF, ví dụ \"Apple iPhone 12\" - file không có thì để trống. {relpath} = cây thư mục con gốc của file dưới thư mục theo dõi (giữ nguyên phân loại tay của mày, vd \"Bac Tuan\\Tet 2008\"); {folder} = chỉ tên thư mục sát file; cả hai chỉ dùng cho template thư mục. {name} = tên file gốc không có đuôi. {place} {province} {district} {ward} {country} lấy từ toạ độ GPS trong ảnh - ảnh không có GPS thì bỏ hẳn mấy tầng thư mục đó. {place} là nơi đông dân nhất trong bán kính 25 km, KHÔNG phải ảnh nằm trong địa phận nào: ảnh chụp giữa rừng sẽ mang tên thị trấn cách đó 20 km. {district} và {ward} chỉ có ở Việt Nam. Tên địa điểm viết KHÔNG DẤU (\"Phuong Ly Thai To\") để script và công cụ cũ còn đọc được đường dẫn.",
+    "tokensHint": "Token ngày/giờ lấy từ ngày chụp của ảnh. {hash4} {hash8} {hash16} = 4/8/16 ký tự đầu của vân tay nội dung file (2 ảnh khác nhau chụp cùng giây vẫn ra tên khác). {camera} = tên máy ảnh từ EXIF, ví dụ \"Apple iPhone 12\" - file không có thì để trống. {relpath} = cây thư mục con gốc của file dưới thư mục theo dõi (giữ nguyên phân loại tay của mày, vd \"Bac Tuan\\Tet 2008\"); {folder} = chỉ tên thư mục sát file; cả hai chỉ dùng cho template thư mục. {name} = tên file gốc không có đuôi. {place} {province} {district} {ward} {country} lấy từ toạ độ GPS trong ảnh - ảnh không có GPS thì bỏ hẳn mấy tầng thư mục đó. {place} là nơi đông dân nhất trong bán kính 25 km, KHÔNG phải ảnh nằm trong địa phận nào: ảnh chụp giữa rừng sẽ mang tên thị trấn cách đó 20 km. {district} và {ward} chỉ có ở Việt Nam. Tên địa điểm viết KHÔNG DẤU (\"Phuong Ly Thai To\") để script và công cụ cũ còn đọc được đường dẫn. {kind} = Photos hoặc Videos, để hai loại không lẫn nhau. Tên cố định, KHÔNG dịch: cây thư mục trên đĩa không có khái niệm ngôn ngữ giao diện, đổi theo là hàng nghìn file phải đổi đường dẫn. Video của Live Photo luôn đi theo ảnh vào Photos - tách đôi là hỏng cặp.",
     "presets": "Mẫu sẵn",
     "presetByDate": "Theo ngày",
     "presetKeepStructure": "Giữ cấu trúc thư mục",
@@ -92,7 +92,13 @@
     "batch": "{{n}} file đã chuyển",
     "undone": "{{n}} đã hoàn tác",
     "undo": "Hoàn tác",
-    "undoConfirm": "Trả {{n}} file về chỗ cũ? File nào chỗ cũ/mới đã bị đổi sẽ bỏ qua và báo lại."
+    "undoConfirm": "Trả {{n}} file về chỗ cũ? File nào chỗ cũ/mới đã bị đổi sẽ bỏ qua và báo lại.",
+    "scopes": "Thư mục nguồn",
+    "scopesHint": "Chỉ mấy thư mục này được gom, kể cả thư mục con. Để trống là gom cả ổ.",
+    "scopesAll": "Để trống = gom CẢ Ổ, gồm cả những thứ không thuộc cây theo ngày (video tải về, ảnh studio giao). Chọn thư mục để thu hẹp lại.",
+    "addScope": "Thêm thư mục",
+    "pickScope": "Chọn thư mục nguồn để gom",
+    "presetByKind": "Ảnh/Video theo ngày"
   },
   "dedup": {
     "scan": "Quét trùng lặp",

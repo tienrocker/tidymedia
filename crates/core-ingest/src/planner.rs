@@ -82,6 +82,12 @@ pub struct PlanItem {
     pub path: String,
     /// ext lowercase không dot
     pub ext: String,
+    /// 0 = ảnh, 1 = video (khớp `files.kind`) — token {kind}.
+    ///
+    /// MOV của cặp Live Photo KHÔNG có PlanItem riêng: nó đi theo `pair` và
+    /// nhận đường dẫn dựng từ ctx của tấm ảnh, nên `{kind}` của nó là "Photos".
+    /// Đó là hành vi ĐÚNG — tách đôi cặp Live Photo là hỏng cặp.
+    pub kind: i64,
     pub status: i64,
     pub taken_ms: i64,
     /// date::SRC_* - SRC_MTIME_UNCERTAIN bị loại trừ khi include_uncertain
@@ -237,7 +243,8 @@ pub fn plan_organize_incremental<C: ClaimStore + ?Sized>(
                 it.gps
                     .map(|(lat, lon)| core_geo::lookup(lat, lon))
                     .unwrap_or_default(),
-            );
+            )
+            .with_kind(it.kind);
         let segs = dir_tpl.render_dir(&ctx);
         if needs_hash {
             // đường dự kiến chỉ để hiển thị dry-run
@@ -386,6 +393,7 @@ mod tests {
             file_id: id,
             path: path.into(),
             ext: "jpg".into(),
+            kind: 0,
             status: 0,
             taken_ms: taken(),
             taken_source: SRC_EXIF,
@@ -589,6 +597,52 @@ mod tests {
         let (pid, _, pnew) = plan[0].pair_move.clone().unwrap();
         assert_eq!(pid, 2);
         assert_eq!(pnew, r"D:\L\2019\2019-06\20190614_153022_aaaa.mov");
+    }
+
+    /// Chia thư mục theo {kind} thì MOV của Live Photo phải đi theo ẢNH vào
+    /// `Photos\`, KHÔNG được tách sang `Videos\`. Tách đôi là hỏng cặp: cả
+    /// Windows lẫn logic ghép cặp của chính app đều dựa vào "cùng thư mục,
+    /// cùng stem".
+    ///
+    /// Hiện tại điều này đúng NHỜ `pair_target` dựng từ chính `segs` của tấm
+    /// ảnh — một hệ quả gián tiếp, không phải luật viết tường minh. Test này
+    /// khoá nó lại để ai đó đổi cách dựng pair_target thì vỡ ngay.
+    #[test]
+    fn live_pair_mov_follows_the_photo_into_photos_not_videos() {
+        let d = parse_template(r"{kind}\{YYYY}", TemplateKind::Dir).unwrap();
+        let f = parse_template("{YYYYMMDD}_{hhmmss}_{hash4}", TemplateKind::File).unwrap();
+        let mut it = item(1, r"D:\mess\IMG_1.heic", Some(H1));
+        it.ext = "heic".into();
+        it.kind = 0;
+        it.pair = Some(PairInfo {
+            file_id: 2,
+            path: r"D:\mess\IMG_1.mov".into(),
+            ext: "mov".into(),
+            status: 0,
+            size: 10,
+            mtime: 1,
+            hash_hex: None,
+        });
+        let plan = plan_organize(&[it], r"D:\L", &d, &f, false, &all_free);
+        assert_eq!(
+            plan[0].new_path.as_deref(),
+            Some(r"D:\L\Photos\2019\20190614_153022_aaaa.heic")
+        );
+        let (_, _, pnew) = plan[0].pair_move.clone().unwrap();
+        assert_eq!(
+            pnew, r"D:\L\Photos\2019\20190614_153022_aaaa.mov",
+            "MOV cua Live Photo phai nam canh anh, khong duoc sang Videos"
+        );
+
+        // Video ĐỘC LẬP (không có cặp) thì mới vào Videos
+        let mut v = item(3, r"D:\mess\clip.mp4", Some(H1));
+        v.ext = "mp4".into();
+        v.kind = 1;
+        let plan = plan_organize(&[v], r"D:\L", &d, &f, false, &all_free);
+        assert_eq!(
+            plan[0].new_path.as_deref(),
+            Some(r"D:\L\Videos\2019\20190614_153022_aaaa.mp4")
+        );
     }
 
     #[test]

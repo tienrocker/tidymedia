@@ -121,6 +121,22 @@ pub struct OrgSettings {
     pub file_template: String,
     /// render thử với thời điểm + hash mẫu để UI preview ngay
     pub sample: String,
+    /// Thư mục NGUỒN được phép gom. Rỗng = cả ổ (mặc định, hành vi cũ).
+    pub scopes: Vec<String>,
+}
+
+const KV_SCOPES: &str = "org_scopes";
+
+/// Thư mục nguồn user đã chọn. Lưu JSON trong `kv` cạnh template — cùng chỗ,
+/// cùng vòng đời: đổi template mà quên phạm vi là gom nhầm cả ổ.
+///
+/// Giá trị hỏng (sửa tay, bản cũ) → coi như rỗng chứ không nổ: rỗng nghĩa là
+/// "cả ổ", mà cả ổ thì preview sẽ hiện số file to đùng cho user thấy ngay.
+fn load_scopes(db: &core_db::Db) -> anyhow::Result<Vec<String>> {
+    let raw = db.pool.with(|c| core_db::ops::kv_get(c, KV_SCOPES))?;
+    Ok(raw
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default())
 }
 
 fn load_templates(db: &core_db::Db) -> anyhow::Result<(Template, Template, String, String)> {
@@ -165,7 +181,34 @@ pub async fn get_org_settings(state: State<'_, AppState>) -> CmdResult<OrgSettin
             sample: sample_render(&dir, &file),
             dir_template: dir_s,
             file_template: file_s,
+            scopes: load_scopes(&db).map_err(err)?,
         })
+    })
+    .await
+}
+
+/// Đặt thư mục nguồn được phép gom. Rỗng = cả ổ.
+///
+/// Đổi phạm vi làm bản xem trước cũ vô nghĩa — nó tính trên tập file khác hẳn.
+/// Xoá luôn để user không bấm "Gom N file" theo một con số của lần trước.
+#[tauri::command]
+pub async fn set_org_scopes(state: State<'_, AppState>, scopes: Vec<String>) -> CmdResult<()> {
+    let db = state.db.clone();
+    let preview = state.org_preview.clone();
+    blocking(move || {
+        let mut clean: Vec<String> = Vec::new();
+        for s in scopes {
+            let p = crate::commands::canonicalize_root(&s)?;
+            if !clean.iter().any(|x: &String| x.eq_ignore_ascii_case(&p)) {
+                clean.push(p);
+            }
+        }
+        let json = serde_json::to_string(&clean).map_err(|e| format!("ERR_INTERNAL|{e}"))?;
+        db.writer
+            .exec(move |c| core_db::ops::kv_set(c, KV_SCOPES, &json))
+            .map_err(err)?;
+        *preview.lock().unwrap() = None;
+        Ok(())
     })
     .await
 }
@@ -210,6 +253,7 @@ pub async fn set_org_settings(
             sample: sample_render(&dir, &file),
             dir_template,
             file_template,
+            scopes: load_scopes(&db).map_err(err)?,
         })
     })
     .await;
@@ -438,6 +482,7 @@ fn build_items(
                 taken_source: r.source,
                 hash_hex: hash.as_deref().map(to_hex),
                 camera: c.camera.clone(),
+                kind: c.kind,
                 rel_dir,
                 folder,
                 orig_stem,
@@ -1053,9 +1098,10 @@ fn run_org_hash_job(
         anyhow::bail!("ERR_ORG_NO_LIBRARY_ROOT|");
     }
     let watch_roots = db.pool.with(core_db::ops::list_roots)?;
+    let scopes = load_scopes(db)?;
     let total = roots.iter().try_fold(0u64, |sum, root| {
         db.pool
-            .with(|c| org::count_org_candidates(c, root.volume_id))
+            .with(|c| org::count_org_candidates(c, root.volume_id, &scopes))
             .map(|count| sum + count as u64)
     })?;
     // UI thấy job ngay khi khởi động, kể cả khi đang yield cho thumb
@@ -1091,9 +1137,9 @@ fn run_org_hash_job(
                 cancelled = true;
                 break 'roots;
             }
-            let cands = db
-                .pool
-                .with(|c| org::select_org_candidates(c, root.volume_id, cursor, CAND_BATCH))?;
+            let cands = db.pool.with(|c| {
+                org::select_org_candidates(c, root.volume_id, cursor, CAND_BATCH, &scopes)
+            })?;
             let Some(last) = cands.last() else { break };
             cursor = last.file_id;
             done += cands.len() as u64;
@@ -1165,6 +1211,7 @@ fn compute_org_preview(
 
     // Ổ nào có root index nhưng chưa có library root → báo UI
     let watch_roots = db.pool.with(core_db::ops::list_roots)?;
+    let scopes = load_scopes(db)?;
     for w in &watch_roots {
         let has_lib = roots.iter().any(|r| r.volume_id == w.volume_id);
         if !has_lib {
@@ -1189,9 +1236,9 @@ fn compute_org_preview(
             if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
                 anyhow::bail!("ERR_ORG_PREVIEW_CANCELLED|");
             }
-            let cands = db
-                .pool
-                .with(|c| org::select_org_candidates(c, root.volume_id, cursor, CAND_BATCH))?;
+            let cands = db.pool.with(|c| {
+                org::select_org_candidates(c, root.volume_id, cursor, CAND_BATCH, &scopes)
+            })?;
             let Some(last) = cands.last() else { break };
             cursor = last.file_id;
             let (mut items, mut metas) = build_items(&cands, &tz, now, &root.path, &watch_roots);
@@ -2248,7 +2295,7 @@ mod tests {
         assert_eq!(prepared.deferred_needs_hash, 1);
         let candidate = db
             .pool
-            .with(|c| org::select_org_candidates(c, 1, 0, 10))
+            .with(|c| org::select_org_candidates(c, 1, 0, 10, &[]))
             .unwrap()
             .remove(0);
         assert!(candidate.full_hash.is_none());
@@ -2327,7 +2374,7 @@ mod tests {
 
         let candidates = db
             .pool
-            .with(|c| org::select_org_candidates(c, 1, 0, 10))
+            .with(|c| org::select_org_candidates(c, 1, 0, 10, &[]))
             .unwrap();
         assert!(candidates[0].path.ends_with("IMG_20190614_153022.jpg"));
         assert_eq!(candidates[1].path, target.to_string_lossy());

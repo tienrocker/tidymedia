@@ -78,6 +78,66 @@ function LibraryRoots() {
   );
 }
 
+/** Thư mục NGUỒN được phép gom. Rỗng = cả ổ.
+ *
+ * Không có bộ này thì bấm Gom là ôm mọi file trên ổ — kể cả thư mục video tải
+ * về hay ảnh cưới của studio, những thứ không thuộc cây theo ngày. Undo được,
+ * nhưng undo hàng chục nghìn file vẫn là một mớ.
+ */
+function SourceScopes() {
+  const { t } = useTranslation();
+  const scopes = useStore((s) => s.orgSettings?.scopes) ?? [];
+
+  const add = () =>
+    runSafe(async () => {
+      const dir = await open({ directory: true, title: t("org.pickScope") });
+      if (typeof dir === "string") {
+        await useStore.getState().setOrgScopes([...scopes, dir]);
+      }
+    });
+
+  return (
+    <Section title={t("org.scopes")}>
+      <p className="mb-2 text-xs text-neutral-500">{t("org.scopesHint")}</p>
+      {scopes.length === 0 ? (
+        <div className="rounded border border-amber-900 bg-amber-950/40 px-2 py-1.5 text-xs text-amber-300">
+          {t("org.scopesAll")}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1">
+          {scopes.map((p) => (
+            <div
+              key={p}
+              className="flex items-center gap-2 rounded border border-neutral-800 bg-neutral-900 px-2 py-1.5"
+            >
+              <span className="min-w-0 flex-1 truncate text-sm text-neutral-200" title={p}>
+                {p}
+              </span>
+              <button
+                className="rounded px-1 text-xs text-red-400 hover:bg-neutral-800"
+                title={t("roots.remove")}
+                onClick={() =>
+                  runSafe(() =>
+                    useStore.getState().setOrgScopes(scopes.filter((x) => x !== p)),
+                  )
+                }
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <button
+        onClick={add}
+        className="mt-2 rounded bg-neutral-800 px-3 py-1 text-sm text-neutral-200 hover:bg-neutral-700"
+      >
+        + {t("org.addScope")}
+      </button>
+    </Section>
+  );
+}
+
 /** Preset 1-click — giá trị PHẢI khớp DEFAULT_*_TEMPLATE (template.rs) và token mới. */
 const TEMPLATE_PRESETS = [
   { key: "org.presetByDate", dir: "{YYYY}\\{YYYY}-{MM}", file: "{YYYYMMDD}_{hhmmss}_{hash4}" },
@@ -88,6 +148,11 @@ const TEMPLATE_PRESETS = [
   // phường thì gõ tay {province}\{district}\{ward} — chỉ VN có tầng đó, để
   // preset lại thì user nước khác bấm vào ra một tầng thư mục rỗng.
   { key: "org.presetByPlace", dir: "{YYYY}\\{place}", file: "{YYYYMMDD}_{hhmmss}_{hash4}" },
+  // Ảnh/Video → năm → tháng. KHÔNG có token hash: hash bắt phải đọc vân tay nội
+  // dung mọi file (hàng giờ trên ổ cơ) mà thứ nó mua được là SkipDuplicate —
+  // vô dụng với kho gần như không có bản trùng byte. Ảnh cùng giây sẽ nhận hậu
+  // tố _2, không mất file nào, và tab Gần giống dọn sau.
+  { key: "org.presetByKind", dir: "{kind}\\{YYYY}\\{YYYY}-{MM}", file: "{YYYYMMDD}_{hhmmss}" },
 ] as const;
 
 /** Template thư mục + tên file, validate + render ví dụ REALTIME khi gõ. */
@@ -176,7 +241,7 @@ function TemplateSettings() {
         <div className="text-xs text-neutral-500">
           {t("org.tokens")}:{" "}
           <code className="text-neutral-400">
-            {"{YYYY} {MM} {DD} {YYYYMMDD} {hh} {mm} {ss} {hhmmss} {hash4} {hash8} {hash16} {camera} {relpath} {folder} {name} {place} {province} {district} {ward} {country}"}
+            {"{YYYY} {MM} {DD} {YYYYMMDD} {hh} {mm} {ss} {hhmmss} {hash4} {hash8} {hash16} {camera} {kind} {relpath} {folder} {name} {place} {province} {district} {ward} {country}"}
           </code>
         </div>
         <div className="text-xs text-neutral-500">{t("org.tokensHint")}</div>
@@ -468,6 +533,7 @@ export function OrganizeView() {
           <p className="text-sm text-neutral-500">{t("org.subtitle")}</p>
         </div>
         <LibraryRoots />
+        <SourceScopes />
         <TemplateSettings />
         <PreviewAndRun />
         <Batches />
