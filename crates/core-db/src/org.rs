@@ -102,6 +102,8 @@ const CANDIDATE_WHERE: &str = "f.volume_id = ?1 AND f.id > ?2
 /// ở `']'` (0x5D), ngay sau `'\'` (0x5C), nên chỉ khớp đúng con trực thuộc.
 ///
 /// `next_idx` = số thứ tự tham số kế tiếp còn trống của câu SQL gọi tới.
+///
+/// Danh sách đưa vào đây PHẢI đi qua [`effective_scopes`] trước.
 fn scope_sql(scopes: &[String], next_idx: usize) -> (String, Vec<String>) {
     if scopes.is_empty() {
         return (String::new(), Vec::new());
@@ -124,6 +126,34 @@ fn scope_sql(scopes: &[String], next_idx: usize) -> (String, Vec<String>) {
     (format!(" AND ({})", parts.join(" OR ")), args)
 }
 
+/// Thư mục nguồn user chọn + THƯ MỤC KHO ĐÍCH. Kho luôn nằm trong tầm quét, kể
+/// cả khi user giới hạn nguồn.
+///
+/// Bỏ kho ra khỏi tầm quét thì file ĐÃ gom biến mất khỏi tập ứng viên, và hỏng
+/// hai thứ mà phần còn lại của organize dựa vào:
+///
+/// 1. **Đổi template rồi gom lại**: file cũ nằm im ở đường dẫn cũ, kho thành
+///    nửa theo cách đặt tên này nửa theo cách kia — mà planner vốn idempotent
+///    đúng để chuyện đó không xảy ra.
+/// 2. **Hàn lại cặp Live Photo gom hụt**: khi ảnh chuyển xong mà MOV fail,
+///    đường sửa nằm ở nhánh `SkipOrganized` của planner (nó phát lệnh chuyển
+///    nốt MOV). Ảnh không còn được chọn thì nhánh đó không bao giờ chạy, mà
+///    MOV thì luôn bị ẩn khỏi ứng viên — cặp xé vĩnh viễn.
+///
+/// Rỗng = cả volume nên không cần thêm gì.
+fn effective_scopes(conn: &Connection, scopes: &[String]) -> Result<Vec<String>> {
+    if scopes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out: Vec<String> = scopes.to_vec();
+    let mut st = conn.prepare_cached("SELECT path FROM library_roots")?;
+    let roots = st
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    out.extend(roots);
+    Ok(out)
+}
+
 /// Ứng viên organize trên 1 volume, keyset theo f.id. Lấy CẢ file đang nằm
 /// trong library root — planner tự trả SkipOrganized (idempotent, và file
 /// user tự quăng vào root vẫn được xếp chỗ đúng). MOV có pair bị ẩn (đi theo
@@ -137,7 +167,7 @@ pub fn select_org_candidates(
     limit: i64,
     scopes: &[String],
 ) -> Result<Vec<OrgCandidateRow>> {
-    let (scope_where, scope_args) = scope_sql(scopes, 4);
+    let (scope_where, scope_args) = scope_sql(&effective_scopes(conn, scopes)?, 4);
     let sql = format!(
         "SELECT f.id, d.path, f.name, f.ext, f.kind, f.size, f.mtime, f.status,
                 m.taken_at, m.date_source, m.camera,
@@ -218,7 +248,7 @@ pub fn select_org_candidates(
 /// Đếm phải dùng ĐÚNG điều kiện với `select_org_candidates` — lệch nhau thì
 /// progress bar của job chạy quá 100% hoặc không bao giờ tới đích.
 pub fn count_org_candidates(conn: &Connection, volume_id: i64, scopes: &[String]) -> Result<i64> {
-    let (scope_where, scope_args) = scope_sql(scopes, 3);
+    let (scope_where, scope_args) = scope_sql(&effective_scopes(conn, scopes)?, 3);
     let sql = format!(
         "SELECT COUNT(*) FROM files f JOIN dirs d ON d.id = f.dir_id
          WHERE {CANDIDATE_WHERE}{scope_where}"

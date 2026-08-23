@@ -166,7 +166,11 @@ fn sample_render(dir: &Template, file: &Template) -> String {
         // Toạ độ mẫu: Hồ Hoàn Kiếm. Tra thật qua core-geo chứ không cắm chuỗi
         // cứng — preview phải cho user thấy đúng cái tên họ sẽ nhận được, gồm
         // cả việc tên địa điểm bị bỏ dấu.
-        .with_place(core_geo::lookup(21.0287, 105.8524));
+        .with_place(core_geo::lookup(21.0287, 105.8524))
+        // Mẫu là ẢNH (đuôi .jpg bên dưới cũng vậy). Thiếu dòng này thì {kind}
+        // render rỗng và ví dụ NÓI DỐI: hiện `2019\...` trong khi chạy thật ra
+        // `Photos\2019\...` — mà ví dụ chính là thứ user nhìn để chốt template.
+        .with_kind(0);
     let mut segs = dir.render_dir(&ctx);
     segs.push(format!("{}.jpg", file.render_file(&ctx, None)));
     segs.join("\\")
@@ -189,15 +193,21 @@ pub async fn get_org_settings(state: State<'_, AppState>) -> CmdResult<OrgSettin
 
 /// Đặt thư mục nguồn được phép gom. Rỗng = cả ổ.
 ///
-/// Đổi phạm vi làm bản xem trước cũ vô nghĩa — nó tính trên tập file khác hẳn.
-/// Xoá luôn để user không bấm "Gom N file" theo một con số của lần trước.
+/// Đổi phạm vi làm bản xem trước cũ vô nghĩa — nó tính trên tập file khác hẳn —
+/// nên phải [`invalidate_preview`] SAU khi lưu xong: hủy cả lượt đang chạy chứ
+/// không chỉ xóa ticket, không thì lượt cũ chạy nốt rồi cài lại kết quả của
+/// phạm vi cũ và "Gom N file" chuyển đúng đám vừa bị loại ra.
 #[tauri::command]
 pub async fn set_org_scopes(state: State<'_, AppState>, scopes: Vec<String>) -> CmdResult<()> {
+    if state.recovery_active.load(Ordering::Acquire) {
+        return Err("ERR_RECOVERY_BUSY|".into());
+    }
     let db = state.db.clone();
-    let preview = state.org_preview.clone();
-    blocking(move || {
+    let result = blocking(move || {
         let mut clean: Vec<String> = Vec::new();
         for s in scopes {
+            // canonical hóa như library root: giải alias/case, chặn UNC, và từ
+            // chối thư mục không tồn tại thay vì lưu một phạm vi chẳng khớp gì
             let p = crate::commands::canonicalize_root(&s)?;
             if !clean.iter().any(|x: &String| x.eq_ignore_ascii_case(&p)) {
                 clean.push(p);
@@ -207,10 +217,44 @@ pub async fn set_org_scopes(state: State<'_, AppState>, scopes: Vec<String>) -> 
         db.writer
             .exec(move |c| core_db::ops::kv_set(c, KV_SCOPES, &json))
             .map_err(err)?;
-        *preview.lock().unwrap() = None;
         Ok(())
     })
-    .await
+    .await;
+    if result.is_ok() {
+        invalidate_preview(&state);
+    }
+    result
+}
+
+/// Vứt bản xem trước: HỦY lượt đang chạy rồi mới xóa ticket.
+///
+/// Chỉ xóa ticket là chưa đủ và đó là một lỗ thật: lượt preview đang chạy vẫn
+/// chạy tiếp tới cùng rồi CÀI LẠI ticket của nó — tính theo cấu hình CŨ. User
+/// vừa thu hẹp phạm vi xong bấm "Gom N file" là chuyển đúng đám file vừa loại ra.
+///
+/// Mọi lệnh làm bản xem trước cũ mất nghĩa (đổi template, đổi phạm vi) đều phải
+/// gọi hàm này — để chung một chỗ cho hai đường không lệch nhau được nữa.
+///
+/// Lock lấy kiểu chịu được poison: một thread panic trước đó không được phép
+/// khóa vĩnh viễn đường hủy preview.
+fn invalidate_preview(state: &AppState) {
+    invalidate_preview_slots(&state.org_preview, &state.org_preview_cancel);
+}
+
+/// Phần lõi, tách ra để test gọi được — `AppState` chỉ dựng được lúc app chạy
+/// thật nên không unit-test thẳng vào command được.
+fn invalidate_preview_slots(
+    preview: &Mutex<Option<OrgPreviewTicket>>,
+    cancel_slot: &Mutex<Option<core_jobs::CancelFlag>>,
+) {
+    if let Some(cancel) = cancel_slot
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+    {
+        cancel.store(true, Ordering::Relaxed);
+    }
+    *preview.lock().unwrap_or_else(|p| p.into_inner()) = None;
 }
 
 /// Validate + render ví dụ KHÔNG lưu — UI gọi debounce khi user đang gõ
@@ -235,8 +279,6 @@ pub async fn set_org_settings(
         return Err("ERR_RECOVERY_BUSY|".into());
     }
     let db = state.db.clone();
-    let preview = state.org_preview.clone();
-    let preview_cancel = state.org_preview_cancel.clone();
     let result = blocking(move || {
         // Validate TRƯỚC khi lưu — lỗi trả ERR_TPL_* cho UI dịch
         let dir = parse_template(&dir_template, TemplateKind::Dir).map_err(|e| e.to_string())?;
@@ -258,14 +300,7 @@ pub async fn set_org_settings(
     })
     .await;
     if result.is_ok() {
-        if let Some(cancel) = preview_cancel
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .as_ref()
-        {
-            cancel.store(true, Ordering::Relaxed);
-        }
-        *preview.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        invalidate_preview(&state);
     }
     result
 }
@@ -284,8 +319,6 @@ pub async fn set_library_root(state: State<'_, AppState>, path: String) -> CmdRe
         return Err("ERR_RECOVERY_BUSY|".into());
     }
     let db = state.db.clone();
-    let preview = state.org_preview.clone();
-    let preview_cancel = state.org_preview_cancel.clone();
     let result = blocking(move || {
         let canonical = canonicalize_root(&path)?;
         db.writer
@@ -294,14 +327,7 @@ pub async fn set_library_root(state: State<'_, AppState>, path: String) -> CmdRe
     })
     .await;
     if result.is_ok() {
-        if let Some(cancel) = preview_cancel
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .as_ref()
-        {
-            cancel.store(true, Ordering::Relaxed);
-        }
-        *preview.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        invalidate_preview(&state);
     }
     result
 }
@@ -312,8 +338,6 @@ pub async fn remove_library_root(state: State<'_, AppState>, id: i64) -> CmdResu
         return Err("ERR_RECOVERY_BUSY|".into());
     }
     let db = state.db.clone();
-    let preview = state.org_preview.clone();
-    let preview_cancel = state.org_preview_cancel.clone();
     let result = blocking(move || {
         db.writer
             .exec(move |c| org::remove_library_root(c, id))
@@ -321,14 +345,7 @@ pub async fn remove_library_root(state: State<'_, AppState>, id: i64) -> CmdResu
     })
     .await;
     if result.is_ok() {
-        if let Some(cancel) = preview_cancel
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .as_ref()
-        {
-            cancel.store(true, Ordering::Relaxed);
-        }
-        *preview.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        invalidate_preview(&state);
     }
     result
 }
@@ -2158,6 +2175,49 @@ mod tests {
         fs::write(path, content).unwrap();
         let md = fs::metadata(path).unwrap();
         (md.len() as i64, unix_ms(md.modified().ok()))
+    }
+
+    /// Vứt preview phải HỦY lượt đang chạy, không chỉ xóa ticket.
+    ///
+    /// Chỉ xóa ticket là bug thật đã mắc ở `set_org_scopes`: lượt đang chạy
+    /// chạy nốt rồi CÀI LẠI ticket tính theo cấu hình CŨ, nên user vừa thu hẹp
+    /// phạm vi xong bấm "Gom" là chuyển đúng đám file vừa loại ra.
+    #[test]
+    fn invalidating_preview_also_cancels_the_run_in_flight() {
+        let preview: Mutex<Option<OrgPreviewTicket>> = Mutex::new(None);
+        let flag = core_jobs::CancelFlag::default();
+        let cancel_slot = Mutex::new(Some(flag.clone()));
+
+        invalidate_preview_slots(&preview, &cancel_slot);
+
+        assert!(
+            flag.load(Ordering::Relaxed),
+            "luot preview dang chay phai bi huy, khong chi xoa ticket"
+        );
+        assert!(preview.lock().unwrap().is_none());
+
+        // Không có lượt nào đang chạy thì cũng không được nổ
+        let empty: Mutex<Option<core_jobs::CancelFlag>> = Mutex::new(None);
+        invalidate_preview_slots(&preview, &empty);
+    }
+
+    /// Ví dụ realtime là thứ user nhìn để CHỐT template — nó phải ra đúng cái
+    /// đường dẫn chạy thật sẽ tạo. Thiếu `.with_kind` thì `{kind}` render rỗng
+    /// và ví dụ nói dối: hiện `2019\…` trong khi thật ra `Photos\2019\…`.
+    #[test]
+    fn sample_shows_every_token_the_real_run_would_produce() {
+        let dir = parse_template(r"{kind}\{YYYY}\{YYYY}-{MM}", TemplateKind::Dir).unwrap();
+        let file = parse_template("{YYYYMMDD}_{hhmmss}", TemplateKind::File).unwrap();
+        assert_eq!(
+            sample_render(&dir, &file),
+            r"Photos\2019\2019-06\20190614_153022.jpg"
+        );
+        // Token địa điểm cũng phải hiện thật (đã bỏ dấu), không để trống
+        let d2 = parse_template(r"{province}\{ward}", TemplateKind::Dir).unwrap();
+        assert_eq!(
+            sample_render(&d2, &file),
+            r"Ha Noi\Phuong Ly Thai To\20190614_153022.jpg"
+        );
     }
 
     #[test]

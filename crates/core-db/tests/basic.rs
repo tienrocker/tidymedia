@@ -296,6 +296,62 @@ fn org_scope_limits_to_chosen_folders_without_prefix_bleed() {
     assert_eq!(count(vec!["d:\\p\\ANH\\".into()]), 2);
 }
 
+/// Giới hạn thư mục nguồn KHÔNG được loại file đã nằm trong kho đích.
+///
+/// Loại nó ra là hỏng hai thứ: (a) đổi template rồi gom lại thì file cũ nằm im
+/// ở đường dẫn cũ, kho thành nửa nọ nửa kia; (b) cặp Live Photo gom hụt (ảnh
+/// xong, MOV fail) không bao giờ hàn lại được, vì đường sửa nằm ở nhánh
+/// SkipOrganized của planner mà ảnh thì không còn được chọn nữa.
+#[test]
+fn org_scope_still_includes_files_already_in_the_library() {
+    use core_db::org;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(tmp.path()).unwrap();
+    db.writer.exec(|c| ops::upsert_root(c, "D:\\P")).unwrap();
+    let entries = vec![
+        entry("D:\\P\\icloud", "new.jpg", "jpg", 0, 100, 1),
+        // Đã gom vào kho ở lượt trước — kho nằm NGOÀI mọi thư mục nguồn
+        entry("D:\\P\\media\\Photos\\2019", "done.jpg", "jpg", 0, 100, 2),
+        // Ngoài cả nguồn lẫn kho → vẫn phải bị loại
+        entry("D:\\P\\vod", "phim.mp4", "mp4", 1, 100, 3),
+    ];
+    db.writer
+        .exec(move |c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(c, 1, 1, &entries, &mut cache)
+        })
+        .unwrap();
+    db.writer
+        .exec(|c| org::set_library_root(c, "D:\\P\\media"))
+        .unwrap();
+
+    let scopes = vec!["D:\\P\\icloud".to_string()];
+    let mut paths = db
+        .pool
+        .with(|c| org::select_org_candidates(c, 1, 0, 100, &scopes))
+        .unwrap()
+        .into_iter()
+        .map(|r| r.path)
+        .collect::<Vec<_>>();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec![
+            "D:\\P\\icloud\\new.jpg".to_string(),
+            "D:\\P\\media\\Photos\\2019\\done.jpg".to_string(),
+        ],
+        "file da nam trong kho phai con trong tap ung vien"
+    );
+    assert_eq!(
+        db.pool
+            .with(|c| org::count_org_candidates(c, 1, &scopes))
+            .unwrap(),
+        2,
+        "dem phai khop select"
+    );
+}
+
 /// Nhãn + album là dữ liệu user tự tạo, KHÔNG dựng lại được bằng quét — nên
 /// test ở đây soi kỹ mấy đường mất mát âm thầm.
 #[test]
