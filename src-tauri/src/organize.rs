@@ -141,32 +141,62 @@ pub(crate) fn invalidate_preview_slots(
 /// hợp lệ, take xong thì đời đã đổi, plan đóng băng theo cấu hình cũ vẫn chạy.
 /// Qua cùng mutex thì bump chỉ có thể rơi hẳn trước (validate thấy stale) hoặc
 /// hẳn sau (ticket đã bị lấy/cài xong trước khi cấu hình kịp đổi).
-fn bump_org_config_gen(
+/// Mở một lượt ghi cấu hình: tăng số đời VÀ đếm thêm một writer đang mở, dưới
+/// mutex ticket. Số đời một mình không đủ (code review vòng 4): setter bump ở
+/// entry rồi ghi mất tới hàng chục giây, một preview BẮT ĐẦU trong khoảng đó
+/// chụp được số đời MỚI nhưng đọc cấu hình CŨ/ghi dở — equality số đời cho nó
+/// qua. Đếm writer thì `org_preview` và `start_organize` từ chối thẳng mọi
+/// ticket khi còn lượt ghi chưa đóng, bất kể số đời. Đếm (không phải cờ) để
+/// hai setter chồng nhau vẫn đúng: chỉ khi CẢ HAI đóng mới về 0.
+fn config_write_begin(
     preview: &Mutex<Option<OrgPreviewTicket>>,
+    writers: &std::sync::atomic::AtomicU64,
     gen: &std::sync::atomic::AtomicU64,
 ) {
     let _slot = preview.lock().unwrap_or_else(|p| p.into_inner());
+    writers.fetch_add(1, Ordering::AcqRel);
+    gen.fetch_add(1, Ordering::AcqRel);
+}
+
+/// Đóng lượt ghi: giảm writer, tăng số đời lần hai — cùng mutex ticket. Bump
+/// lần hai không thừa: preview chạy TRONG lúc ghi đọc phải cấu hình cũ nhưng
+/// chụp số đời mới; writer về 0 rồi thì chỉ còn số đời phân biệt được nó.
+/// `saturating_sub` phòng lệch cặp begin/end — thà đếm sai một nhịp còn hơn
+/// wrap về u64::MAX và khoá chết mọi preview vĩnh viễn.
+fn config_write_end(
+    preview: &Mutex<Option<OrgPreviewTicket>>,
+    writers: &std::sync::atomic::AtomicU64,
+    gen: &std::sync::atomic::AtomicU64,
+) {
+    let _slot = preview.lock().unwrap_or_else(|p| p.into_inner());
+    let _ = writers.fetch_update(Ordering::AcqRel, Ordering::Acquire, |w| {
+        Some(w.saturating_sub(1))
+    });
     gen.fetch_add(1, Ordering::AcqRel);
 }
 
 /// Một lệnh đổi cấu hình organize SẮP chạy. Gọi ngay khi vào lệnh, trước mọi
-/// `.await`: từ giây phút này mọi ticket đã tính đều hết đời.
+/// `.await`: từ giây phút này tới `org_config_changed` không ticket nào được
+/// cài hay lấy. PHẢI đi cặp với `org_config_changed` trên mọi nhánh ra.
 pub(crate) fn org_config_changing(state: &AppState) {
-    bump_org_config_gen(&state.org_preview, &state.org_config_gen);
+    config_write_begin(
+        &state.org_preview,
+        &state.org_config_writers,
+        &state.org_config_gen,
+    );
 }
 
 /// Lệnh đổi cấu hình organize đã chạy xong — kể cả khi nó trả LỖI: validate
 /// thuần thì chưa ghi gì thật, nhưng lỗi rơi SAU khi bắt đầu ghi (kv ghi được
-/// một nửa, `load_scopes` fail...) mà không đóng đời thì một preview chạy song
-/// song có thể chụp số đời hiện hành + cấu hình ghi dở và thành ticket "hợp
-/// lệ". Giá của bump thừa chỉ là một preview bị vứt oan.
-///
-/// Tăng số đời LẦN THỨ HAI rồi vứt preview. Lần bump thứ hai không thừa: một
-/// lượt preview chạy TRONG lúc lệnh đang ghi kv sẽ đọc phải cấu hình cũ nhưng
-/// chụp được số đời mới, nên nếu chỉ bump một lần thì ticket đó trông vẫn hợp
-/// lệ. Bump lần hai giết nó.
+/// một nửa, `load_scopes` fail...) mà không đóng thì writer treo mãi và mọi
+/// preview về sau bị từ chối oan. Giá của một lần đóng thừa chỉ là một preview
+/// bị vứt.
 pub(crate) fn org_config_changed(state: &AppState) {
-    bump_org_config_gen(&state.org_preview, &state.org_config_gen);
+    config_write_end(
+        &state.org_preview,
+        &state.org_config_writers,
+        &state.org_config_gen,
+    );
     invalidate_org_preview(state);
 }
 
@@ -271,7 +301,12 @@ pub async fn set_org_scopes(state: State<'_, AppState>, scopes: Vec<String>) -> 
             // canonical hóa như library root: giải alias/case, chặn UNC, và từ
             // chối thư mục không tồn tại thay vì lưu một phạm vi chẳng khớp gì
             let p = crate::commands::canonicalize_root(&s)?;
-            if !clean.iter().any(|x: &String| x.eq_ignore_ascii_case(&p)) {
+            // Cùng fold Unicode-uppercase như path_key/eq_ci — fold ASCII bỏ
+            // sót tên có dấu ("Bác Tuấn" vs "BÁC TUẤN" thành hai scope).
+            if !clean
+                .iter()
+                .any(|x: &String| x.to_uppercase() == p.to_uppercase())
+            {
                 clean.push(p);
             }
         }
@@ -396,6 +431,11 @@ struct ItemMeta {
     size: i64,
     mtime: i64,
     hash: Option<[u8; 32]>,
+    /// {relpath} NGUON cua file (Some("") = ngay goc watch root) — executor
+    /// ghi vao org_ops.src_rel_dir de lan gom sau con provenance ma render.
+    /// Voi MOV cua cap Live Photo: dung gia tri cua tam anh (cap di cung nhau).
+    #[serde(default)]
+    src_rel: Option<String>,
 }
 
 fn to_hex(b: &[u8]) -> String {
@@ -455,25 +495,38 @@ fn build_items(
         .iter()
         .map(|c| {
             let name = c.path.rsplit('\\').next().unwrap_or(&c.path);
-            // Gốc tính {relpath}, theo thứ tự:
+            // Gốc tính {relpath}/{folder}, theo thứ tự:
             //
-            // 1. Kho TẠI THỜI ĐIỂM organize đặt file (org_ops.lib_root). Sau
-            //    khi user đổi thư mục kho, file cũ không nằm dưới kho mới —
-            //    suy {relpath} từ kho mới là lồng thêm tầng (kho cũ trong
-            //    watch root) hoặc flatten cả cây (kho cũ ngoài watch root, ví
-            //    dụ E:\media trong khi chỉ quét E:\images). Gốc đã ghi lại là
-            //    thứ duy nhất tách được "phần organize tự dựng" khỏi path.
-            // 2. Kho hiện tại — file đã organize khi kho KHÔNG đổi phải render
-            //    target == chính nó (SkipOrganized idempotent).
-            // 3. Watch root. Ưu tiên watch root bao ngoài kho sẽ lồng
+            // 1. {relpath} NGUỒN đã GHI trong op đặt file (org_ops.src_rel_dir,
+            //    chép tiếp qua từng lần re-template). Đây là nghĩa {relpath}
+            //    locale hứa ("cây con gốc dưới watched folder"), và là thứ duy
+            //    nhất giữ template kiểu `{relpath}\{YYYY}` idempotent: suy từ
+            //    vị trí ĐÍCH hiện tại thì mỗi lần chạy lồng thêm một tầng năm.
+            //    Phải là giá trị GHI SẴN chứ không suy lúc query: suy từ
+            //    old_path của op cũ thì dính chuỗi của lần gom đã bỏ, và mất
+            //    provenance khi watch root nguồn bị remove (rơi xuống nhánh 2
+            //    → lại lún tầng — đúng pathology vừa vá).
+            // 2. Kho TẠI THỜI ĐIỂM đặt file (org_ops.lib_root) — cho op đời
+            //    trước v12 không có src_rel_dir: re-parent nguyên phần cây
+            //    organize đã dựng, tránh flatten sau khi user đổi thư mục kho.
+            //    Đánh đổi đã biết của fallback này: template {relpath}+token
+            //    khác KHÔNG idempotent (mỗi lượt đắp thêm) — chấp nhận cho dữ
+            //    liệu legacy, op mới không bao giờ rơi vào đây.
+            // 3. Kho hiện tại — thiếu cả hai provenance mà kho KHÔNG đổi thì
+            //    vẫn phải render target == chính nó (SkipOrganized idempotent).
+            // 4. Watch root. Ưu tiên watch root bao ngoài kho sẽ lồng
             //    "Library\Library\..." thêm một tầng mỗi lần chạy.
             //
-            // Không thuộc gốc nào (root đã remove sau scan) → None: {relpath}
-            // render rỗng, file về thẳng phần template còn lại thay vì đoán bừa.
+            // Không thuộc gốc nào → None: {relpath} render rỗng, file về thẳng
+            // phần template còn lại thay vì đoán bừa.
             let rel = c
-                .managed_lib_root
+                .managed_src_rel
                 .as_deref()
-                .and_then(|m| rel_under(&c.dir_path, m))
+                .or_else(|| {
+                    c.managed_lib_root
+                        .as_deref()
+                        .and_then(|m| rel_under(&c.dir_path, m))
+                })
                 .or_else(|| rel_under(&c.dir_path, lib_root_path))
                 .or_else(|| {
                     watch_roots
@@ -521,6 +574,7 @@ fn build_items(
                     size: c.size,
                     mtime: c.mtime,
                     hash: hash.as_deref().and_then(|h| h.try_into().ok()),
+                    src_rel: rel.map(str::to_string),
                 },
             );
             let pair = c.pair.as_ref().map(|p| {
@@ -531,6 +585,7 @@ fn build_items(
                         size: p.size,
                         mtime: p.mtime,
                         hash: pair_hash.as_deref().and_then(|h| h.try_into().ok()),
+                        src_rel: rel.map(str::to_string),
                     },
                 );
                 PairInfo {
@@ -769,7 +824,18 @@ fn snapshot_pair_metas(
             continue;
         }
         let hash = metas.get(&pair.file_id).and_then(|meta| meta.hash);
-        metas.insert(pair.file_id, ItemMeta { size, mtime, hash });
+        let src_rel = metas
+            .get(&pair.file_id)
+            .and_then(|meta| meta.src_rel.clone());
+        metas.insert(
+            pair.file_id,
+            ItemMeta {
+                size,
+                mtime,
+                hash,
+                src_rel,
+            },
+        );
     }
 }
 
@@ -893,13 +959,18 @@ fn ticket_is_current(
     preview_id: u64,
     include_uncertain: bool,
     config_gen: u64,
+    config_writers: u64,
 ) -> bool {
     t.id == preview_id
         && t.include_uncertain == include_uncertain
-        // Cấu hình (template / phạm vi nguồn / thư mục kho) đổi sau khi plan
-        // được tính → plan đóng băng theo cấu hình cũ. Chạy nó là chuyển đúng
-        // đám file user vừa loại ra.
+        // Cấu hình (template / phạm vi nguồn / thư mục kho / timezone / meta)
+        // đổi sau khi plan được tính → plan đóng băng theo cấu hình cũ. Chạy
+        // nó là chuyển đúng đám file user vừa loại ra.
         && t.gen == config_gen
+        // Còn lượt ghi cấu hình ĐANG MỞ thì không ticket nào được chạy, kể cả
+        // số đời khớp: ticket đó có thể được tính từ cấu hình đang ghi dở
+        // (setter mở đời rồi mới ghi, ghi có thể mất hàng chục giây).
+        && config_writers == 0
 }
 
 fn action_name(a: &PlanAction) -> &'static str {
@@ -996,6 +1067,7 @@ pub async fn org_preview(
     let cancel_slot = state.org_preview_cancel.clone();
     let jobs = state.jobs.clone();
     let config_gen = state.org_config_gen.clone();
+    let config_writers = state.org_config_writers.clone();
     let gen_at_start = config_gen.load(Ordering::Acquire);
     let id = seq.fetch_add(1, Ordering::Relaxed);
     let cancel: core_jobs::CancelFlag = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1008,6 +1080,11 @@ pub async fn org_preview(
             || jobs.active_job_of_kind("meta").is_some()
             || jobs.active_job_of_kind("hash").is_some()
             || jobs.active_job_of_kind("org_hash").is_some()
+            // Job xoá cũng đang VIẾT vào đầu vào của preview (files.status).
+            // Thiếu check thì preview tính giữa lúc xoá chỉ degraded (executor
+            // bắt INDEX_CHANGED), nhưng số liệu hiện cho user đã sai sẵn.
+            || jobs.active_job_of_kind("dedup_delete").is_some()
+            || jobs.active_job_of_kind("similar_delete").is_some()
         {
             return Err("ERR_INDEX_BUSY|metadata/hash job is active".into());
         }
@@ -1047,12 +1124,17 @@ pub async fn org_preview(
     // Không cài ticket: thà UI không có gì để bấm còn hơn có một bản xem trước
     // trông hợp lệ mà `start_organize` sẽ từ chối.
     //
-    // Kiểm số đời phải nằm TRONG lock ticket: bump đi qua cùng mutex này (xem
-    // `bump_org_config_gen`), nên kiểm-rồi-cài là một khối nguyên tử — không có
-    // khe cho lệnh đổi cấu hình chen giữa "thấy đời còn đúng" và "cài ticket".
+    // Kiểm phải nằm TRONG lock ticket: begin/end lượt ghi đi qua cùng mutex
+    // này (xem `config_write_begin`), nên kiểm-rồi-cài là một khối nguyên tử —
+    // không có khe cho lệnh đổi cấu hình chen giữa "thấy còn sạch" và "cài".
+    // Hai điều kiện, thiếu một là hổng: số đời bắt ticket TÍNH TRƯỚC lượt ghi;
+    // đếm writer bắt ticket BẮT ĐẦU SAU bump-mở nhưng đọc cấu hình ghi dở
+    // (lượt ghi có thể kéo hàng chục giây — xem review vòng 4, P1-1).
     {
         let mut t = ticket.lock().unwrap_or_else(|p| p.into_inner());
-        if config_gen.load(Ordering::Acquire) != gen_at_start {
+        if config_writers.load(Ordering::Acquire) != 0
+            || config_gen.load(Ordering::Acquire) != gen_at_start
+        {
             *slot = None;
             return Err("ERR_ORG_PREVIEW_STALE|config changed while previewing".into());
         }
@@ -1491,11 +1573,20 @@ pub async fn start_organize(
     let op_gate = state.index_op_gate.clone();
     let preview_ticket = state.org_preview.clone();
     let config_gen = state.org_config_gen.clone();
+    let config_writers = state.org_config_writers.clone();
     blocking(move || {
         let _gate = guard;
         let _op = op_gate.lock().unwrap_or_else(|p| p.into_inner());
         if jobs.active_job_of_kind("hash").is_some()
             || jobs.active_job_of_kind("org_hash").is_some()
+            // `meta` VIẾT taken_at/camera/GPS — chính đầu vào của plan. Thiếu
+            // check này là bất đối xứng với org_preview: ticket cài xong, meta
+            // job khởi động (App tự bật sau scan, không bump số đời), user bấm
+            // Gom → organize chạy song song với job đang viết lại ngày chụp
+            // của chính các file trong plan.
+            || jobs.active_job_of_kind("meta").is_some()
+            || jobs.active_job_of_kind("dedup_delete").is_some()
+            || jobs.active_job_of_kind("similar_delete").is_some()
         {
             return Err("ERR_INDEX_BUSY|hash job is active".into());
         }
@@ -1516,6 +1607,7 @@ pub async fn start_organize(
                     preview_id,
                     include_uncertain,
                     config_gen.load(Ordering::Acquire),
+                    config_writers.load(Ordering::Acquire),
                 )
             });
             if !valid {
@@ -1536,6 +1628,7 @@ pub async fn start_organize(
                     preview_id,
                     include_uncertain,
                     config_gen.load(Ordering::Acquire),
+                    config_writers.load(Ordering::Acquire),
                 )
             });
             if !valid {
@@ -1673,6 +1766,7 @@ fn run_prepared_organize_job(
                     e,
                     stored.pair_meta.as_ref(),
                     &stored.lib_root,
+                    stored.main_meta.src_rel.as_deref(),
                     &mut tally,
                 );
             }
@@ -1991,13 +2085,15 @@ fn execute_move(
     let (old_a, new_a, fid) = (e.old_path.clone(), new_path.clone(), e.file_id);
     let pair = e.pair_move.clone();
     let lib = lib_root.to_string();
+    let src_rel = meta.src_rel.clone();
     let ops_ids = db.writer.exec({
         let pair = pair.clone();
         move |c| {
-            let a = org::insert_org_op(c, batch_id, fid, &old_a, &new_a, &lib)?;
+            let sr = src_rel.as_deref();
+            let a = org::insert_org_op(c, batch_id, fid, &old_a, &new_a, &lib, sr)?;
             let b = match &pair {
                 Some((pid, pold, pnew)) => {
-                    Some(org::insert_org_op(c, batch_id, *pid, pold, pnew, &lib)?)
+                    Some(org::insert_org_op(c, batch_id, *pid, pold, pnew, &lib, sr)?)
                 }
                 None => None,
             };
@@ -2106,6 +2202,7 @@ fn execute_pair_fixup(
     e: &PlanEntry,
     pair_meta: Option<&ItemMeta>,
     lib_root: &str,
+    src_rel: Option<&str>,
     tally: &mut OrgTally,
 ) {
     let Some((pid, pold, pnew)) = e.pair_move.clone() else {
@@ -2113,7 +2210,8 @@ fn execute_pair_fixup(
     };
     let ins = db.writer.exec({
         let (po, pn, lib) = (pold.clone(), pnew.clone(), lib_root.to_string());
-        move |c| org::insert_org_op(c, batch_id, pid, &po, &pn, &lib)
+        let sr = src_rel.map(str::to_string);
+        move |c| org::insert_org_op(c, batch_id, pid, &po, &pn, &lib, sr.as_deref())
     });
     let Ok(op_b) = ins else {
         tally.skip("DB_ERROR");
@@ -2330,17 +2428,27 @@ mod tests {
         };
 
         assert!(
-            ticket_is_current(&ticket, 7, false, 3),
-            "dung id, dung co, dung so doi -> phai chay duoc"
+            ticket_is_current(&ticket, 7, false, 3, 0),
+            "dung id, dung co, dung so doi, khong writer -> phai chay duoc"
         );
         assert!(
-            !ticket_is_current(&ticket, 7, false, 4),
+            !ticket_is_current(&ticket, 7, false, 4, 0),
             "cau hinh da doi -> plan dong bang theo cau hinh cu KHONG duoc chay"
         );
-        assert!(!ticket_is_current(&ticket, 8, false, 3), "sai preview id");
         assert!(
-            !ticket_is_current(&ticket, 7, true, 3),
+            !ticket_is_current(&ticket, 8, false, 3, 0),
+            "sai preview id"
+        );
+        assert!(
+            !ticket_is_current(&ticket, 7, true, 3, 0),
             "doi include_uncertain la doi tap file"
+        );
+        // Review vong 4 P1-1: setter mo doi roi ghi ca chuc giay; ticket tinh
+        // TRONG cua so do khop so doi hien hanh nhung doc cau hinh ghi do.
+        // Con luot ghi dang mo -> khong ticket nao duoc chay, bat ke so doi.
+        assert!(
+            !ticket_is_current(&ticket, 7, false, 3, 1),
+            "con writer dang mo thi so doi khop den may cung khong duoc chay"
         );
     }
 
@@ -2359,10 +2467,11 @@ mod tests {
         let preview = Arc::new(Mutex::new(None::<OrgPreviewTicket>));
         let gen = Arc::new(AtomicU64::new(0));
 
+        let writers = Arc::new(AtomicU64::new(0));
         let claim = preview.lock().unwrap(); // start_organize đang validate+take
         let bump = {
-            let (p, g) = (preview.clone(), gen.clone());
-            std::thread::spawn(move || bump_org_config_gen(&p, &g))
+            let (p, w, g) = (preview.clone(), writers.clone(), gen.clone());
+            std::thread::spawn(move || config_write_begin(&p, &w, &g))
         };
         // Nhường thread bump chạy tới mutex; test này chứng minh THỨ TỰ (bump
         // chờ mutex), không đo thời gian.
@@ -2971,6 +3080,7 @@ mod tests {
                 camera: None,
                 gps: None,
                 managed_lib_root: None,
+                managed_src_rel: None,
                 full_hash: None,
                 hashed_size: None,
                 hashed_mtime: None,
@@ -3042,6 +3152,7 @@ mod tests {
                 camera: None,
                 gps: None,
                 managed_lib_root: managed.map(str::to_string),
+                managed_src_rel: None,
                 full_hash: None,
                 hashed_size: None,
                 hashed_mtime: None,
@@ -3092,6 +3203,24 @@ mod tests {
         );
         assert_eq!(items[2].rel_dir.as_deref(), Some("Photos"));
         assert_eq!(items[3].rel_dir.as_deref(), Some("icloud"));
+
+        // Provenance NGUON thang provenance kho: locale hua {relpath} la cay
+        // con duoi watched folder, va chi nguon moi giu duoc idempotency cho
+        // template kieu {relpath}\{YYYY} (suy tu dich la lun them tang moi lan).
+        let mut with_src = cand(
+            5,
+            r"D:\P\media2\Photos\2019",
+            "kept.jpg",
+            Some(r"D:\P\media2"),
+        );
+        with_src.managed_src_rel = Some(r"icloud\Trip".into());
+        let (items, _) = build_items(&[with_src], &tz, 0, r"D:\P\media2", &roots);
+        assert_eq!(
+            items[0].rel_dir.as_deref(),
+            Some(r"icloud\Trip"),
+            "nguon goc phai thang duong dan do organize tu dung"
+        );
+        assert_eq!(items[0].folder.as_deref(), Some("Trip"));
     }
 
     /// {relpath}+{name}: giữ nguyên cây thư mục + tên gốc; chạy lần 2 = 0 move
@@ -3161,6 +3290,14 @@ mod tests {
         let source = tmp.path().join("source");
         let library = tmp.path().join("library");
         seed_root(&db, &source, &library);
+        // Phạm vi nguồn KHÔNG chứa kho: sau lần gom đầu, file nằm trong kho chỉ
+        // còn được chọn nhờ marker "đang được organize giữ" — ép đường
+        // retemplate đi qua marker thật. Scope rỗng (mặc định cũ của test) là
+        // cả volume, marker chưa từng load-bearing trong integration.
+        let scopes_json = serde_json::to_string(&[source.to_str().unwrap()]).unwrap();
+        db.writer
+            .exec(move |c| core_db::ops::kv_set(c, "org_scopes", &scopes_json))
+            .unwrap();
 
         let f = source.join("IMG_20190614_153022.jpg");
         let (size, mtime) = write_file(&f, b"anh co ngay trong ten");
@@ -3193,10 +3330,14 @@ mod tests {
             .unwrap();
         let msg2 = run_organize_job(&db, &lock, &cancel, jid, &tx, false).unwrap();
         assert!(msg2.starts_with("moved 1"), "retemplate: {msg2}");
-        let restored = month_dir.join("IMG_20190614_153022.jpg");
+        // {relpath} tính theo NGUỒN GỐC (op đầu chuỗi): file vốn nằm ngay gốc
+        // thư mục nguồn, không có cây con → relpath rỗng → về thẳng gốc kho.
+        // Trước đây rel suy từ vị trí đích nên giữ nguyên cây ngày của template
+        // cũ — nghĩa là "đổi template" mà cây cũ không bao giờ gỡ ra được.
+        let restored = library.join("IMG_20190614_153022.jpg");
         assert!(
             restored.exists(),
-            "rel tu lib root giu cap ngay, {{name}} khoi phuc stem goc"
+            "{{relpath}} khoi phuc cay NGUON (rong), {{name}} khoi phuc stem goc"
         );
 
         let msg3 = run_organize_job(&db, &lock, &cancel, jid, &tx, false).unwrap();
@@ -3209,6 +3350,96 @@ mod tests {
             })
             .unwrap();
         assert_eq!(orig.as_deref(), Some("IMG_20190614_153022.jpg"));
+    }
+
+    /// Review vòng 4 P1-2: `{relpath}` KẾT HỢP token khác phải idempotent.
+    /// Provenance suy từ vị trí ĐÍCH hiện tại thì vòng 2 thấy rel = "Trip\2019"
+    /// rồi đắp thêm một tầng năm nữa — mỗi lần Gom là cây lún sâu thêm một nấc,
+    /// và không bao giờ dừng. Nguồn sự thật phải là vị trí GỐC trước organize
+    /// (old_path của op đầu chuỗi), đúng như locale hứa về {relpath}.
+    #[test]
+    fn organize_relpath_plus_date_template_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = core_db::Db::open(&tmp.path().join("db")).unwrap();
+        let source = tmp.path().join("source");
+        let library = tmp.path().join("library");
+        seed_root(&db, &source, &library);
+        db.writer
+            .exec(|c| {
+                core_db::ops::kv_set(c, "org_dir_template", "{relpath}\\{YYYY}")?;
+                core_db::ops::kv_set(c, "org_file_template", "{name}")
+            })
+            .unwrap();
+
+        let f = source.join("Trip").join("IMG_20190614_153022.jpg");
+        let (size, mtime) = write_file(&f, b"anh trong chuyen di");
+        let trip = core_db::ops::normalize_path(source.join("Trip").to_str().unwrap());
+        db.writer
+            .exec(move |c| {
+                let mut cache = HashMap::new();
+                core_db::ops::upsert_scan_batch(
+                    c,
+                    1,
+                    1,
+                    &[core_db::ScanEntry {
+                        dir_path: trip,
+                        name: "IMG_20190614_153022.jpg".into(),
+                        ext: "jpg".into(),
+                        kind: 0,
+                        size,
+                        mtime,
+                        attrs: 0,
+                        status: 0,
+                    }],
+                    &mut cache,
+                )
+            })
+            .unwrap();
+
+        let lock = Arc::new(Mutex::new(()));
+        let cancel = core_jobs::CancelFlag::default();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let jid = db
+            .writer
+            .exec(|c| core_db::ops::insert_job(c, "organize", None))
+            .unwrap();
+        let msg = run_organize_job(&db, &lock, &cancel, jid, &tx, false).unwrap();
+        assert!(msg.starts_with("moved 1"), "{msg}");
+        let placed = library
+            .join("Trip")
+            .join("2019")
+            .join("IMG_20190614_153022.jpg");
+        assert!(placed.exists(), "lan 1: Trip + nam chup");
+
+        let msg2 = run_organize_job(&db, &lock, &cancel, jid, &tx, false).unwrap();
+        assert!(
+            msg2.starts_with("moved 0"),
+            "lan 2 phai la no-op, khong lun them tang nam: {msg2}"
+        );
+        assert!(placed.exists());
+        assert!(
+            !library.join("Trip").join("2019").join("2019").exists(),
+            "khong duoc long 2019 trong 2019"
+        );
+
+        // Watch root nguồn bị remove — provenance ĐÃ GHI trong op vẫn phải giữ
+        // idempotency. Suy provenance lúc query (bản trước) thì mất root là rơi
+        // xuống fallback suy-từ-đích → lại lún thêm tầng năm mỗi lượt.
+        db.writer
+            .exec(|c| {
+                c.execute("DELETE FROM roots", [])?;
+                Ok(())
+            })
+            .unwrap();
+        let msg3 = run_organize_job(&db, &lock, &cancel, jid, &tx, false).unwrap();
+        assert!(
+            msg3.starts_with("moved 0"),
+            "mat watch root khong duoc lam mat provenance: {msg3}"
+        );
+        assert!(
+            !library.join("Trip").join("2019").join("2019").exists(),
+            "khong duoc long 2019 trong 2019 sau khi mat root"
+        );
     }
 
     /// P0 review: std::fs::rename trên Windows GHI ĐÈ target — wrapper phải từ chối.
@@ -3251,7 +3482,7 @@ mod tests {
                 .to_string(),
         );
         db.writer
-            .exec(move |c| org::insert_org_op(c, jid, 1, &src_s, &dst_s, "X:"))
+            .exec(move |c| org::insert_org_op(c, jid, 1, &src_s, &dst_s, "X:", None))
             .unwrap();
         recover_pending_ops(&db, None, None).unwrap();
         assert!(db.pool.with(org::pending_org_ops).unwrap().is_empty());
@@ -3318,7 +3549,7 @@ mod tests {
             .exec({
                 let (old_s, new_s) = (old_s.clone(), new_s.clone());
                 move |c| {
-                    let org_op = org::insert_org_op(c, 7, fid, &old_s, &new_s, &lib_s)?;
+                    let org_op = org::insert_org_op(c, 7, fid, &old_s, &new_s, &lib_s, None)?;
                     org::mark_org_op_done(c, org_op)?;
                     let undo_op = org::insert_undo_op(c, 8, fid, &new_s, &old_s, org_op)?;
                     Ok((org_op, undo_op))
@@ -3385,7 +3616,7 @@ mod tests {
         let src_s = src.to_string_lossy().into_owned();
         let dst_s = tmp.path().join("b.jpg").to_string_lossy().into_owned();
         db.writer
-            .exec(move |c| org::insert_org_op(c, jid, 1, &src_s, &dst_s, "X:"))
+            .exec(move |c| org::insert_org_op(c, jid, 1, &src_s, &dst_s, "X:", None))
             .unwrap();
 
         let cancel = core_jobs::CancelFlag::default();
@@ -3416,7 +3647,7 @@ mod tests {
         );
         let op_id = db
             .writer
-            .exec(move |c| org::insert_org_op(c, jid, 1, &src_s, &dst_s, "X:"))
+            .exec(move |c| org::insert_org_op(c, jid, 1, &src_s, &dst_s, "X:", None))
             .unwrap();
 
         recover_pending_ops(&db, None, None).unwrap();
@@ -3448,7 +3679,7 @@ mod tests {
         let new_path = dst.to_str().unwrap().to_string();
         let op_id = db
             .writer
-            .exec(move |c| org::insert_org_op(c, jid, 999_999, &old_path, &new_path, "X:"))
+            .exec(move |c| org::insert_org_op(c, jid, 999_999, &old_path, &new_path, "X:", None))
             .unwrap();
 
         recover_pending_ops(&db, None, None).unwrap();

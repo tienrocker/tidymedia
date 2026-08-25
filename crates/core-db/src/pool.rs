@@ -35,6 +35,7 @@ impl ReadPool {
             )?;
             conn.execute_batch("PRAGMA busy_timeout=5000; PRAGMA cache_size=-16384;")?;
             rusqlite::vtab::array::load_module(&conn)?;
+            crate::ops::register_sql_functions(&conn)?;
             tx.send(conn).expect("fill read pool");
         }
         Ok(Self { tx, rx })

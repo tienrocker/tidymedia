@@ -44,6 +44,15 @@ let orgPreviewCancelRequested = false;
 // được nói dối). Module-level vì đây là chi tiết chống race, không phải state
 // để component subscribe.
 let orgPreviewEpoch = 0;
+
+/** Vứt org preview từ NGOÀI store (App nghe index://changed, SetupWizard...).
+ * Phải đi qua đây chứ không `setState({ orgPreview: null })` thẳng: clear mà
+ * không tăng đời thì một response preview đang bay về muộn thấy đời chưa đổi
+ * và cài lại đúng bản vừa bị vứt — ticket backend của nó đã chết. */
+export function invalidateOrgPreviewUi() {
+  orgPreviewEpoch++;
+  useStore.setState({ orgPreview: null });
+}
 /** Job id đã nhận terminal event - chặn placeholder đến muộn hồi sinh job ma. */
 const endedJobIds = new Set<number>();
 

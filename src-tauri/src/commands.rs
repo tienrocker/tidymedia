@@ -551,6 +551,10 @@ pub async fn start_meta_scan(state: State<'_, AppState>) -> CmdResult<Option<i64
     if let Some(id) = state.jobs.active_job_of_kind("meta") {
         return Ok(Some(id)); // guard drop → gate hạ
     }
+    // Meta job sắp viết lại taken_at/camera/GPS — đầu vào của organize preview.
+    // Hủy sớm bản đang tính/đang treo cho đỡ phí; còn đường Execute thì đã bị
+    // chặn bởi check `meta` trong start_organize + pump invalidate lúc job Done.
+    crate::organize::invalidate_org_preview(&state);
     let db = state.db.clone();
     let jobs = state.jobs.clone();
     let thumb_pool = state.thumb_pool.clone();
@@ -817,14 +821,24 @@ fn place_label(lat: Option<f64>, lon: Option<f64>) -> Option<String> {
 }
 
 /// Chi tiết file cho panel info lightbox. Meta chưa có (job chưa chạy tới) mà
-/// là ảnh present → trích ngay tại chỗ (header-only, vài ms) + persist async.
+/// là ảnh present → trích ngay tại chỗ (header-only, vài ms) + persist.
+///
+/// Hai pha có chủ đích: pha 1 chỉ đọc + trích, pha 2 mới ghi và được bọc TRỌN
+/// trong cặp `org_config_changing`/`org_config_changed` — taken_at/camera/GPS
+/// là ĐẦU VÀO của organize preview (quyết định thư mục đích), ghi ngoài kỷ
+/// luật số đời thì "mở lightbox xong quay lại bấm Gom" là plan tiền-EXIF chạy.
+/// KHÔNG được gọi vế đóng lẻ (bản trước đã thử): bộ đếm writer là MỘT atomic
+/// chung toàn app, vế đóng lẻ trừ vào writer đang mở của lệnh KHÁC
+/// (`set_settings` chờ meta gate tới 30s) và mở lại đúng cái race nó phải chặn.
 #[tauri::command]
 pub async fn get_file_meta(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     file_id: i64,
 ) -> CmdResult<Option<FileDetail>> {
     let db = state.db.clone();
-    blocking(move || {
+    let (detail, row) = blocking(move || {
+        let mut row = None;
         let mut detail = db
             .pool
             .with(|c| core_db::ops::get_file_detail(c, file_id))
@@ -844,7 +858,7 @@ pub async fn get_file_meta(
                 d.gps_lat = m.gps_lat;
                 d.gps_lon = m.gps_lon;
                 d.meta_state = Some(if m.ok { 1 } else { 2 });
-                let row = MetaUpsert {
+                row = Some(MetaUpsert {
                     file_id: d.id,
                     width: d.width,
                     height: d.height,
@@ -858,15 +872,31 @@ pub async fn get_file_meta(
                     src_mtime: d.mtime,
                     src_size: d.size,
                     ..Default::default()
-                };
-                db.writer
-                    .exec_async(move |c| core_db::ops::upsert_meta_batch(c, &[row]));
+                });
             }
             d.place = place_label(d.gps_lat, d.gps_lon);
         }
-        Ok(detail)
+        Ok((detail, row))
     })
-    .await
+    .await?;
+    if let Some(row) = row {
+        crate::organize::org_config_changing(&state);
+        let writer = state.db.writer.clone();
+        let result = blocking(move || {
+            writer
+                .exec(move |c| core_db::ops::upsert_meta_batch(c, &[row]))
+                .map_err(err)
+        })
+        .await;
+        crate::organize::org_config_changed(&state);
+        result?;
+        // Backend vừa giết ticket mà không có job nào phát event → UI sẽ hiện
+        // preview chết với nút Gom chỉ để ăn ERR_ORG_PREVIEW_STALE. Báo như
+        // mọi lần index đổi; App nghe event này sẽ vứt preview phía UI luôn.
+        use tauri::Emitter;
+        let _ = app.emit("index://changed", ());
+    }
+    Ok(detail)
 }
 
 /// Mở file bằng app mặc định của hệ thống (video codec lạ WebView2 không phát).

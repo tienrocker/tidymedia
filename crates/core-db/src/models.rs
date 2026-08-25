@@ -346,6 +346,16 @@ pub struct OrgCandidateRow {
     /// này — sau khi đổi thư mục kho, gốc hiện tại không còn chứa file nên suy
     /// từ nó ra là lồng/flatten cây. None = file chưa từng qua organize.
     pub managed_lib_root: Option<String>,
+    /// Giá trị {relpath} NGUỒN của file, ghi lại trong op đã đặt nó
+    /// (`org_ops.src_rel_dir`) và chép tiếp qua từng lần re-template. Đây là
+    /// nguồn sự thật cho {relpath}/{folder}: locale định nghĩa {relpath} là
+    /// "cây con gốc dưới watched folder" — suy từ vị trí ĐÍCH hiện tại thì
+    /// template kiểu `{relpath}\{YYYY}` lồng thêm một tầng năm MỖI lần chạy
+    /// lại; suy từ old_path của op cũ lúc query thì dính chuỗi op của lần gom
+    /// đã bỏ và phụ thuộc watch root còn sống hay không.
+    /// Some("") = file vốn nằm ngay gốc watch root. None = file chưa qua
+    /// organize, hoặc op đời trước v12 (rơi về fallback trong build_items).
+    pub managed_src_rel: Option<String>,
     pub pair: Option<OrgPairRow>,
 }
 

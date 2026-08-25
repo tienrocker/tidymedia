@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { LANGS } from "./i18n";
 import { errText } from "./lib/errors";
 import { api, JobProgress } from "./lib/ipc";
-import { useStore } from "./state/store";
+import { invalidateOrgPreviewUi, useStore } from "./state/store";
 import { FilterBar } from "./features/browse/FilterBar";
 import { SelectionBar } from "./features/browse/SelectionBar";
 import { FileList } from "./features/browse/FileList";
@@ -143,7 +143,7 @@ export default function App() {
         if (state.orgPreview != null && !state.orgPreviewing) {
           state.showToast(t("org.previewInvalidated"), false);
         }
-        useStore.setState({ orgPreview: null });
+        invalidateOrgPreviewUi();
         window.clearTimeout(changedTimer);
         changedTimer = window.setTimeout(() => {
           void useStore.getState().runQuery();

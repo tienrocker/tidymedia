@@ -49,6 +49,7 @@ pub fn spawn_writer(db_path: &Path) -> Result<WriterHandle> {
     let mut conn = Connection::open(db_path)?;
     apply_write_pragmas(&conn)?;
     rusqlite::vtab::array::load_module(&conn)?;
+    crate::ops::register_sql_functions(&conn)?;
     crate::ops::ensure_schema(&mut conn)?;
 
     let (tx, rx) = unbounded::<WriteFn>();

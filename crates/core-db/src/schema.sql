@@ -229,7 +229,8 @@ CREATE TABLE org_ops(
   recovery_error TEXT,
   recovery_attempted_at INTEGER,
   reverses_op_id INTEGER,
-  lib_root TEXT
+  lib_root TEXT,
+  src_rel_dir TEXT
 );
 -- (comment de NGOAI than CREATE TABLE: ALTER ... DROP COLUMN bat SQLite parse
 -- lai dinh nghia bang, va comment `--` ben trong lam buoc rewrite do gay.)
@@ -240,6 +241,12 @@ CREATE TABLE org_ops(
 -- lib_root: library root TAI THOI DIEM chuyen file (NULL voi op undo).
 -- {relpath} cua file da organize phai tinh theo goc nay: sau khi user doi thu
 -- muc kho, goc hien tai khong con chua file nen suy tu no ra la long/flatten.
+-- src_rel_dir: gia tri {relpath} NGUON cua file luc op nay dat no ('' = file
+-- nam ngay goc watch root, NULL = khong biet / op undo / row truoc v12).
+-- Khong suy duoc luc query: suy tu vi tri dich lam {relpath}+token khac lun
+-- them mot tang moi lan gom lai; suy tu old_path cua op cu thi dinh chuoi da
+-- bo va phu thuoc watch root con song. Ghi mot lan luc move, mang theo khi
+-- re-template (op moi chep tu op cu).
 CREATE INDEX org_ops_batch ON org_ops(batch_id);
 -- Tra "file nay co dang nam cho organize dat no khong" cho tung ung vien
 -- organize (xem scope_sql trong org.rs) - khong co index thi moi ung vien quet

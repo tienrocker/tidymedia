@@ -5,7 +5,7 @@ import { LANGS } from "../../i18n";
 import { api } from "../../lib/ipc";
 import { fmtCount, fmtSize } from "../../lib/format";
 import { systemTimeZone, tzOptions } from "../../lib/time";
-import { runSafe, useStore } from "../../state/store";
+import { invalidateOrgPreviewUi, runSafe, useStore } from "../../state/store";
 
 const LANG_LABELS: Record<string, string> = {
   en: "English",
@@ -186,7 +186,7 @@ export function SettingsDialog({
     runSafe(async () => {
       await i18n.changeLanguage(lang);
       if (excludedChanged) {
-        useStore.setState({ orgPreview: null });
+        invalidateOrgPreviewUi();
         await api.setExcludedPaths(excluded);
       }
       await useStore.getState().saveSettings(tz);

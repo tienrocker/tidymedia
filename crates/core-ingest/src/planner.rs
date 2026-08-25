@@ -285,10 +285,22 @@ pub fn plan_organize_incremental<C: ClaimStore + ?Sized>(
                 // Ảnh đã đúng chỗ nhưng MOV của cặp CHƯA theo (đợt trước fail
                 // giữa 2 nửa cặp) → move nốt MOV, không thì cặp xé vĩnh viễn:
                 // ảnh mãi SkipOrganized còn MOV bị ẩn khỏi candidates.
+                //
+                // Phải PROBE đích như nhánh move thường, không phát bừa: đích
+                // MOV bị chiếm (vd bản sao sót lại từ crash cross-volume) mà
+                // vẫn phát pair_move thì mỗi lần Gom preview đếm một move ảo
+                // rồi executor MOVE_FAILED — lặp vô hạn, cặp không bao giờ hàn.
+                // Bị chiếm thì đứng yên (không claim, không phát); tình trạng
+                // giữ nguyên như trước lệnh Gom, không tệ đi.
                 if let (Some(p), Some(pt)) = (&it.pair, &pair_target) {
                     if !eq_ci(&p.path, pt) {
-                        claimed.insert_claim(pt.to_uppercase(), None)?;
-                        e.pair_move = Some((p.file_id, p.path.clone(), pt.clone()));
+                        let pkey = pt.to_uppercase();
+                        let free = claimed.get_claim(&pkey)?.is_none()
+                            && target_state(pt, it) == TargetState::Free;
+                        if free {
+                            claimed.insert_claim(pkey, None)?;
+                            e.pair_move = Some((p.file_id, p.path.clone(), pt.clone()));
+                        }
                     }
                 }
                 planned = Some(e);
@@ -730,6 +742,39 @@ mod tests {
         let plan = plan_organize(&[ok], r"D:\L", &d, &f, false, &all_free);
         assert_eq!(plan[0].action, PlanAction::SkipOrganized);
         assert!(plan[0].pair_move.is_none());
+    }
+
+    #[test]
+    fn split_pair_fixup_probes_target_instead_of_emitting_blind_move() {
+        // Đích MOV bị chiếm (vd bản sao sót lại từ crash cross-volume): phát
+        // pair_move mù là preview đếm một move ảo + executor MOVE_FAILED lặp
+        // vô hạn MỖI lần Gom. Bị chiếm thì đứng yên — không claim, không phát,
+        // tình trạng như trước lệnh Gom chứ không tệ đi.
+        let (d, f) = tpls();
+        let mut it = item(1, r"D:\L\2019\2019-06\20190614_153022_aaaa.heic", Some(H1));
+        it.ext = "heic".into();
+        it.pair = Some(PairInfo {
+            file_id: 2,
+            path: r"D:\mess\IMG_1.mov".into(),
+            ext: "mov".into(),
+            status: 0,
+            size: 10,
+            mtime: 1,
+            hash_hex: None,
+        });
+        let occupied_mov = |path: &str, _: &PlanItem| {
+            if path.ends_with(".mov") {
+                TargetState::Occupied
+            } else {
+                TargetState::Free
+            }
+        };
+        let plan = plan_organize(&[it], r"D:\L", &d, &f, false, &occupied_mov);
+        assert_eq!(plan[0].action, PlanAction::SkipOrganized);
+        assert!(
+            plan[0].pair_move.is_none(),
+            "dich bi chiem thi khong duoc phat lenh fixup"
+        );
     }
 
     #[test]

@@ -192,7 +192,8 @@ pub struct AppState {
     /// Preview có thể full-hash thư viện lớn; cho UI hủy giữa từng file.
     pub(crate) org_preview_cancel: Arc<Mutex<Option<core_jobs::CancelFlag>>>,
     pub org_preview_seq: Arc<std::sync::atomic::AtomicU64>,
-    /// Số đời của CẤU HÌNH organize (template, phạm vi nguồn, thư mục kho).
+    /// Số đời của CẤU HÌNH organize (template, phạm vi nguồn, thư mục kho,
+    /// timezone, và cả meta lazy-extract — mọi thứ preview đọc để tính đích).
     ///
     /// Mỗi lệnh đổi cấu hình tăng nó lên NGAY khi vào lệnh — trước mọi `.await`
     /// — và ticket preview nhớ số đời lúc nó được tính. Vứt preview sau khi lưu
@@ -202,6 +203,15 @@ pub struct AppState {
     /// không gọi lại được plan đã chạy. So số đời thì khe biến mất: ticket tính
     /// theo cấu hình cũ không bao giờ khớp số đời hiện tại nữa.
     pub org_config_gen: Arc<std::sync::atomic::AtomicU64>,
+    /// Số lệnh đổi cấu hình ĐANG MỞ (đã vào lệnh, chưa ghi xong). Số đời một
+    /// mình không đóng được khe này: setter bump ở entry rồi ghi kv mất tới
+    /// hàng chục giây (`set_settings` chờ meta gate); một preview BẮT ĐẦU sau
+    /// bump đó chụp được số đời MỚI nhưng đọc cấu hình CŨ/ghi dở, và ticket
+    /// của nó hợp lệ cho tới lần bump đóng — user bấm Gom trong cửa sổ đó là
+    /// chạy plan sai. Ticket không được cài lẫn lấy khi biến này khác 0.
+    /// Tăng/giảm dưới cùng mutex `org_preview` với số đời (xem
+    /// `config_write_begin`/`config_write_end`).
+    pub org_config_writers: Arc<std::sync::atomic::AtomicU64>,
     /// True while startup crash recovery runs on its background thread.
     pub recovery_active: Arc<std::sync::atomic::AtomicBool>,
     /// Serialize TOÀN BỘ delete_dup_files: 2 đợt xóa chạy song song có thể
@@ -245,18 +255,32 @@ pub fn init(app: &AppHandle) -> Result<()> {
     let events_rx = jobs.receiver();
     let writer = db.writer.clone();
 
+    // Tạo trước để closure bootstrap bên dưới còn hủy được preview — AppState
+    // lúc đó chưa tồn tại.
+    let org_preview: Arc<Mutex<Option<crate::organize::OrgPreviewTicket>>> =
+        Arc::new(Mutex::new(None));
+    let org_preview_cancel: Arc<Mutex<Option<core_jobs::CancelFlag>>> = Arc::new(Mutex::new(None));
+
     // Bootstrap 1 lần sau khi lên schema v4: ghép Live Photo cho index CÓ SẴN
     // (bình thường pairing chỉ chạy sau scan — index migrate lên không rescan
     // thì MOV cứ hiện mãi). Async, không chặn khởi động.
-    writer.exec_async(|c| {
-        if core_db::ops::kv_get(c, "live_pair_bootstrap")?.is_none() {
-            for r in core_db::ops::list_roots(c)? {
-                core_db::ops::pair_live_photos(c, &r.path)?;
+    writer.exec_async({
+        let (preview, cancel_slot) = (org_preview.clone(), org_preview_cancel.clone());
+        move |c| {
+            if core_db::ops::kv_get(c, "live_pair_bootstrap")?.is_none() {
+                for r in core_db::ops::list_roots(c)? {
+                    core_db::ops::pair_live_photos(c, &r.path)?;
+                }
+                core_db::ops::kv_set(c, "live_pair_bootstrap", "1")?;
+                tracing::info!("live photo pairing bootstrapped for existing index");
+                // `live_pair_id` là đầu vào của organize preview (MOV đã ghép
+                // bị ẩn khỏi ứng viên). Chạy async nên preview đầu tiên trên
+                // index lớn có thể tính TRƯỚC khi ghép xong → plan coi MOV là
+                // file độc lập, xé cặp. Hủy để lượt sau đọc index đã ghép.
+                crate::organize::invalidate_preview_slots(&preview, &cancel_slot);
             }
-            core_db::ops::kv_set(c, "live_pair_bootstrap", "1")?;
-            tracing::info!("live photo pairing bootstrapped for existing index");
+            Ok(())
         }
-        Ok(())
     });
 
     let thumbs = Arc::new(core_media::ThumbStore::open(
@@ -296,10 +320,11 @@ pub fn init(app: &AppHandle) -> Result<()> {
         phash_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         org_start_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         index_op_gate: index_op_gate.clone(),
-        org_preview: Arc::new(Mutex::new(None)),
-        org_preview_cancel: Arc::new(Mutex::new(None)),
+        org_preview,
+        org_preview_cancel,
         org_preview_seq: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         org_config_gen: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        org_config_writers: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         recovery_active: recovery_active.clone(),
         delete_lock: delete_lock.clone(),
     });

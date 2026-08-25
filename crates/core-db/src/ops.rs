@@ -12,7 +12,7 @@ use crate::models::{
 
 /// Bump khi đổi schema. Có migration tăng dần từ v2 trở đi (giữ index của
 /// user); version lạ/quá cũ → wipe & recreate (rebuild bằng rescan, ok pre-1.0).
-pub const SCHEMA_VERSION: i64 = 11;
+pub const SCHEMA_VERSION: i64 = 12;
 
 /// Phiên bản của BỘ TRÍCH metadata. Bump khi extractor học thêm field: dòng
 /// `media_meta` cũ hơn sẽ được [`select_pending_meta`] chọn lại, nên job `meta`
@@ -114,6 +114,13 @@ const MIGRATIONS: &[&str] = &[
     // rơi về cách tính theo root hiện tại như trước.
     "ALTER TABLE org_ops ADD COLUMN reverses_op_id INTEGER;
      ALTER TABLE org_ops ADD COLUMN lib_root TEXT;",
+    // v11 -> v12: nhớ {relpath} NGUỒN tại thời điểm chuyển (xem schema.sql).
+    // Suy provenance lúc query (từ old_path của op cũ / từ vị trí đích) đã
+    // được thử và hỏng theo ba kiểu: chuỗi op cũ có thể thuộc lần gom đã bỏ,
+    // watch root bị remove làm template {relpath}+token khác lún tầng vô hạn,
+    // và root lồng nhau cho kết quả phụ thuộc thứ tự. Ghi lại một lần lúc
+    // move là hết cả ba. Row cũ NULL -> rơi về fallback như trước.
+    "ALTER TABLE org_ops ADD COLUMN src_rel_dir TEXT;",
 ];
 const OLDEST_MIGRATABLE: i64 = 2;
 
@@ -185,6 +192,25 @@ pub(crate) fn now_ms() -> i64 {
 }
 
 // ---------- path helpers ----------
+
+/// Đăng ký các SQL function tự chế cho MỘT connection. Phải gọi ở mọi chỗ mở
+/// connection chạy query production (writer + read pool) — quên một chỗ là
+/// query dùng `path_key()` nổ "no such function" lúc chạy, không phải lúc build.
+///
+/// `path_key(x)` = Unicode-uppercase — ĐÚNG phép fold của cột `dirs.path_key`
+/// và `eq_ci` bên planner. Cần hàm riêng vì `UPPER()` của SQLite chỉ fold
+/// ASCII: `'bác tuấn'` qua UPPER vẫn giữ nguyên `á`/`ấ`, so với path_key do
+/// Rust `to_uppercase()` sinh ra là lệch ngay ở tên thư mục có dấu.
+pub fn register_sql_functions(conn: &Connection) -> Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    conn.create_scalar_function(
+        "path_key",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| Ok(ctx.get::<String>(0)?.to_uppercase()),
+    )?;
+    Ok(())
+}
 
 /// "D:\Photos\" -> "D:\Photos"; giữ nguyên "D:\"; uppercase drive letter.
 pub fn normalize_path(p: &str) -> String {

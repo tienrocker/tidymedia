@@ -359,6 +359,7 @@ fn org_scope_still_includes_files_already_in_the_library() {
                 "D:\\P\\icloud\\a.jpg",
                 "D:\\P\\media\\Photos\\2019\\done.jpg",
                 "D:\\P\\media",
+                Some("icloud"),
             )?;
             org::mark_org_op_done(c, done)?;
             // back.jpg: gom xong rồi undo. Kèm chính op undo (done, CHƯA kịp
@@ -372,6 +373,7 @@ fn org_scope_still_includes_files_already_in_the_library() {
                 "D:\\P\\reverted\\back.jpg",
                 "D:\\P\\media\\Photos\\2019\\back.jpg",
                 "D:\\P\\media",
+                Some("reverted"),
             )?;
             org::mark_org_op_done(c, undone)?;
             org::mark_org_op_undone(c, undone)?;
@@ -393,6 +395,7 @@ fn org_scope_still_includes_files_already_in_the_library() {
                 "D:\\P\\icloud\\moved.jpg",
                 "D:\\P\\media\\Photos\\2019\\moved.jpg",
                 "D:\\P\\media",
+                Some("icloud"),
             )?;
             org::mark_org_op_done(c, strayed)?;
             Ok(())
@@ -1467,6 +1470,7 @@ fn org_library_roots_journal_and_relocate() {
                 "D:\\Mess\\IMG_1.heic",
                 "D:\\MyLib2\\x.heic",
                 "D:\\MyLib2",
+                Some(""),
             )
         })
         .unwrap();
@@ -1506,10 +1510,33 @@ fn org_library_roots_journal_and_relocate() {
         .with(|c| org::ops_of_batch_for_undo(c, jid))
         .unwrap();
     assert_eq!(undo_ops.len(), 1);
+    // Lượt undo tạo batch RIÊNG toàn intent (reverses_op_id set). Nó không
+    // được xuất hiện trong lịch sử — mỗi row ma như vậy chiếm một slot của
+    // LIMIT 50, ~50 lượt undo là batch thật bị đẩy khỏi danh sách trong khi UI
+    // chỉ ẩn (moved > 0) chứ không bù chỗ.
+    let undo_jid = db
+        .writer
+        .exec(|c| ops::insert_job(c, "org_undo", None))
+        .unwrap();
     db.writer
-        .exec(move |c| org::mark_org_op_undone(c, op))
+        .exec(move |c| {
+            let u = org::insert_undo_op(
+                c,
+                undo_jid,
+                img_id,
+                "D:\\MyLib2\\2019\\x.heic",
+                "D:\\Mess\\IMG_1.heic",
+                op,
+            )?;
+            org::mark_org_op_done(c, u)?;
+            org::mark_org_op_undone(c, op)?;
+            org::mark_org_op_undone(c, u)?;
+            Ok(())
+        })
         .unwrap();
     let batches = db.pool.with(org::list_org_batches).unwrap();
+    assert_eq!(batches.len(), 1, "batch undo khong duoc chiem slot lich su");
+    assert_eq!(batches[0].batch_id, jid);
     assert_eq!((batches[0].moved, batches[0].undone), (0, 1));
 }
 
@@ -1554,6 +1581,7 @@ fn schema_v5_migrates_recovery_terminal_state_columns() {
          ALTER TABLE org_ops DROP COLUMN recovery_attempted_at;
          ALTER TABLE org_ops DROP COLUMN reverses_op_id;
          ALTER TABLE org_ops DROP COLUMN lib_root;
+         ALTER TABLE org_ops DROP COLUMN src_rel_dir;
          DROP INDEX org_ops_file;
          ALTER TABLE media_meta DROP COLUMN gps_lat;
          ALTER TABLE media_meta DROP COLUMN gps_lon;
@@ -1578,6 +1606,91 @@ fn schema_v5_migrates_recovery_terminal_state_columns() {
     assert!(names.iter().any(|name| name == "recovery_attempted_at"));
 }
 
+/// Marker "đang được organize giữ" phải sống sót qua LỆCH CASING giữa hai vế:
+/// `dirs.path` đóng băng theo ai insert trước (scanner lẫn update_file_location
+/// đều ON CONFLICT DO NOTHING), còn `org_ops.new_path` mang casing template
+/// render. Scanner index `…\photos\` trước rồi organize tạo `…\Photos\` là
+/// chuyện thường (`create_dir_all` no-op khi thư mục tồn tại khác casing) —
+/// marker so byte thì file VỪA GOM XONG đã rơi khỏi tập managed: mất khả năng
+/// gom lại khi đổi template, và `managed_lib_root` trả NULL nên {relpath} rơi
+/// về fallback lồng/flatten. Windows không phân biệt hoa thường, marker cũng
+/// không được phép.
+#[test]
+fn org_marker_survives_casing_drift_between_scanner_and_render() {
+    use core_db::org;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(tmp.path()).unwrap();
+    db.writer.exec(|c| ops::upsert_root(c, "D:\\P")).unwrap();
+    // Scanner index thư mục kho casing THƯỜNG trước — dirs.path đóng băng.
+    let entries = vec![entry(
+        "D:\\P\\media\\photos\\2019",
+        "x.jpg",
+        "jpg",
+        0,
+        100,
+        1,
+    )];
+    db.writer
+        .exec(move |c| {
+            let mut cache = HashMap::new();
+            ops::upsert_scan_batch(c, 1, 1, &entries, &mut cache)
+        })
+        .unwrap();
+    db.writer
+        .exec(|c| org::set_library_root(c, "D:\\P\\media"))
+        .unwrap();
+    let fid: i64 = db.pool.with(|c| {
+        c.query_row("SELECT id FROM files", [], |r| r.get(0))
+            .unwrap()
+    });
+
+    // Organize ghi journal + cập nhật vị trí theo casing RENDER ("Photos").
+    // update_file_location đụng dirs row có sẵn → DO NOTHING → d.path vẫn
+    // "photos". Đây chính là hiện trường sau một lần gom với {kind}/{province}.
+    db.writer
+        .exec(move |c| {
+            let op = org::insert_org_op(
+                c,
+                1,
+                fid,
+                "D:\\P\\icloud\\x.jpg",
+                "D:\\P\\media\\Photos\\2019\\x.jpg",
+                "D:\\P\\media",
+                Some("icloud"),
+            )?;
+            org::mark_org_op_done(c, op)?;
+            org::update_file_location_in(c, fid, "D:\\P\\media\\Photos\\2019\\x.jpg")?;
+            Ok(())
+        })
+        .unwrap();
+
+    // Scope KHÔNG chứa kho → file chỉ còn trong ứng viên nhờ marker.
+    let scopes = vec!["D:\\P\\icloud".to_string()];
+    let rows = db
+        .pool
+        .with(move |c| org::select_org_candidates(c, 1, 0, 100, &scopes))
+        .unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
+        vec!["D:\\P\\media\\photos\\2019\\x.jpg"],
+        "lech casing khong duoc lam file roi khoi tap managed"
+    );
+    assert_eq!(
+        rows[0].managed_lib_root.as_deref(),
+        Some("D:\\P\\media"),
+        "provenance {{relpath}} cung phai song sot qua lech casing"
+    );
+    let for_count = vec!["D:\\P\\icloud".to_string()];
+    assert_eq!(
+        db.pool
+            .with(move |c| org::count_org_candidates(c, 1, &for_count))
+            .unwrap(),
+        1,
+        "dem phai khop select"
+    );
+}
+
 /// v9 → v11: index tra org_ops theo file + cột phân loại undo/provenance.
 /// Gọt DB hiện hành về đúng hình dạng v9 rồi migrate — dựng thẳng schema mới
 /// xong hạ user_version thì index/cột đã có sẵn, test không chứng minh gì.
@@ -1589,6 +1702,7 @@ fn schema_v9_migrates_org_ops_index_and_journal_columns() {
         "DROP INDEX org_ops_file;
          ALTER TABLE org_ops DROP COLUMN reverses_op_id;
          ALTER TABLE org_ops DROP COLUMN lib_root;
+         ALTER TABLE org_ops DROP COLUMN src_rel_dir;
          PRAGMA user_version = 9;",
     )
     .unwrap();
@@ -1620,6 +1734,7 @@ fn schema_v9_migrates_org_ops_index_and_journal_columns() {
         "{names:?}"
     );
     assert!(names.iter().any(|name| name == "lib_root"), "{names:?}");
+    assert!(names.iter().any(|name| name == "src_rel_dir"), "{names:?}");
 }
 
 /// v7 → v8: thêm toạ độ + dấu phiên bản bộ trích. Meta ĐANG CÓ phải còn nguyên
@@ -1634,6 +1749,7 @@ fn schema_v8_adds_gps_without_losing_existing_meta() {
          ALTER TABLE media_meta DROP COLUMN meta_ver;
          ALTER TABLE org_ops DROP COLUMN reverses_op_id;
          ALTER TABLE org_ops DROP COLUMN lib_root;
+         ALTER TABLE org_ops DROP COLUMN src_rel_dir;
          DROP INDEX org_ops_file;
          PRAGMA user_version = 7;",
     )

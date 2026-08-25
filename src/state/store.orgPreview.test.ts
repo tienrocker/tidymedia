@@ -10,7 +10,7 @@ vi.mock("../lib/ipc", () => ({
 vi.mock("../i18n", () => ({ default: { t: (k: string) => k } }));
 
 import { api } from "../lib/ipc";
-import { useStore } from "./store";
+import { invalidateOrgPreviewUi, useStore } from "./store";
 
 const fakePreview = { previewId: 7 } as never;
 
@@ -34,6 +34,24 @@ describe("runOrgPreview vs đổi cấu hình trong lúc chờ", () => {
     // nút Gom của cấu hình cũ.
     expect(useStore.getState().orgPreview).toBeNull();
     expect(useStore.getState().orgBusy).toBe(false);
+  });
+
+  it("index://changed vứt preview thì response đang bay cũng chết theo", async () => {
+    // App.tsx nghe index://changed và gọi invalidateOrgPreviewUi — clear mà
+    // không tăng đời thì response về muộn cài lại đúng bản vừa bị vứt.
+    let resolvePreview!: (v: unknown) => void;
+    vi.mocked(api.orgPreview).mockReturnValue(
+      new Promise((r) => {
+        resolvePreview = r;
+      }) as never,
+    );
+
+    const inflight = useStore.getState().runOrgPreview();
+    invalidateOrgPreviewUi();
+    resolvePreview(fakePreview);
+    await inflight;
+
+    expect(useStore.getState().orgPreview).toBeNull();
   });
 
   it("không ai đụng cấu hình thì response được cài như thường", async () => {

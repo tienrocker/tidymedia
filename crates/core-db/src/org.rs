@@ -98,26 +98,40 @@ const CANDIDATE_WHERE: &str = "f.volume_id = ?1 AND f.id > ?2
 /// nằm trong kho". `org_ops` thì undo có dọn: `mark_org_op_undone` đặt
 /// `undone_at`.
 ///
-/// Vế `o.new_path = ...` không phải trang trí: lịch sử op không chứng minh
-/// HIỆN TẠI. Crash giữa lượt undo để lại op organize còn active trong khi file
-/// đã về chỗ cũ — thiếu vế này thì lần organize sau tự "redo" cái user vừa
-/// undo. User tự tay dời file đã organize đi chỗ khác rồi rescan cũng vậy.
-/// So sánh path là exact-match theo đúng chuỗi organize đã ghi vào cả `files`
-/// lẫn `org_ops` trong cùng lượt; user đổi CASE thư mục cha sau đó thì file
-/// rơi khỏi tập managed — hướng an toàn: bớt ứng viên chứ không kéo nhầm vào.
+/// Vế so path không phải trang trí: lịch sử op không chứng minh HIỆN TẠI.
+/// Crash giữa lượt undo để lại op organize còn active trong khi file đã về chỗ
+/// cũ — thiếu vế này thì lần organize sau tự "redo" cái user vừa undo. User tự
+/// tay dời file đã organize đi chỗ khác rồi rescan cũng vậy.
+///
+/// So sánh qua `path_key()` (Unicode-uppercase, xem `register_sql_functions`)
+/// chứ KHÔNG so byte: Windows không phân biệt hoa thường, và casing hai vế
+/// được sinh độc lập — `dirs.path` đóng băng theo ai insert TRƯỚC (cả scanner
+/// lẫn `update_file_location_in` đều `ON CONFLICT ... DO NOTHING`), còn
+/// `org_ops.new_path` mang casing template render. Scanner index `…\photos\`
+/// trước rồi organize tạo `…\Photos\` là chuyện thường (`create_dir_all` no-op
+/// khi thư mục đã tồn tại khác casing) — so byte thì file vừa gom xong đã rơi
+/// khỏi tập managed ngay. Cùng fold với `path_key` cột và `eq_ci` của planner,
+/// hai nửa của một bất biến phải dùng chung một phép so.
 ///
 /// Vế `o.reverses_op_id IS NULL` loại op undo: đích của op undo là chỗ CŨ của
 /// file, khớp vị trí hiện tại sau khi undo xong — không lọc thì chính nó lại
-/// biến file thành "đang được organize giữ".
-/// Mảnh WHERE dùng chung cho cả hai câu hỏi về op đó (managed? + lib_root nào?)
+/// biến file thành "đang được organize giữ". Vế `NOT EXISTS(jobs org_undo)`
+/// chặn nốt row undo TRƯỚC schema v11: migration gán `reverses_op_id = NULL`
+/// cho mọi row cũ, nên residue undo của bản cũ (done mà chưa kịp tự đánh dấu
+/// undone vì crash) sẽ giả dạng op organize nếu chỉ nhìn cột đó — batch id của
+/// nó là job `org_undo` thì không thể là bằng chứng "organize đặt file ở đây".
+/// Jobs bị prune (tương lai) thì vế này degrade về hành vi hiện tại, không tệ đi.
+/// Mảnh WHERE dùng chung cho cả hai câu hỏi về op đó (managed? + provenance nào?)
 /// — hai bản chép tay là hai cơ hội cho một bên quên thêm điều kiện.
 /// Ghép path như `join_path`: dir kết thúc bằng '\' (gốc ổ) thì không chèn thêm.
 const ACTIVE_ORG_OP_AT_CURRENT_PATH: &str =
     "o.file_id = f.id AND o.done_at IS NOT NULL AND o.undone_at IS NULL
                AND o.reverses_op_id IS NULL
-               AND o.new_path = CASE WHEN substr(d.path, -1) = '\\'
-                                     THEN d.path || f.name
-                                     ELSE d.path || '\\' || f.name END";
+               AND NOT EXISTS(SELECT 1 FROM jobs j
+                              WHERE j.id = o.batch_id AND j.kind = 'org_undo')
+               AND path_key(o.new_path) = CASE WHEN substr(d.path_key, -1) = '\\'
+                                     THEN d.path_key || path_key(f.name)
+                                     ELSE d.path_key || '\\' || path_key(f.name) END";
 
 /// Giới hạn ứng viên vào các THƯ MỤC NGUỒN user chọn, CỘNG những file organize
 /// đang giữ. Danh sách rỗng = cả volume, tức đúng hành vi cũ.
@@ -205,6 +219,9 @@ pub fn select_org_candidates(
                 f.original_name, m.gps_lat, m.gps_lon,
                 (SELECT o.lib_root FROM org_ops o
                   WHERE {ACTIVE_ORG_OP_AT_CURRENT_PATH}
+                  ORDER BY o.id DESC LIMIT 1),
+                (SELECT o.src_rel_dir FROM org_ops o
+                  WHERE {ACTIVE_ORG_OP_AT_CURRENT_PATH}
                   ORDER BY o.id DESC LIMIT 1)
          FROM files f
          JOIN dirs d ON d.id = f.dir_id
@@ -270,6 +287,7 @@ pub fn select_org_candidates(
                     _ => None,
                 },
                 managed_lib_root: r.get(27)?,
+                managed_src_rel: r.get(28)?,
                 pair,
             })
         })?
@@ -341,8 +359,10 @@ pub fn valid_full_hash_at_path(conn: &Connection, path: &str) -> Result<Option<C
 // ---------- journal (write-ahead) ----------
 
 /// Ghi INTENT organize trước khi đụng fs. done_at NULL = chưa xong.
-/// `lib_root` = thư mục kho tại thời điểm này — nguồn tính {relpath} cho các
-/// lần gom SAU khi user đổi kho (xem `OrgCandidateRow::managed_lib_root`).
+/// `lib_root` = thư mục kho tại thời điểm này (xem
+/// `OrgCandidateRow::managed_lib_root`). `src_rel_dir` = giá trị {relpath}
+/// NGUỒN của file lúc op này đặt nó — Some("") là "nằm ngay gốc watch root",
+/// None là không biết (xem `OrgCandidateRow::managed_src_rel`).
 pub fn insert_org_op(
     conn: &Connection,
     batch_id: i64,
@@ -350,11 +370,12 @@ pub fn insert_org_op(
     old_path: &str,
     new_path: &str,
     lib_root: &str,
+    src_rel_dir: Option<&str>,
 ) -> Result<i64> {
     conn.execute(
-        "INSERT INTO org_ops(batch_id, file_id, old_path, new_path, lib_root)
-         VALUES(?1, ?2, ?3, ?4, ?5)",
-        params![batch_id, file_id, old_path, new_path, lib_root],
+        "INSERT INTO org_ops(batch_id, file_id, old_path, new_path, lib_root, src_rel_dir)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+        params![batch_id, file_id, old_path, new_path, lib_root, src_rel_dir],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -439,12 +460,16 @@ fn map_org_op(r: &rusqlite::Row) -> rusqlite::Result<OrgOpRow> {
     })
 }
 
+/// Lịch sử batch cho UI undo. Chỉ đếm op ORGANIZE (`reverses_op_id IS NULL`):
+/// mỗi lượt undo cũng tạo batch riêng toàn intent (moved = 0) — không lọc thì
+/// ~50 lượt undo là batch thật bị đẩy khỏi LIMIT 50 trong khi UI chỉ ẩn chúng.
 pub fn list_org_batches(conn: &Connection) -> Result<Vec<OrgBatchRow>> {
     let mut st = conn.prepare_cached(
         "SELECT o.batch_id, j.finished_at,
                 SUM(CASE WHEN o.done_at IS NOT NULL AND o.undone_at IS NULL THEN 1 ELSE 0 END),
                 SUM(CASE WHEN o.undone_at IS NOT NULL THEN 1 ELSE 0 END)
          FROM org_ops o LEFT JOIN jobs j ON j.id = o.batch_id
+         WHERE o.reverses_op_id IS NULL
          GROUP BY o.batch_id ORDER BY o.batch_id DESC LIMIT 50",
     )?;
     let rows = st
@@ -466,9 +491,11 @@ pub fn list_org_batches(conn: &Connection) -> Result<Vec<OrgBatchRow>> {
 pub fn ops_of_batch_for_undo(conn: &Connection, batch_id: i64) -> Result<Vec<OrgOpRow>> {
     let mut st = conn.prepare_cached(
         "SELECT id, batch_id, file_id, old_path, new_path, reverses_op_id
-         FROM org_ops
+         FROM org_ops o
          WHERE batch_id = ?1 AND done_at IS NOT NULL AND undone_at IS NULL
            AND reverses_op_id IS NULL
+           AND NOT EXISTS(SELECT 1 FROM jobs j
+                          WHERE j.id = o.batch_id AND j.kind = 'org_undo')
          ORDER BY id DESC",
     )?;
     let rows = st
